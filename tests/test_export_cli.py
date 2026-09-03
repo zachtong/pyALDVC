@@ -70,8 +70,10 @@ def test_export_report_and_params(result, tmp_path, affine_pair):
     p = export_report(result, tmp_path / "rep.pdf")
     assert p.exists() and p.stat().st_size > 10_000
     disp = affine_pair[2]
-    gt = {"U": [evaluate_at_nodes(disp, result.dvc_mesh.coordinates)],
-          "F": [gradient_at_nodes(disp, result.dvc_mesh.coordinates)]}
+    gt = {
+        "U": [evaluate_at_nodes(disp, result.dvc_mesh.coordinates)],
+        "F": [gradient_at_nodes(disp, result.dvc_mesh.coordinates)],
+    }
     p2 = export_report(result, tmp_path / "rep_gt.pdf", gt=gt)
     assert p2.stat().st_size > p.stat().st_size
     q = export_params(result.dvc_para, tmp_path / "p.yaml")
@@ -84,19 +86,68 @@ def test_export_report_and_params(result, tmp_path, affine_pair):
 
 def test_cli_synth_run_info_plot(tmp_path):
     data = tmp_path / "data"
-    assert main(["-q", "synth", str(data), "--shape", "48", "52", "56", "--mode", "stretch", "--value", "0.02",
-                 "--frames", "1", "--dtype", "uint16"]) == 0
+    assert (
+        main(
+            [
+                "-q",
+                "synth",
+                str(data),
+                "--shape",
+                "48",
+                "52",
+                "56",
+                "--mode",
+                "stretch",
+                "--value",
+                "0.02",
+                "--frames",
+                "1",
+                "--dtype",
+                "uint16",
+            ]
+        )
+        == 0
+    )
     files = sorted(data.glob("*.tif"))
     assert len(files) == 2
     assert main(["-q", "info", str(files[0])]) == 0
     out = tmp_path / "out"
-    assert main(["-q", "run", "--volumes", str(data), "-o", str(out), "--winsize", "16", "--step", "8",
-                 "--export", "npz", "summary", "--set", "search_radius=4", "admm_max_iter=2"]) == 0
+    assert (
+        main(
+            [
+                "-q",
+                "run",
+                "--volumes",
+                str(data),
+                "-o",
+                str(out),
+                "--winsize",
+                "16",
+                "--step",
+                "8",
+                "--export",
+                "npz",
+                "summary",
+                "--set",
+                "search_radius=4",
+                "admm_max_iter=2",
+            ]
+        )
+        == 0
+    )
     assert (out / "aldvc.npz").exists() and (out / "aldvc_summary.json").exists()
     assert main(["-q", "plot", str(out / "aldvc.npz"), "--field", "exx", "-o", str(tmp_path / "exx.png")]) == 0
     assert (tmp_path / "exx.png").exists()
     cfg = tmp_path / "cfg.json"
-    cfg.write_text(json.dumps({"volumes": str(data), "output": str(tmp_path / "out2"), "export": ["csv"],
-                               "para": {"winsize": 16, "winstepsize": 8, "search_radius": 4, "use_global_step": False}}))
+    cfg.write_text(
+        json.dumps(
+            {
+                "volumes": str(data),
+                "output": str(tmp_path / "out2"),
+                "export": ["csv"],
+                "para": {"winsize": 16, "winstepsize": 8, "search_radius": 4, "use_global_step": False},
+            }
+        )
+    )
     assert main(["-q", "run", str(cfg)]) == 0
     assert list((tmp_path / "out2" / "csv").glob("*.csv"))

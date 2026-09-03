@@ -133,9 +133,12 @@ The most useful fields:
 | `search_radius` | 8 | NCC search half-width (coarsest pyramid level); expands automatically for clipped peaks |
 | `init_subset` | None (= min(winsize, 16)) | NCC template size |
 | `interp_method` | `"cubic"` | `cubic` (Keys, = MATLAB `ba_interp3`) / `bspline` / `linear` |
-| `icgn_tol`, `icgn_max_iter` | 1e-2, 100 | IC-GN convergence |
+| `icgn_tol`, `icgn_max_iter` | 1e-2, 100 | IC-GN relative gradient-norm tolerance (MATLAB criterion) and iteration cap |
+| `icgn_dp_tol` | 1e-3 | IC-GN parameter-increment tolerance in voxels (gradient terms scaled by `winsize/2`) |
+| `icgn_patience` | 5 | give up on a node after this many iterations without improvement (status `stalled`); 0 disables |
 | `use_global_step` | True | False = plain local subset DVC |
 | `mu`, `beta` | 1e-3, auto | ADMM penalties (`beta=None` triggers the L-curve sweep) |
+| `beta_criterion` | `"matlab"` | L-curve score: `matlab` (`|u-u_hat| + h^2 |F-grad u_hat|`, MATLAB rule) or `normalized` |
 | `admm_max_iter`, `admm_tol` | 4, 1e-2 | ADMM iterations / stopping (voxels) |
 | `subpb2_method` | `"fem"` | `fem` or `fd` global discretisation |
 | `dual_update` | `"accumulate"` | standard scaled ADMM; `reset` reproduces the MATLAB FEM path |

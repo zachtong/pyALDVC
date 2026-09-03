@@ -18,7 +18,13 @@ from ..core.data_structures import (
     STATUS_OUT_OF_BOUNDS,
     STATUS_SINGULAR,
 )
-from .interp_kernels import INTERP_BSPLINE, INTERP_CUBIC, INTERP_LINEAR, SAMPLE_HI_MARGIN, SAMPLE_LO
+from .interp_kernels import (
+    INTERP_CUBIC,
+    INTERP_LINEAR,
+    SAMPLE_HI_MARGIN,
+    SAMPLE_LO,
+)
+from .numba_kernels import STALL_STEP_DECAY, STALL_ZNCC_EPS, STATUS_STALLED
 
 ABS_TOL = 1e-5
 LM_DAMPING_3DOF = 1e-3
@@ -31,21 +37,29 @@ LM_DAMPING_3DOF = 1e-3
 
 def keys_weights(t: NDArray) -> NDArray:
     t = np.asarray(t, dtype=np.float64)
-    return np.stack([
-        ((-0.5 * t + 1.0) * t - 0.5) * t,
-        (1.5 * t - 2.5) * t * t + 1.0,
-        ((-1.5 * t + 2.0) * t + 0.5) * t,
-        (0.5 * t - 0.5) * t * t,
-    ], axis=-1)
+    return np.stack(
+        [
+            ((-0.5 * t + 1.0) * t - 0.5) * t,
+            (1.5 * t - 2.5) * t * t + 1.0,
+            ((-1.5 * t + 2.0) * t + 0.5) * t,
+            (0.5 * t - 0.5) * t * t,
+        ],
+        axis=-1,
+    )
 
 
 def bspline_weights(t: NDArray) -> NDArray:
     t = np.asarray(t, dtype=np.float64)
     t2, t3 = t * t, t * t * t
-    return np.stack([
-        (1 - 3 * t + 3 * t2 - t3) / 6, (4 - 6 * t2 + 3 * t3) / 6,
-        (1 + 3 * t + 3 * t2 - 3 * t3) / 6, t3 / 6,
-    ], axis=-1)
+    return np.stack(
+        [
+            (1 - 3 * t + 3 * t2 - t3) / 6,
+            (4 - 6 * t2 + 3 * t3) / 6,
+            (1 + 3 * t + 3 * t2 - 3 * t3) / 6,
+            t3 / 6,
+        ],
+        axis=-1,
+    )
 
 
 def sample_volume_np(vol: NDArray, z: NDArray, y: NDArray, x: NDArray, mode: int) -> NDArray:
@@ -56,9 +70,12 @@ def sample_volume_np(vol: NDArray, z: NDArray, y: NDArray, x: NDArray, mode: int
     y = np.asarray(y, dtype=np.float64)
     x = np.asarray(x, dtype=np.float64)
     inside = (
-        (x >= SAMPLE_LO) & (x <= nx - 1 - SAMPLE_HI_MARGIN)
-        & (y >= SAMPLE_LO) & (y <= ny - 1 - SAMPLE_HI_MARGIN)
-        & (z >= SAMPLE_LO) & (z <= nz - 1 - SAMPLE_HI_MARGIN)
+        (x >= SAMPLE_LO)
+        & (x <= nx - 1 - SAMPLE_HI_MARGIN)
+        & (y >= SAMPLE_LO)
+        & (y <= ny - 1 - SAMPLE_HI_MARGIN)
+        & (z >= SAMPLE_LO)
+        & (z <= nz - 1 - SAMPLE_HI_MARGIN)
     )
     out = np.full(x.shape, np.nan)
     if not inside.any():
@@ -94,16 +111,32 @@ def sample_volume_np(vol: NDArray, z: NDArray, y: NDArray, x: NDArray, mode: int
 def subset_offsets(half: tuple[int, int, int]) -> tuple[NDArray, NDArray, NDArray]:
     hx, hy, hz = half
     dz, dy, dx = np.meshgrid(
-        np.arange(-hz, hz + 1), np.arange(-hy, hy + 1), np.arange(-hx, hx + 1), indexing="ij",
+        np.arange(-hz, hz + 1),
+        np.arange(-hy, hy + 1),
+        np.arange(-hx, hx + 1),
+        indexing="ij",
     )
     return dx.ravel().astype(np.float64), dy.ravel().astype(np.float64), dz.ravel().astype(np.float64)
 
 
 def steepest_descent(gxv, gyv, gzv, X, Y, Z) -> NDArray:
     """``(S, 12)`` steepest-descent images."""
-    return np.column_stack([
-        gxv * X, gxv * Y, gxv * Z, gyv * X, gyv * Y, gyv * Z, gzv * X, gzv * Y, gzv * Z, gxv, gyv, gzv,
-    ])
+    return np.column_stack(
+        [
+            gxv * X,
+            gxv * Y,
+            gxv * Z,
+            gyv * X,
+            gyv * Y,
+            gyv * Z,
+            gzv * X,
+            gzv * Y,
+            gzv * Z,
+            gxv,
+            gyv,
+            gzv,
+        ]
+    )
 
 
 def warp_points(P: NDArray, x0: int, y0: int, z0: int, X, Y, Z):
@@ -137,8 +170,12 @@ def precompute_node_np(coord, half, f, gx, gy, gz, mask, min_valid_ratio=0.5, co
     X, Y, Z = subset_offsets(half)
     fv = np.asarray(f[sl], dtype=np.float64).ravel()[m]
     SD = steepest_descent(
-        np.asarray(gx[sl], dtype=np.float64).ravel()[m], np.asarray(gy[sl], dtype=np.float64).ravel()[m],
-        np.asarray(gz[sl], dtype=np.float64).ravel()[m], X[m], Y[m], Z[m],
+        np.asarray(gx[sl], dtype=np.float64).ravel()[m],
+        np.asarray(gy[sl], dtype=np.float64).ravel()[m],
+        np.asarray(gz[sl], dtype=np.float64).ravel()[m],
+        X[m],
+        Y[m],
+        Z[m],
     )
     H = SD.T @ SD
     n_valid = int(m.sum())
@@ -159,7 +196,7 @@ def precompute_node_np(coord, half, f, gx, gy, gz, mask, min_valid_ratio=0.5, co
     return H, meanf, bottomf, n_valid, True
 
 
-def icgn_12dof_np(P0, coord, half, f, gx, gy, gz, mask, g, mode, H, meanf, bottomf, tol, max_iter):
+def icgn_12dof_np(P0, coord, half, f, gx, gy, gz, mask, g, mode, H, meanf, bottomf, tol, dp_tol, max_iter, patience=0):
     """Reference 12-DOF IC-GN for one node. Returns ``(P, n_iter, status, zncc)``."""
     x0, y0, z0 = (int(c) for c in coord)
     hx, hy, hz = half
@@ -169,20 +206,27 @@ def icgn_12dof_np(P0, coord, half, f, gx, gy, gz, mask, g, mode, H, meanf, botto
     X, Y, Z = X[m], Y[m], Z[m]
     fv = np.asarray(f[sl], dtype=np.float64).ravel()[m]
     SD = steepest_descent(
-        np.asarray(gx[sl], dtype=np.float64).ravel()[m], np.asarray(gy[sl], dtype=np.float64).ravel()[m],
-        np.asarray(gz[sl], dtype=np.float64).ravel()[m], X, Y, Z,
+        np.asarray(gx[sl], dtype=np.float64).ravel()[m],
+        np.asarray(gy[sl], dtype=np.float64).ravel()[m],
+        np.asarray(gz[sl], dtype=np.float64).ravel()[m],
+        X,
+        Y,
+        Z,
     )
     P = np.array(P0, dtype=np.float64).copy()
     norm_init = None
     half_scale = max(half)
     zncc = np.nan
+    best_zncc = -2.0
+    best_dp = np.inf
+    stall = 0
+    P_best = P.copy()
     fn = (fv - meanf) / bottomf
     for it in range(1, max_iter + 1):
         xw, yw, zw = warp_points(P, x0, y0, z0, X, Y, Z)
         gv = sample_volume_np(g, zw, yw, xw, mode)
         if np.isnan(gv).any():
             return P, it, STATUS_OUT_OF_BOUNDS, np.nan
-        n_valid = gv.size
         meang = gv.mean()
         bottomg = np.sqrt(max(np.sum((gv - meang) ** 2), 1e-30))
         res = fn - (gv - meang) / bottomg
@@ -199,8 +243,22 @@ def icgn_12dof_np(P0, coord, half, f, gx, gy, gz, mask, g, mode, H, meanf, botto
         dP = -np.linalg.solve(H, b)
         scaled = dP.copy()
         scaled[:9] *= half_scale
-        if np.linalg.norm(scaled) < tol:
+        dpn = float(np.linalg.norm(scaled))
+        if dpn < dp_tol:
             return P, it, STATUS_CONVERGED, zncc
+        improved = zncc > best_zncc + STALL_ZNCC_EPS
+        if improved:
+            best_zncc = zncc
+            P_best = P.copy()
+        if dpn < best_dp * STALL_STEP_DECAY:
+            best_dp = dpn
+            improved = True
+        if improved:
+            stall = 0
+        else:
+            stall += 1
+            if patience > 0 and stall >= patience:
+                return P_best, it, STATUS_STALLED, best_zncc
         Pn = compose_warp_np(P, dP)
         if Pn is None:
             return P, it, STATUS_SINGULAR, zncc
@@ -208,8 +266,9 @@ def icgn_12dof_np(P0, coord, half, f, gx, gy, gz, mask, g, mode, H, meanf, botto
     return P, max_iter, STATUS_MAX_ITER, zncc
 
 
-def icgn_3dof_np(U_old, F_fixed, vdual, coord, half, f, gx, gy, gz, mask, g, mode, H, meanf, bottomf,
-                 mu, tol, max_iter):
+def icgn_3dof_np(
+    U_old, F_fixed, vdual, coord, half, f, gx, gy, gz, mask, g, mode, H, meanf, bottomf, mu, tol, dp_tol, max_iter, patience=0
+):
     """Reference 3-DOF IC-GN (ADMM subpb1) for one node."""
     x0, y0, z0 = (int(c) for c in coord)
     hx, hy, hz = half
@@ -218,10 +277,13 @@ def icgn_3dof_np(U_old, F_fixed, vdual, coord, half, f, gx, gy, gz, mask, g, mod
     X, Y, Z = subset_offsets(half)
     X, Y, Z = X[m], Y[m], Z[m]
     fv = np.asarray(f[sl], dtype=np.float64).ravel()[m]
-    G = np.column_stack([
-        np.asarray(gx[sl], dtype=np.float64).ravel()[m], np.asarray(gy[sl], dtype=np.float64).ravel()[m],
-        np.asarray(gz[sl], dtype=np.float64).ravel()[m],
-    ])
+    G = np.column_stack(
+        [
+            np.asarray(gx[sl], dtype=np.float64).ravel()[m],
+            np.asarray(gy[sl], dtype=np.float64).ravel()[m],
+            np.asarray(gz[sl], dtype=np.float64).ravel()[m],
+        ]
+    )
     P = np.empty(12)
     P[:9] = np.asarray(F_fixed).ravel()
     P[9:] = U_old
@@ -231,13 +293,14 @@ def icgn_3dof_np(U_old, F_fixed, vdual, coord, half, f, gx, gy, gz, mask, g, mod
     Hd = H3 + LM_DAMPING_3DOF * np.max(np.diag(H3)) * np.eye(3)
     norm_init = None
     zncc = np.nan
+    best_dn = np.inf
+    stall = 0
     fn = (fv - meanf) / bottomf
     for it in range(1, max_iter + 1):
         xw, yw, zw = warp_points(P, x0, y0, z0, X, Y, Z)
         gv = sample_volume_np(g, zw, yw, xw, mode)
         if np.isnan(gv).any():
             return P[9:].copy(), it, STATUS_OUT_OF_BOUNDS, np.nan
-        n_valid = gv.size
         meang = gv.mean()
         bottomg = np.sqrt(max(np.sum((gv - meang) ** 2), 1e-30))
         res = fn - (gv - meang) / bottomg
@@ -251,8 +314,16 @@ def icgn_3dof_np(U_old, F_fixed, vdual, coord, half, f, gx, gy, gz, mask, g, mod
         if norm_rel < tol or norm_abs < mu * 1e-4:
             return P[9:].copy(), it, STATUS_CONVERGED, zncc
         dt = -np.linalg.solve(Hd, tb)
-        if np.linalg.norm(dt) < tol:
+        dn = float(np.linalg.norm(dt))
+        if dn < dp_tol:
             return P[9:].copy(), it, STATUS_CONVERGED, zncc
+        if dn < best_dn * STALL_STEP_DECAY:
+            best_dn = dn
+            stall = 0
+        else:
+            stall += 1
+            if patience > 0 and stall >= patience:
+                return P[9:].copy(), it, STATUS_STALLED, zncc
         P[9:] -= A @ dt
     return P[9:].copy(), max_iter, STATUS_MAX_ITER, zncc
 
@@ -282,8 +353,9 @@ def precompute_nodes_np(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio
     return H_all, L_all, meanf, bottomf, nvalid, valid
 
 
-def icgn_12dof_batch_np(coords, P0, hx, hy, hz, f, gx, gy, gz, mask, g, mode, H_all, meanf_all, bottomf_all,
-                        valid, tol, max_iter):
+def icgn_12dof_batch_np(
+    coords, P0, hx, hy, hz, f, gx, gy, gz, mask, g, mode, H_all, meanf_all, bottomf_all, valid, tol, dp_tol, max_iter, patience=0
+):
     N = coords.shape[0]
     P_out = np.array(P0, dtype=np.float64).copy()
     n_iter = np.zeros(N, dtype=np.int32)
@@ -295,8 +367,25 @@ def icgn_12dof_batch_np(coords, P0, hx, hy, hz, f, gx, gy, gz, mask, g, mode, H_
         if not np.all(np.isfinite(P0[n])):
             status[n] = STATUS_NAN
             continue
-        P, it, st, zc = icgn_12dof_np(P0[n], coords[n], (hx, hy, hz), f, gx, gy, gz, mask, g, mode,
-                                      H_all[n], meanf_all[n], bottomf_all[n], tol, max_iter)
+        P, it, st, zc = icgn_12dof_np(
+            P0[n],
+            coords[n],
+            (hx, hy, hz),
+            f,
+            gx,
+            gy,
+            gz,
+            mask,
+            g,
+            mode,
+            H_all[n],
+            meanf_all[n],
+            bottomf_all[n],
+            tol,
+            dp_tol,
+            max_iter,
+            patience,
+        )
         P_out[n] = P
         n_iter[n] = it
         status[n] = st
@@ -304,8 +393,31 @@ def icgn_12dof_batch_np(coords, P0, hx, hy, hz, f, gx, gy, gz, mask, g, mode, H_
     return P_out, n_iter, status, zncc
 
 
-def icgn_3dof_batch_np(coords, U_old, F_fixed, vdual, hx, hy, hz, f, gx, gy, gz, mask, g, mode, H_all,
-                       meanf_all, bottomf_all, valid, mu, tol, max_iter):
+def icgn_3dof_batch_np(
+    coords,
+    U_old,
+    F_fixed,
+    vdual,
+    hx,
+    hy,
+    hz,
+    f,
+    gx,
+    gy,
+    gz,
+    mask,
+    g,
+    mode,
+    H_all,
+    meanf_all,
+    bottomf_all,
+    valid,
+    mu,
+    tol,
+    dp_tol,
+    max_iter,
+    patience=0,
+):
     N = coords.shape[0]
     U_out = np.array(U_old, dtype=np.float64).copy()
     n_iter = np.zeros(N, dtype=np.int32)
@@ -317,8 +429,28 @@ def icgn_3dof_batch_np(coords, U_old, F_fixed, vdual, hx, hy, hz, f, gx, gy, gz,
         if not (np.all(np.isfinite(U_old[n])) and np.all(np.isfinite(F_fixed[n]))):
             status[n] = STATUS_NAN
             continue
-        U, it, st, zc = icgn_3dof_np(U_old[n], F_fixed[n], vdual[n], coords[n], (hx, hy, hz), f, gx, gy, gz,
-                                     mask, g, mode, H_all[n], meanf_all[n], bottomf_all[n], mu, tol, max_iter)
+        U, it, st, zc = icgn_3dof_np(
+            U_old[n],
+            F_fixed[n],
+            vdual[n],
+            coords[n],
+            (hx, hy, hz),
+            f,
+            gx,
+            gy,
+            gz,
+            mask,
+            g,
+            mode,
+            H_all[n],
+            meanf_all[n],
+            bottomf_all[n],
+            mu,
+            tol,
+            dp_tol,
+            max_iter,
+            patience,
+        )
         U_out[n] = U
         n_iter[n] = it
         status[n] = st

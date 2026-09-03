@@ -71,7 +71,7 @@ def export_vtk(
     if unknown:
         raise ValueError(f"Unknown field(s) {unknown}; valid: {ALL_FIELDS}")
     paths = []
-    for k in (frames if frames is not None else range(n)):
+    for k in frames if frames is not None else range(n):
         fr = result.result_disp[k]
         U = (fr.U_accum if fr.U_accum is not None else fr.U) * vs[None, :]
         data: dict[str, np.ndarray] = {"displacement": U, "node_valid": mesh.node_valid.astype(np.float32)}
@@ -83,9 +83,7 @@ def export_vtk(
         write_vti(p, mesh.grid_shape, origin, spacing, data)
         paths.append(p)
     pvd = out / f"{basename}.pvd"
-    entries = "\n".join(
-        f'    <DataSet timestep="{i + 1}" group="" part="0" file="{p.name}"/>' for i, p in enumerate(paths)
-    )
+    entries = "\n".join(f'    <DataSet timestep="{i + 1}" group="" part="0" file="{p.name}"/>' for i, p in enumerate(paths))
     pvd.write_text(
         '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n'
         f"  <Collection>\n{entries}\n  </Collection>\n</VTKFile>\n",

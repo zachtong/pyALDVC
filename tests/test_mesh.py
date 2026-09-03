@@ -10,7 +10,12 @@ from al_dvc.mesh.grid_mesh import (
     mesh_setup,
     subset_valid_fraction,
 )
-from al_dvc.mesh.hex8 import hex8_box_matrices, hex8_dshape, hex8_gauss_points, hex8_shape
+from al_dvc.mesh.hex8 import (
+    hex8_box_matrices,
+    hex8_dshape,
+    hex8_gauss_points,
+    hex8_shape,
+)
 
 
 def test_build_grid_axes_fit_inside_volume():
@@ -62,16 +67,16 @@ def test_hex8_box_matrices_properties():
     box = hex8_box_matrices((2.0, 3.0, 4.0), 2)
     K, M, G = box["K"], box["M"], box["G"]
     assert np.allclose(K, K.T) and np.allclose(M, M.T)
-    assert np.allclose(K.sum(axis=1), 0.0)            # constant field has zero gradient energy
-    assert np.isclose(M.sum(), 24.0)                   # integral of 1 over the box
-    assert np.allclose(G.sum(axis=1), 0.0)             # sum_a dN_a/dx_j = 0
+    assert np.allclose(K.sum(axis=1), 0.0)  # constant field has zero gradient energy
+    assert np.isclose(M.sum(), 24.0)  # integral of 1 over the box
+    assert np.allclose(G.sum(axis=1), 0.0)  # sum_a dN_a/dx_j = 0
     # linear field u = x: nodal gradient via lumped projection
     coords = np.array([[0, 0, 0], [2, 0, 0], [2, 3, 0], [0, 3, 0], [0, 0, 4], [2, 0, 4], [2, 3, 4], [0, 3, 4]], float)
     u = coords[:, 0]
     mL = M.sum(axis=1)
     assert np.allclose((G[0].T @ u) / mL, 1.0)
     assert np.allclose((G[1].T @ u) / mL, 0.0)
-    assert np.isclose(u @ K @ u, 24.0)                 # int |grad u|^2 = volume
+    assert np.isclose(u @ K @ u, 24.0)  # int |grad u|^2 = volume
 
 
 def test_subset_valid_fraction_and_mask_trimming():

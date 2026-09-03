@@ -12,8 +12,20 @@ from ..core.data_structures import FrameResult, PipelineResult, StrainResult
 
 DISP_FIELDS = ("disp_u", "disp_v", "disp_w", "disp_magnitude")
 STRAIN_FIELDS = (
-    "exx", "eyy", "ezz", "exy", "exz", "eyz",
-    "e1", "e2", "e3", "max_shear", "von_mises", "volumetric", "det_F", "rotation_deg",
+    "exx",
+    "eyy",
+    "ezz",
+    "exy",
+    "exz",
+    "eyz",
+    "e1",
+    "e2",
+    "e3",
+    "max_shear",
+    "von_mises",
+    "volumetric",
+    "det_F",
+    "rotation_deg",
 )
 ALL_FIELDS = DISP_FIELDS + STRAIN_FIELDS
 

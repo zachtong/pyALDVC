@@ -42,8 +42,9 @@ def _text_page(pdf: PdfPages, title: str, lines: list[str], width: int = 100) ->
     plt.close(fig)
 
 
-def export_report(result: PipelineResult, path: str | Path, gt: dict | None = None,
-                  fields: list[str] | None = None, max_frames: int = 6) -> Path:
+def export_report(
+    result: PipelineResult, path: str | Path, gt: dict | None = None, fields: list[str] | None = None, max_frames: int = 6
+) -> Path:
     """Write a multi-page PDF: parameters, timings, convergence, field slices.
 
     ``gt`` may contain ``"U"`` (list of (N,3) ground-truth displacements per
@@ -63,8 +64,11 @@ def export_report(result: PipelineResult, path: str | Path, gt: dict | None = No
             fields += ["exx", "eyy", "ezz", "exy", "exz", "eyz", "von_mises"]
 
     with PdfPages(str(p)) as pdf:
-        lines = [f"volume (z,y,x): {result.volume_shape}   node grid (z,y,x): {mesh.grid_shape}   nodes: {mesh.n_nodes}",
-                 f"spacing (x,y,z): {mesh.spacing}   valid nodes: {int(mesh.node_valid.sum())}", ""]
+        lines = [
+            f"volume (z,y,x): {result.volume_shape}   node grid (z,y,x): {mesh.grid_shape}   nodes: {mesh.n_nodes}",
+            f"spacing (x,y,z): {mesh.spacing}   valid nodes: {int(mesh.node_valid.sum())}",
+            "",
+        ]
         lines.append("Parameters:")
         for k, v in para_to_dict(para).items():
             lines.append(f"  {k:<28} {v}")
@@ -102,8 +106,18 @@ def export_report(result: PipelineResult, path: str | Path, gt: dict | None = No
                 axes[2].set_title(f"ADMM updates (beta={a.beta:.2e}, mu={a.mu:.1e})")
                 axes[2].set_xlabel("ADMM step")
                 axes[2].legend(fontsize=8)
-                axes[3].semilogy(np.arange(1, 1 + len(a.primal_residual_u)), np.maximum(a.primal_residual_u, 1e-16), "o-", label="rms |u - u_hat|")
-                axes[3].semilogy(np.arange(1, 1 + len(a.primal_residual_f)), np.maximum(a.primal_residual_f, 1e-16), "s-", label="rms |F - grad u_hat|")
+                axes[3].semilogy(
+                    np.arange(1, 1 + len(a.primal_residual_u)),
+                    np.maximum(a.primal_residual_u, 1e-16),
+                    "o-",
+                    label="rms |u - u_hat|",
+                )
+                axes[3].semilogy(
+                    np.arange(1, 1 + len(a.primal_residual_f)),
+                    np.maximum(a.primal_residual_f, 1e-16),
+                    "s-",
+                    label="rms |F - grad u_hat|",
+                )
                 axes[3].set_title("primal residuals")
                 axes[3].legend(fontsize=8)
                 if a.beta_sweep is not None:
@@ -117,8 +131,14 @@ def export_report(result: PipelineResult, path: str | Path, gt: dict | None = No
                     ax4.legend(fontsize=8)
                     ax4b = ax4.twinx()
                     ax4b.semilogx(sw["betas"], sw["err1"], "s:", color="#dd8452", ms=4, label="|u-u_hat|")
-                    ax4b.semilogx(sw["betas"], sw["err2"] * float(np.mean(para.winstepsize)) ** 2, "^:", color="#55a868", ms=4,
-                                  label="|F-grad u_hat| x h^2")
+                    ax4b.semilogx(
+                        sw["betas"],
+                        sw["err2"] * float(np.mean(para.winstepsize)) ** 2,
+                        "^:",
+                        color="#55a868",
+                        ms=4,
+                        label="|F-grad u_hat| x h^2",
+                    )
                     ax4b.legend(fontsize=7, loc="upper center")
                 else:
                     iters = [li.n_iter[li.status == 0] for li in a.local_info]
@@ -163,10 +183,19 @@ def export_report(result: PipelineResult, path: str | Path, gt: dict | None = No
                 fig, axes = plt.subplots(2, 3, figsize=(13, 8))
                 for c, nm in enumerate("uvw"):
                     histogram_panel(axes[0, c], err[ok, c], f"frame {k + 1}: error {nm} [voxel]", gt=0.0)
-                    plot_field_slices(mesh.to_grid(np.where(ok, err[:, c], np.nan)), mesh, title=f"err {nm}",
-                                      fig=fig, axes=[axes[1, c]] * 3, cmap="coolwarm")
+                    plot_field_slices(
+                        mesh.to_grid(np.where(ok, err[:, c], np.nan)),
+                        mesh,
+                        title=f"err {nm}",
+                        fig=fig,
+                        axes=[axes[1, c]] * 3,
+                        cmap="coolwarm",
+                    )
                 rmse = np.sqrt(np.mean(err[ok] ** 2, axis=0))
-                fig.suptitle(f"Frame {k + 1} displacement error vs ground truth: RMSE u,v,w = {rmse[0]:.4f}, {rmse[1]:.4f}, {rmse[2]:.4f} voxel")
+                fig.suptitle(
+                    f"Frame {k + 1} displacement error vs ground truth: "
+                    f"RMSE u,v,w = {rmse[0]:.4f}, {rmse[1]:.4f}, {rmse[2]:.4f} voxel"
+                )
                 fig.tight_layout()
                 pdf.savefig(fig)
                 plt.close(fig)

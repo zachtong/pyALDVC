@@ -110,6 +110,17 @@ Only 3-4 ADMM iterations are needed in practice. The output is `u_hat`
    4x4 solve. Same numbers, orders of magnitude faster.
 10. **Frame schedule** (accumulative / incremental / custom reference tree)
     is taken from pyALDIC, replacing `trackingMode` + `newFFTSearch`.
+11. **IC-GN stopping rule.** MATLAB stops when the gradient norm of the ZNSSD
+   functional has dropped below `tol` times its *initial* value. From an
+   integer initial guess that takes ~28 iterations and reaches ~0.04 voxel in
+   the weakly textured z direction of a CT scan; from a sub-voxel initial
+   guess the same rule is far stricter. pyALDVC keeps that criterion
+   (`icgn_tol`) and adds the DIC-standard parameter-increment criterion
+   `icgn_dp_tol` (1e-3 voxel), which is the one that normally fires.
+   `scripts/compare_matlab.py` shows that when both codes' local solutions
+   are refined by the same kernel they coincide to 1e-3 voxel, i.e. the two
+   IC-GN implementations minimise the same functional; the stored solutions
+   differ only by how early each code stopped and by the outlier rules.
 
 ## 3. Numerical choices and why
 
@@ -119,17 +130,20 @@ Only 3-4 ADMM iterations are needed in practice. The output is `u_hat`
 | Pre-smoothing | optional Gaussian `prefilter_sigma` applied to every normalised volume before gradients/correlation | the stencil amplifies white noise ~1.1x; at SNR < 5 a 0.8-voxel blur lowers displacement RMSE by ~1.5-2x (validation report) |
 | Sub-voxel interpolation | `cubic` = Keys cubic convolution (a = -0.5, what `ba_interp3` does), `bspline` = cubic B-spline on pre-filtered coefficients (most accurate, SciPy `spline_filter`), `linear` = trilinear (fastest) | user-selectable; default `cubic` for MATLAB parity |
 | ZNSSD statistics | over mask-valid voxels of the subset; `bottom = sqrt(sum (f - mean)^2)` (= MATLAB `sqrt((n-1)*var)` with the sample variance) | MATLAB convention, keeps `b` scaling identical and ZNCC <= 1 |
-| IC-GN convergence | relative gradient norm `< tol` OR absolute `< 1e-5` OR `|dP| < tol` | MATLAB + pyALDIC criteria combined |
+| IC-GN convergence | relative gradient norm `< icgn_tol` (MATLAB criterion, 1e-2) OR absolute `< 1e-5` OR parameter increment `|dP| < icgn_dp_tol` (1e-3 voxel, gradient terms scaled by `winsize/2`) | the MATLAB relative criterion depends on the starting point (from a sub-voxel initial guess it is far stricter than from an integer one), so the increment criterion is the operative one. At 1e-2 (the pyALDIC value) it leaves 0.03-0.05 voxel unconverged along weakly textured directions of real CT data; 1e-3 costs about twice the local iterations (7 -> 13 on the `20190504_cut` scan) and is the DIC-literature value |
+| IC-GN stall detection | a 12-DOF node is abandoned (status `stalled`, best-ZNCC iterate returned) after `icgn_patience` (5) iterations that do not raise the ZNCC by 1e-4; a 3-DOF node after that many iterations that do not shrink the step norm | on the `20190504_cut` scan the top six node layers lie outside the specimen: there MATLAB and pyALDVC both produced garbage and pyALDVC spent 30-40 iterations per node (max 100), more than doubling the run time. The 3-DOF rule cannot use the ZNCC because the proximal term legitimately lowers it |
+| Parallel scheduling | the IC-GN kernels walk the list of active nodes in a block-cyclic order over 64 stripes (`SCHEDULE_LANES`), so every static `prange` chunk touches all regions of the grid while still processing runs of consecutive nodes | Numba's static chunks are contiguous index ranges, i.e. grid slabs: on the `20190504_cut` scan the six textureless top layers made their threads 4-6x slower than the rest and set the wall time (115 instead of ~450 nodes/s); masks, inpainted nodes skipped in the 3-DOF passes and node subsets cluster the same way. `numba.set_parallel_chunksize` had no measurable effect with the OpenMP layer, and querying the thread count inside a kernel disables on-disk caching, hence the thread-independent schedule. The remaining imbalance is the P-core/E-core speed ratio of hybrid CPUs |
 | Warp composition | 4x4 homogeneous, `W(P) <- W(P) W(dP)^-1`, inverse via 3x3 cofactors | closed form, no `np.linalg` in kernels |
 | Hessian solve | in-kernel Cholesky (12x12 SPD) with fallback to pivoted Gaussian elimination | no allocations in the hot loop |
 | Global step | hex8 FEM with 2x2x2 Gauss (exact for trilinear on rectangular cells) or FD; scalar operator, PCG (Jacobi) reused for u, v, w | see 2.3, 2.4 |
-| beta tuning | MATLAB list `[sqrt(1e-5), 1e-2, sqrt(1e-3), 1e-1, sqrt(1e-1)] * mean(h)^2 * mu`, normalised L-curve, log-quadratic refinement | parity with MATLAB |
+| beta tuning | MATLAB list `[sqrt(1e-5), 1e-2, sqrt(1e-3), 1e-1, sqrt(1e-1)] * mean(h)^2 * mu`; score `|u-u_hat| + h^2 |F-grad u_hat|` with the discrete minimum (`beta_criterion="matlab"`, default) or a z-normalised sum with log-quadratic refinement (`"normalized"`) | parity with MATLAB. On the `20190504_cut` scan the normalised score picked 0.0054 where MATLAB picked 0.0202, and the final field's ZNCC was lower with the smaller beta (less weight on the gradient term makes `grad(u_hat)` a worse subset warp) |
 | Nodal gradient of `u_hat` | lumped-mass L2 projection `F_ij = M_L^-1 G_j^T u_i` (FEM) or `D_j u_i` (FD) | exact for linear fields, O(h^2), one sparse mat-vec per component |
 | Cumulative composition | cubic spline on the node grid after odd-reflection padding (10 nodes) | reproduces linear fields to 1e-5 up to the grid edge; MATLAB uses `makima` |
 | Strain plane fit | weighted 3-D Savitzky-Golay via 14 correlations + batched 4x4 solves | identical numbers to the MATLAB per-node loop, vectorised; masks enter as zero weights |
 | Outlier test | universal median test (3x3x3, eps = 0.1 voxel), threshold default 2.0 | Westerweel & Scarano 2005 |
 | NaN filling | spring model: sparse Laplacian solve with known nodes as Dirichlet data (= `inpaint_nans3` method 0/1) | exact analogue, vectorised |
 | Precision | volumes float32 in memory, all kernel accumulations float64 | halves RAM, no accuracy loss (verified in tests) |
+| Pre-processing | normalisation statistics and the 7-point gradient in parallel Numba kernels (`voi_mean_std`, `_gradient_stencil7`), NumPy/SciPy references kept for tests | the SciPy `correlate1d` path took 30 s on a 1024x1024x306 scan, more than the whole local step for 80k nodes |
 
 ## 4. Coordinate and layout contracts
 

@@ -31,7 +31,7 @@ def export_csv(
         raise ValueError(f"Unknown field(s) {unknown}; valid: {ALL_FIELDS}")
     coords = result.dvc_mesh.coordinates
     paths = []
-    for k in (frames if frames is not None else range(n)):
+    for k in frames if frames is not None else range(n):
         cols = [field_array(result, k, f, trimmed=trimmed) for f in fields]
         p = out / f"{basename}_{frame_tag(k, n)}.csv"
         with open(p, "w", newline="", encoding="utf-8") as fh:
@@ -39,7 +39,9 @@ def export_csv(
             w.writerow(["x", "y", "z", "valid"] + fields)
             valid = result.dvc_mesh.node_valid
             for i in range(coords.shape[0]):
-                w.writerow([coords[i, 0], coords[i, 1], coords[i, 2], int(valid[i]) if valid.size else 1]
-                           + [("" if not np.isfinite(c[i]) else repr(float(c[i]))) for c in cols])
+                w.writerow(
+                    [coords[i, 0], coords[i, 1], coords[i, 2], int(valid[i]) if valid.size else 1]
+                    + [("" if not np.isfinite(c[i]) else repr(float(c[i]))) for c in cols]
+                )
         paths.append(p)
     return paths

@@ -37,8 +37,8 @@ class GlobalOperators:
     Kg: sparse.csr_matrix
     M: sparse.csr_matrix
     G: tuple[sparse.csr_matrix, sparse.csr_matrix, sparse.csr_matrix]
-    mL: NDArray[np.float64]         # lumped mass (row sums of M); ones for FD
-    active: NDArray[np.bool_]       # nodes that carry equations
+    mL: NDArray[np.float64]  # lumped mass (row sums of M); ones for FD
+    active: NDArray[np.bool_]  # nodes that carry equations
     method: str
     n_nodes: int
 
@@ -49,10 +49,10 @@ class GlobalOperators:
 
 def _scatter(elements: NDArray[np.int64], Ke: NDArray[np.float64], n_nodes: int) -> sparse.csr_matrix:
     E = elements.shape[0]
-    I = np.broadcast_to(elements[:, :, None], (E, 8, 8)).ravel()
-    J = np.broadcast_to(elements[:, None, :], (E, 8, 8)).ravel()
-    V = np.broadcast_to(Ke[None, :, :], (E, 8, 8)).ravel()
-    return sparse.coo_matrix((V, (I, J)), shape=(n_nodes, n_nodes)).tocsr()
+    rows = np.broadcast_to(elements[:, :, None], (E, 8, 8)).ravel()
+    cols = np.broadcast_to(elements[:, None, :], (E, 8, 8)).ravel()
+    vals = np.broadcast_to(Ke[None, :, :], (E, 8, 8)).ravel()
+    return sparse.coo_matrix((vals, (rows, cols)), shape=(n_nodes, n_nodes)).tocsr()
 
 
 def build_fem_operators(mesh: DVCMesh, gauss_pt_order: int = 2) -> GlobalOperators:
@@ -71,8 +71,9 @@ def build_fem_operators(mesh: DVCMesh, gauss_pt_order: int = 2) -> GlobalOperato
     return GlobalOperators(Kg=Kg, M=M, G=G, mL=mL, active=active, method="fem", n_nodes=n)  # type: ignore[arg-type]
 
 
-def _difference_operator(grid_shape: tuple[int, int, int], axis_xyz: int, h: float,
-                         valid: NDArray[np.bool_]) -> sparse.csr_matrix:
+def _difference_operator(
+    grid_shape: tuple[int, int, int], axis_xyz: int, h: float, valid: NDArray[np.bool_]
+) -> sparse.csr_matrix:
     """Central-difference operator along x (0), y (1) or z (2) on the node grid.
 
     Uses one-sided differences where only one neighbour is valid and a zero
@@ -87,9 +88,9 @@ def _difference_operator(grid_shape: tuple[int, int, int], axis_xyz: int, h: flo
     coord = np.indices(grid_shape)[ax].ravel()
     size = grid_shape[ax]
     v = valid.ravel()
-    has_prev = (coord > 0)
+    has_prev = coord > 0
     has_prev[has_prev] &= v[idx.ravel()[has_prev] - stride]
-    has_next = (coord < size - 1)
+    has_next = coord < size - 1
     has_next[has_next] &= v[idx.ravel()[has_next] + stride]
     rows: list[NDArray] = []
     cols: list[NDArray] = []
@@ -108,7 +109,8 @@ def _difference_operator(grid_shape: tuple[int, int, int], axis_xyz: int, h: flo
     cols += [i[only_prev] - stride, i[only_prev]]
     vals += [np.full(only_prev.sum(), -1.0 / h), np.full(only_prev.sum(), 1.0 / h)]
     return sparse.coo_matrix(
-        (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(n, n),
+        (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
+        shape=(n, n),
     ).tocsr()
 
 

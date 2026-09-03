@@ -108,10 +108,16 @@ def compute_strain(
         strain_valid &= complete.ravel()
 
     return StrainResult(
-        disp_u=U_phys[:, 0], disp_v=U_phys[:, 1], disp_w=U_phys[:, 2],
+        disp_u=U_phys[:, 0],
+        disp_v=U_phys[:, 1],
+        disp_w=U_phys[:, 2],
         F=F_phys,
-        exx=E[:, 0, 0], eyy=E[:, 1, 1], ezz=E[:, 2, 2],
-        exy=E[:, 0, 1], exz=E[:, 0, 2], eyz=E[:, 1, 2],
+        exx=E[:, 0, 0],
+        eyy=E[:, 1, 1],
+        ezz=E[:, 2, 2],
+        exy=E[:, 0, 1],
+        exz=E[:, 0, 2],
+        eyz=E[:, 1, 2],
         principal=princ,
         max_shear=max_shear_strain(princ),
         von_mises=von_mises_strain(E),

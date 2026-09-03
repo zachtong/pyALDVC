@@ -33,7 +33,10 @@ def build_grid_axes(
     nz, ny, nx = volume_shape
     axes = []
     for axis_len, (lo, hi), w, h in zip(
-        (nx, ny, nz), (voi.x, voi.y, voi.z), winsize, winstepsize,
+        (nx, ny, nz),
+        (voi.x, voi.y, voi.z),
+        winsize,
+        winstepsize,
     ):
         half = w // 2
         border = GRADIENT_BORDER + INTERP_MARGIN + int(extra_margin)
@@ -73,7 +76,10 @@ def mesh_setup(
     coordinates = np.column_stack([X.ravel(), Y.ravel(), Z.ravel()])
 
     iz, iy, ix = np.meshgrid(
-        np.arange(nz - 1), np.arange(ny - 1), np.arange(nx - 1), indexing="ij",
+        np.arange(nz - 1),
+        np.arange(ny - 1),
+        np.arange(nx - 1),
+        indexing="ij",
     )
     ix = ix.ravel()
     iy = iy.ravel()
@@ -82,10 +88,18 @@ def mesh_setup(
     def nid(a: NDArray, b: NDArray, c: NDArray) -> NDArray:
         return c * ny * nx + b * nx + a
 
-    elements = np.column_stack([
-        nid(ix, iy, iz), nid(ix + 1, iy, iz), nid(ix + 1, iy + 1, iz), nid(ix, iy + 1, iz),
-        nid(ix, iy, iz + 1), nid(ix + 1, iy, iz + 1), nid(ix + 1, iy + 1, iz + 1), nid(ix, iy + 1, iz + 1),
-    ]).astype(np.int64)
+    elements = np.column_stack(
+        [
+            nid(ix, iy, iz),
+            nid(ix + 1, iy, iz),
+            nid(ix + 1, iy + 1, iz),
+            nid(ix, iy + 1, iz),
+            nid(ix, iy, iz + 1),
+            nid(ix + 1, iy, iz + 1),
+            nid(ix + 1, iy + 1, iz + 1),
+            nid(ix, iy + 1, iz + 1),
+        ]
+    ).astype(np.int64)
 
     spacing = (
         float(x0[1] - x0[0]) if nx > 1 else 1.0,
@@ -144,8 +158,14 @@ def subset_valid_fraction(
         return sat[z, y, x]
 
     count = (
-        S(z_hi, y_hi, x_hi) - S(z_lo, y_hi, x_hi) - S(z_hi, y_lo, x_hi) - S(z_hi, y_hi, x_lo)
-        + S(z_lo, y_lo, x_hi) + S(z_lo, y_hi, x_lo) + S(z_hi, y_lo, x_lo) - S(z_lo, y_lo, x_lo)
+        S(z_hi, y_hi, x_hi)
+        - S(z_lo, y_hi, x_hi)
+        - S(z_hi, y_lo, x_hi)
+        - S(z_hi, y_hi, x_lo)
+        + S(z_lo, y_lo, x_hi)
+        + S(z_lo, y_hi, x_lo)
+        + S(z_hi, y_lo, x_lo)
+        - S(z_lo, y_lo, x_lo)
     )
     total = float((2 * hx + 1) * (2 * hy + 1) * (2 * hz + 1))
     return count.astype(np.float64) / total

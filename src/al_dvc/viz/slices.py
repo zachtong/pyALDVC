@@ -56,8 +56,16 @@ def plot_field_slices(
     ]
     im = None
     for ax, (img, sub, xl, yl, ext) in zip(axes, panels):
-        im = ax.imshow(np.ma.masked_invalid(img), cmap=cmap, vmin=vmin, vmax=vmax, extent=ext, origin="upper",
-                       interpolation="nearest", aspect="equal")
+        im = ax.imshow(
+            np.ma.masked_invalid(img),
+            cmap=cmap,
+            vmin=vmin,
+            vmax=vmax,
+            extent=ext,
+            origin="upper",
+            interpolation="nearest",
+            aspect="equal",
+        )
         ax.set_title(f"{title} @ {sub}", fontsize=10)
         ax.set_xlabel(xl)
         ax.set_ylabel(yl)

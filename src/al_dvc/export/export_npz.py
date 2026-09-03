@@ -28,7 +28,9 @@ def export_npz(result: PipelineResult, path: str | Path) -> Path:
     arrays: dict[str, np.ndarray] = {
         "coordinates": mesh.coordinates,
         "grid_shape": np.asarray(mesh.grid_shape, dtype=np.int64),
-        "x0": mesh.x0, "y0": mesh.y0, "z0": mesh.z0,
+        "x0": mesh.x0,
+        "y0": mesh.y0,
+        "z0": mesh.z0,
         "spacing": np.asarray(mesh.spacing, dtype=np.float64),
         "node_valid": mesh.node_valid,
         "elements": mesh.elements,

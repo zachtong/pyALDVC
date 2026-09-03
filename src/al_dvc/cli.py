@@ -48,7 +48,14 @@ def _progress_printer(frac: float, msg: str) -> None:
 def cmd_run(args: argparse.Namespace) -> int:
     from .core.config import dvcpara_default
     from .core.pipeline import run_aldvc
-    from .export import export_csv, export_mat, export_npz, export_report, export_run_summary, export_vtk
+    from .export import (
+        export_csv,
+        export_mat,
+        export_npz,
+        export_report,
+        export_run_summary,
+        export_vtk,
+    )
     from .io.volume_io import FileVolumeProvider, resolve_volume_paths
 
     cfg: dict = {}
@@ -69,11 +76,19 @@ def cmd_run(args: argparse.Namespace) -> int:
     volumes = args.volumes or cfg.get("volumes")
     if not volumes:
         raise SystemExit("No volumes given (use --volumes or 'volumes:' in the config).")
-    paths = resolve_volume_paths(volumes if len(volumes) > 1 else volumes[0]) if isinstance(volumes, list) else resolve_volume_paths(volumes)
+    paths = (
+        resolve_volume_paths(volumes if len(volumes) > 1 else volumes[0])
+        if isinstance(volumes, list)
+        else resolve_volume_paths(volumes)
+    )
     masks = args.masks or cfg.get("masks")
     mask_paths = None
     if masks:
-        mask_paths = resolve_volume_paths(masks if isinstance(masks, str) or len(masks) > 1 else masks[0]) if not isinstance(masks, list) or len(masks) != 1 else resolve_volume_paths(masks[0])
+        mask_paths = (
+            resolve_volume_paths(masks if isinstance(masks, str) or len(masks) > 1 else masks[0])
+            if not isinstance(masks, list) or len(masks) != 1
+            else resolve_volume_paths(masks[0])
+        )
         if len(mask_paths) == 1 and len(paths) > 1:
             mask_paths = mask_paths * len(paths)
     out_dir = Path(args.output or cfg.get("output", "aldvc_results"))
@@ -183,16 +198,25 @@ def cmd_plot(args: argparse.Namespace) -> int:
 
     d = load_npz_result(args.npz)
     grid = tuple(int(s) for s in d["grid_shape"])
-    mesh = DVCMesh(coordinates=d["coordinates"], elements=d["elements"], grid_shape=grid,
-                   x0=d["x0"], y0=d["y0"], z0=d["z0"], spacing=tuple(float(s) for s in d["spacing"]),
-                   node_valid=d["node_valid"])
+    mesh = DVCMesh(
+        coordinates=d["coordinates"],
+        elements=d["elements"],
+        grid_shape=grid,
+        x0=d["x0"],
+        y0=d["y0"],
+        z0=d["z0"],
+        spacing=tuple(float(s) for s in d["spacing"]),
+        node_valid=d["node_valid"],
+    )
     key = f"{args.field}_{args.frame}"
     if key not in d:
         if args.field in ("disp_u", "disp_v", "disp_w"):
             comp = "uvw".index(args.field[-1])
             arr = d[f"disp_phys_{args.frame}"][:, comp] if f"disp_phys_{args.frame}" in d else d[f"U_accum_{args.frame}"][:, comp]
         else:
-            raise SystemExit(f"field '{args.field}' not found in {args.npz}; keys: {sorted(k for k in d if k.endswith(f'_{args.frame}'))}")
+            raise SystemExit(
+                f"field '{args.field}' not found in {args.npz}; keys: {sorted(k for k in d if k.endswith(f'_{args.frame}'))}"
+            )
     else:
         arr = d[key]
     fig, axes = plt.subplots(1, 3, figsize=(13, 4.2))

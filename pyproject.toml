@@ -102,3 +102,10 @@ omit = [
     "src/al_dvc/solver/numba_kernels.py",
     "src/al_dvc/solver/interp_kernels.py",
 ]
+
+[tool.ruff]
+line-length = 130
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]

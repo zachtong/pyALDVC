@@ -2,8 +2,16 @@ import numpy as np
 
 from al_dvc.io.volume_ops import normalize_volume
 from al_dvc.mesh.grid_mesh import mesh_setup
-from al_dvc.solver.integer_search import auto_pyramid_levels, ncc_search, ncc_search_expanding
-from al_dvc.synthetic import affine_displacement, generate_speckle_volume, warp_volume_lagrangian
+from al_dvc.solver.integer_search import (
+    auto_pyramid_levels,
+    ncc_search,
+    ncc_search_expanding,
+)
+from al_dvc.synthetic import (
+    affine_displacement,
+    generate_speckle_volume,
+    warp_volume_lagrangian,
+)
 
 
 def _pair(shift, shape=(64, 64, 72), seed=21):

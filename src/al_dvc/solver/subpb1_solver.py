@@ -20,7 +20,7 @@ from ..core.data_structures import (
 )
 from ..utils.outlier_detection import universal_median_test
 from .interp_kernels import INTERP_MODE_BY_NAME
-from .local_icgn import LocalContext, fill_bad_nodes
+from .local_icgn import LocalContext
 
 logger = logging.getLogger(__name__)
 
@@ -58,15 +58,57 @@ def subpb1_solver(
         from .numba_kernels import icgn_3dof_parallel
 
         U, n_iter, status, zncc = icgn_3dof_parallel(
-            ctx.coords_int, U_hat, F_hat, vdual, hx, hy, hz, ref.f, ref.gx, ref.gy, ref.gz, ref.mask, g, mode,
-            ctx.H_all, ctx.meanf, ctx.bottomf, ctx.valid, float(mu), float(para.icgn_tol), int(para.icgn_max_iter),
+            ctx.coords_int,
+            U_hat,
+            F_hat,
+            vdual,
+            hx,
+            hy,
+            hz,
+            ref.f,
+            ref.gx,
+            ref.gy,
+            ref.gz,
+            ref.mask,
+            g,
+            mode,
+            ctx.H_all,
+            ctx.meanf,
+            ctx.bottomf,
+            ctx.valid,
+            float(mu),
+            float(para.icgn_tol),
+            float(para.icgn_dp_tol),
+            int(para.icgn_max_iter),
+            int(para.icgn_patience),
         )
     else:
         from .reference_kernels import icgn_3dof_batch_np
 
         U, n_iter, status, zncc = icgn_3dof_batch_np(
-            ctx.coords_int, U_hat, F_hat, vdual, hx, hy, hz, ref.f, ref.gx, ref.gy, ref.gz, ref.mask, g, mode,
-            ctx.H_all, ctx.meanf, ctx.bottomf, ctx.valid, float(mu), float(para.icgn_tol), int(para.icgn_max_iter),
+            ctx.coords_int,
+            U_hat,
+            F_hat,
+            vdual,
+            hx,
+            hy,
+            hz,
+            ref.f,
+            ref.gx,
+            ref.gy,
+            ref.gz,
+            ref.mask,
+            g,
+            mode,
+            ctx.H_all,
+            ctx.meanf,
+            ctx.bottomf,
+            ctx.valid,
+            float(mu),
+            float(para.icgn_tol),
+            float(para.icgn_dp_tol),
+            int(para.icgn_max_iter),
+            int(para.icgn_patience),
         )
     solve_time = time.perf_counter() - t0
     U = np.asarray(U, dtype=np.float64)
@@ -78,14 +120,18 @@ def subpb1_solver(
     if para.local_outlier_threshold > 0:
         good = ~bad
         if good.sum() > 27:
-            flag = universal_median_test(U.reshape(mesh.grid_shape + (3,)), good.reshape(mesh.grid_shape),
-                                         para.local_outlier_threshold)
+            flag = universal_median_test(
+                U.reshape(mesh.grid_shape + (3,)), good.reshape(mesh.grid_shape), para.local_outlier_threshold
+            )
             bad |= flag.ravel()
     n_bad = int(np.sum(bad & (status != STATUS_INVALID_SUBSET) & (status != STATUS_SKIPPED)))
     logger.info(
         "Subpb1 (3-DOF): %d/%d converged, %d bad, median ZNCC=%.4f, %.2fs",
-        int(np.sum(status == STATUS_CONVERGED)), N, int(bad.sum()),
-        float(np.nanmedian(zncc)) if np.isfinite(zncc).any() else float("nan"), solve_time,
+        int(np.sum(status == STATUS_CONVERGED)),
+        N,
+        int(bad.sum()),
+        float(np.nanmedian(zncc)) if np.isfinite(zncc).any() else float("nan"),
+        solve_time,
     )
     # nodes the local solver could not handle keep the global estimate
     U_filled = U.copy()

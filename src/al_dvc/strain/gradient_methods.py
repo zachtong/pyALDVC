@@ -25,7 +25,10 @@ def _window_offsets(halfwidth: tuple[int, int, int], spacing: tuple[float, float
     rx, ry, rz = halfwidth
     hx, hy, hz = spacing
     Z, Y, X = np.meshgrid(
-        np.arange(-rz, rz + 1) * hz, np.arange(-ry, ry + 1) * hy, np.arange(-rx, rx + 1) * hx, indexing="ij",
+        np.arange(-rz, rz + 1) * hz,
+        np.arange(-ry, ry + 1) * hy,
+        np.arange(-rx, rx + 1) * hx,
+        indexing="ij",
     )
     return X.astype(np.float64), Y.astype(np.float64), Z.astype(np.float64)
 
@@ -57,8 +60,7 @@ def gradient_plane_fit(
 
     # normal-equation sums (correlation of weights with polynomial kernels)
     S = {}
-    kernels = {"1": ones, "x": X, "y": Y, "z": Z, "xx": X * X, "yy": Y * Y, "zz": Z * Z,
-               "xy": X * Y, "xz": X * Z, "yz": Y * Z}
+    kernels = {"1": ones, "x": X, "y": Y, "z": Z, "xx": X * X, "yy": Y * Y, "zz": Z * Z, "xy": X * Y, "xz": X * Z, "yz": Y * Z}
     for k, kern in kernels.items():
         S[k] = corr(w, kern)
     AtA = np.empty((nz, ny, nx, 4, 4))

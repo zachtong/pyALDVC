@@ -29,7 +29,9 @@ def export_mat(result: PipelineResult, path: str | Path) -> Path:
         "coordinatesFEM": mesh.coordinates,
         "elementsFEM": mesh.elements + 1,
         "gridShapeZYX": np.asarray(mesh.grid_shape),
-        "x0": mesh.x0, "y0": mesh.y0, "z0": mesh.z0,
+        "x0": mesh.x0,
+        "y0": mesh.y0,
+        "z0": mesh.z0,
         "winsize": np.asarray(result.dvc_para.winsize),
         "winstepsize": np.asarray(result.dvc_para.winstepsize),
         "voxelSize": np.asarray(result.dvc_para.voxel_size),
@@ -50,19 +52,38 @@ def export_mat(result: PipelineResult, path: str | Path) -> Path:
         U_int[k] = fr.U.reshape(-1, 1)
         F_int[k] = F_to_matlab_order(fr.F).reshape(-1, 1)
         zncc[k] = fr.zncc if fr.zncc is not None else np.array([])
-    data.update({"ResultDisp": U, "ResultDispAccum": U_acc, "ResultDefGrad": F,
-                 "ResultDisp_interleaved": U_int, "ResultDefGrad_interleaved": F_int, "ResultZNCC": zncc})
+    data.update(
+        {
+            "ResultDisp": U,
+            "ResultDispAccum": U_acc,
+            "ResultDefGrad": F,
+            "ResultDisp_interleaved": U_int,
+            "ResultDefGrad_interleaved": F_int,
+            "ResultZNCC": zncc,
+        }
+    )
     if result.result_strain:
         m = len(result.result_strain)
         strain = np.empty((m,), dtype=object)
         for k, sr in enumerate(result.result_strain):
             strain[k] = {
-                "exx": sr.exx, "eyy": sr.eyy, "ezz": sr.ezz, "exy": sr.exy, "exz": sr.exz, "eyz": sr.eyz,
-                "principal": sr.principal, "vonMises": sr.von_mises, "maxShear": sr.max_shear,
-                "volumetric": sr.volumetric, "detF": sr.det_F, "rotationDeg": sr.rotation_deg,
-                "valid": sr.strain_valid.astype(np.uint8), "F": sr.F,
+                "exx": sr.exx,
+                "eyy": sr.eyy,
+                "ezz": sr.ezz,
+                "exy": sr.exy,
+                "exz": sr.exz,
+                "eyz": sr.eyz,
+                "principal": sr.principal,
+                "vonMises": sr.von_mises,
+                "maxShear": sr.max_shear,
+                "volumetric": sr.volumetric,
+                "detF": sr.det_F,
+                "rotationDeg": sr.rotation_deg,
+                "valid": sr.strain_valid.astype(np.uint8),
+                "F": sr.F,
                 "dispPhysical": np.column_stack([sr.disp_u, sr.disp_v, sr.disp_w]),
-                "strainType": sr.strain_type, "method": sr.method,
+                "strainType": sr.strain_type,
+                "method": sr.method,
             }
         data["ResultStrain"] = strain
     savemat(str(p), data, do_compression=True, long_field_names=True)

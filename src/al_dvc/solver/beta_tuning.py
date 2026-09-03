@@ -1,10 +1,16 @@
 """Automatic selection of the ADMM penalty ``beta`` (L-curve, MATLAB Section 5).
 
 For every candidate ``beta_k = beta_range[k] * mean(h)^2 * mu`` the global
-step is solved with zero duals; ``Err1 = |u1 - u_hat|`` and
-``Err2 = |F1 - grad(u_hat)|`` are z-normalised over the sweep and their sum
-is minimised, with a quadratic refinement in ``log10(beta)`` around the
-discrete minimum. Boundary nodes are excluded from the error norms.
+step is solved with zero duals and ``Err1 = |u1 - u_hat|``,
+``Err2 = |F1 - grad(u_hat)|`` are recorded. ``para.beta_criterion`` selects
+the score:
+
+* ``"matlab"`` (default): ``Err1 + mean(h)^2 * Err2`` (both terms in voxels),
+  discrete minimum over the candidates -- exactly the MATLAB rule;
+* ``"normalized"``: z-normalised ``Err1`` and ``Err2`` summed, with a
+  quadratic refinement in ``log10(beta)`` around the discrete minimum.
+
+Boundary nodes are excluded from the error norms.
 """
 
 from __future__ import annotations
@@ -55,20 +61,30 @@ def auto_tune_beta(
         F2 = np.where(np.isfinite(F2), F2, F1)
         err1[k] = np.linalg.norm((U1 - U2)[include])
         err2[k] = np.linalg.norm((F1 - F2)[include])
+    h2 = float(np.mean(para.winstepsize)) ** 2
+    criterion = getattr(para, "beta_criterion", "matlab")
     s1, s2 = np.std(err1), np.std(err2)
-    if s1 > 1e-15 and s2 > 1e-15:
+    if criterion == "normalized" and s1 > 1e-15 and s2 > 1e-15:
         score = (err1 - err1.mean()) / s1 + (err2 - err2.mean()) / s2
     else:
-        score = err1 + err2 * float(np.mean(para.winstepsize)) ** 2
+        score = err1 + err2 * h2
     k_best = int(np.argmin(score))
     beta = float(betas[k_best])
-    if 0 < k_best < len(betas) - 1:
-        x = np.log10(betas[k_best - 1:k_best + 2])
-        y = score[k_best - 1:k_best + 2]
+    if criterion == "normalized" and 0 < k_best < len(betas) - 1:
+        x = np.log10(betas[k_best - 1 : k_best + 2])
+        y = score[k_best - 1 : k_best + 2]
         p = np.polyfit(x, y, 2)
         if p[0] > 1e-15:
             cand = 10.0 ** (-p[1] / (2.0 * p[0]))
             if betas[k_best - 1] <= cand <= betas[k_best + 1]:
                 beta = float(cand)
     logger.info("Auto-tuned beta = %.4e (candidates %s)", beta, np.array2string(betas, precision=3))
-    return beta, {"betas": betas, "err1": err1, "err2": err2, "score": score, "k_best": k_best, "beta": beta}
+    return beta, {
+        "betas": betas,
+        "err1": err1,
+        "err2": err2,
+        "score": score,
+        "k_best": k_best,
+        "beta": beta,
+        "criterion": criterion,
+    }

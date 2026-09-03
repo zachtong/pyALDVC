@@ -15,7 +15,16 @@ from .strain_types import (
 )
 
 __all__ = [
-    "compute_strain", "gradient_fd", "gradient_plane_fit",
-    "deformation_gradient", "det_deformation_gradient", "max_shear_strain", "polar_rotation_deg",
-    "principal_strains", "scale_to_physical", "strain_tensor", "volumetric_strain", "von_mises_strain",
+    "compute_strain",
+    "gradient_fd",
+    "gradient_plane_fit",
+    "deformation_gradient",
+    "det_deformation_gradient",
+    "max_shear_strain",
+    "polar_rotation_deg",
+    "principal_strains",
+    "scale_to_physical",
+    "strain_tensor",
+    "volumetric_strain",
+    "von_mises_strain",
 ]

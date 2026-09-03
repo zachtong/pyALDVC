@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 PYRAMID_FINE_RADIUS = 4
 MIN_PYRAMID_SUBSET = 8
-DEFAULT_INIT_SUBSET = 16      # NCC template size used when init_subset is None (capped at winsize)
+DEFAULT_INIT_SUBSET = 16  # NCC template size used when init_subset is None (capped at winsize)
 CLIPPED_EXPAND_FRACTION = 0.05  # expand the search radius when more than this fraction of peaks is clipped
 
 
@@ -112,10 +112,26 @@ def _zncc_direct(f, g, coords, hx, hy, hz, rx, ry, rz, wx0, wy0, wz0, t_ok, out)
                     z1 = dz + sz
                     y1 = dy + sy
                     x1 = dx + sx
-                    sg = (S1[z1, y1, x1] - S1[dz, y1, x1] - S1[z1, dy, x1] - S1[z1, y1, dx]
-                          + S1[dz, dy, x1] + S1[dz, y1, dx] + S1[z1, dy, dx] - S1[dz, dy, dx])
-                    sgg = (S2[z1, y1, x1] - S2[dz, y1, x1] - S2[z1, dy, x1] - S2[z1, y1, dx]
-                           + S2[dz, dy, x1] + S2[dz, y1, dx] + S2[z1, dy, dx] - S2[dz, dy, dx])
+                    sg = (
+                        S1[z1, y1, x1]
+                        - S1[dz, y1, x1]
+                        - S1[z1, dy, x1]
+                        - S1[z1, y1, dx]
+                        + S1[dz, dy, x1]
+                        + S1[dz, y1, dx]
+                        + S1[z1, dy, dx]
+                        - S1[dz, dy, dx]
+                    )
+                    sgg = (
+                        S2[z1, y1, x1]
+                        - S2[dz, y1, x1]
+                        - S2[z1, dy, x1]
+                        - S2[z1, y1, dx]
+                        + S2[dz, dy, x1]
+                        + S2[dz, y1, dx]
+                        + S2[z1, dy, dx]
+                        - S2[dz, dy, dx]
+                    )
                     var = sgg - sg * sg / n_tpl
                     if var < 1e-20:
                         out[n, dz, dy, dx] = 0.0
@@ -167,17 +183,45 @@ def _window_box_stats(W, sz, sy, sx, out_sum, out_sq):
                     z1 = z + sz
                     y1 = y + sy
                     x1 = x + sx
-                    out_sum[k, z, y, x] = (S1[z1, y1, x1] - S1[z, y1, x1] - S1[z1, y, x1] - S1[z1, y1, x]
-                                           + S1[z, y, x1] + S1[z, y1, x] + S1[z1, y, x] - S1[z, y, x])
-                    out_sq[k, z, y, x] = (S2[z1, y1, x1] - S2[z, y1, x1] - S2[z1, y, x1] - S2[z1, y1, x]
-                                          + S2[z, y, x1] + S2[z, y1, x] + S2[z1, y, x] - S2[z, y, x])
+                    out_sum[k, z, y, x] = (
+                        S1[z1, y1, x1]
+                        - S1[z, y1, x1]
+                        - S1[z1, y, x1]
+                        - S1[z1, y1, x]
+                        + S1[z, y, x1]
+                        + S1[z, y1, x]
+                        + S1[z1, y, x]
+                        - S1[z, y, x]
+                    )
+                    out_sq[k, z, y, x] = (
+                        S2[z1, y1, x1]
+                        - S2[z, y1, x1]
+                        - S2[z1, y, x1]
+                        - S2[z1, y1, x]
+                        + S2[z, y, x1]
+                        + S2[z, y1, x]
+                        + S2[z1, y, x]
+                        - S2[z, y, x]
+                    )
+
 
 # 27-point quadratic design matrix and its pseudo-inverse (for sub-voxel peaks)
 _dz, _dy, _dx = np.meshgrid([-1, 0, 1], [-1, 0, 1], [-1, 0, 1], indexing="ij")
 _dx, _dy, _dz = _dx.ravel().astype(float), _dy.ravel().astype(float), _dz.ravel().astype(float)
-_DESIGN = np.column_stack([
-    np.ones(27), _dx, _dy, _dz, _dx * _dy, _dx * _dz, _dy * _dz, _dx**2, _dy**2, _dz**2,
-])
+_DESIGN = np.column_stack(
+    [
+        np.ones(27),
+        _dx,
+        _dy,
+        _dz,
+        _dx * _dy,
+        _dx * _dz,
+        _dy * _dz,
+        _dx**2,
+        _dy**2,
+        _dz**2,
+    ]
+)
 _PINV = np.linalg.pinv(_DESIGN)  # (10, 27)
 
 
@@ -198,7 +242,10 @@ def block_downsample(vol: NDArray, factor: int) -> NDArray[np.float32]:
 
 
 def phase_correlation_shift(
-    f: NDArray, g: NDArray, voi: VOIRange | None = None, max_dim: int = 128,
+    f: NDArray,
+    g: NDArray,
+    voi: VOIRange | None = None,
+    max_dim: int = 128,
 ) -> NDArray[np.float64]:
     """Global integer shift ``(dx, dy, dz)`` of ``g`` relative to ``f`` (voxels).
 
@@ -344,20 +391,19 @@ def ncc_search(
         chunk = max(chunk, 4096)
 
     for start in range(0, idx_all.size, chunk):
-        ids = idx_all[start:start + chunk]
+        ids = idx_all[start : start + chunk]
         n = ids.size
         if use_direct:
             ncc = np.empty((n, vz, vy, vx))
-            _zncc_direct(f, g, coords[ids], hx, hy, hz, rx, ry, rz, wx0[ids], wy0[ids], wz0[ids],
-                         np.ones(n, dtype=np.bool_), ncc)
+            _zncc_direct(f, g, coords[ids], hx, hy, hz, rx, ry, rz, wx0[ids], wy0[ids], wz0[ids], np.ones(n, dtype=np.bool_), ncc)
             t_norm = np.where(ncc[:, 0, 0, 0] > -1.5, 1.0, 0.0)  # flat templates were marked -2
             ncc[ncc < -1.0] = 0.0
         else:
             T = np.empty((n, sz, sy, sx), dtype=np.float32)
             W = np.empty((n, wz, wy, wx), dtype=np.float32)
             for k, i in enumerate(ids):
-                T[k] = f[cz[i] - hz:cz[i] + hz + 1, cy[i] - hy:cy[i] + hy + 1, cx[i] - hx:cx[i] + hx + 1]
-                W[k] = g[wz0[i]:wz0[i] + wz, wy0[i]:wy0[i] + wy, wx0[i]:wx0[i] + wx]
+                T[k] = f[cz[i] - hz : cz[i] + hz + 1, cy[i] - hy : cy[i] + hy + 1, cx[i] - hx : cx[i] + hx + 1]
+                W[k] = g[wz0[i] : wz0[i] + wz, wy0[i] : wy0[i] + wy, wx0[i] : wx0[i] + wx]
             T -= T.mean(axis=(1, 2, 3), keepdims=True, dtype=np.float64).astype(np.float32)
             t_norm = np.sqrt(np.sum(T.astype(np.float64) ** 2, axis=(1, 2, 3)))
             Ff = sfft.rfftn(W, s=fft_shape, axes=(1, 2, 3), workers=-1)
@@ -386,10 +432,17 @@ def ncc_search(
         lo = free_lo[ids]
         hi = free_hi[ids]
         on_edge = (
-            ((px == 0) & lo[:, 0]) | ((px == 2 * rx) & hi[:, 0])
-            | ((py == 0) & lo[:, 1]) | ((py == 2 * ry) & hi[:, 1])
-            | ((pz == 0) & lo[:, 2]) | ((pz == 2 * rz) & hi[:, 2])
-        ) if (rx > 0 or ry > 0 or rz > 0) else np.zeros(n, dtype=bool)
+            (
+                ((px == 0) & lo[:, 0])
+                | ((px == 2 * rx) & hi[:, 0])
+                | ((py == 0) & lo[:, 1])
+                | ((py == 2 * ry) & hi[:, 1])
+                | ((pz == 0) & lo[:, 2])
+                | ((pz == 2 * rz) & hi[:, 2])
+            )
+            if (rx > 0 or ry > 0 or rz > 0)
+            else np.zeros(n, dtype=bool)
+        )
         sub = np.zeros((n, 3))
         at_border = (px == 0) | (px == 2 * rx) | (py == 0) | (py == 2 * ry) | (pz == 0) | (pz == 2 * rz)
         interior = ~at_border & (rx > 0) & (ry > 0) & (rz > 0)
@@ -397,7 +450,7 @@ def ncc_search(
             ii = np.flatnonzero(interior)
             neigh = np.empty((ii.size, 27))
             for kk, k in enumerate(ii):
-                neigh[kk] = ncc[k, pz[k] - 1:pz[k] + 2, py[k] - 1:py[k] + 2, px[k] - 1:px[k] + 2].ravel()
+                neigh[kk] = ncc[k, pz[k] - 1 : pz[k] + 2, py[k] - 1 : py[k] + 2, px[k] - 1 : px[k] + 2].ravel()
             sub[ii] = _subvoxel_peak(neigh)
         # displacement = (window start + peak offset + half) - node centre
         disp[ids, 0] = wx0[ids] + px + hx - cx[ids] + sub[:, 0]
@@ -472,9 +525,14 @@ def _clean_field(disp: NDArray[np.float64], grid_shape: tuple[int, int, int], th
 MIN_COARSE_STD_RATIO = 0.35  # a coarse level must retain this fraction of the texture contrast
 
 
-def auto_pyramid_levels(shape: tuple[int, int, int], subset: tuple[int, int, int], radius: tuple[int, int, int],
-                        max_levels: int = 3, f: NDArray | None = None,
-                        min_std_ratio: float = MIN_COARSE_STD_RATIO) -> int:
+def auto_pyramid_levels(
+    shape: tuple[int, int, int],
+    subset: tuple[int, int, int],
+    radius: tuple[int, int, int],
+    max_levels: int = 3,
+    f: NDArray | None = None,
+    min_std_ratio: float = MIN_COARSE_STD_RATIO,
+) -> int:
     """Number of coarse levels that (a) fit the search window and (b) keep texture.
 
     Block averaging by ``2**level`` washes out a speckle pattern whose
@@ -486,7 +544,7 @@ def auto_pyramid_levels(shape: tuple[int, int, int], subset: tuple[int, int, int
     levels = 0
     std0 = float(np.std(f)) if f is not None else None
     for lv in range(1, max_levels + 1):
-        fac = 2 ** lv
+        fac = 2**lv
         fits = True
         for n, w, r in zip(shape[::-1], subset, radius):
             w_l = max(MIN_PYRAMID_SUBSET, (w // fac) // 2 * 2)
@@ -535,7 +593,7 @@ def pyramid_search(
     info: dict = {"levels": levels, "per_level": [], "expansions": 0}
 
     for lv in range(levels, -1, -1):
-        fac = 2 ** lv
+        fac = 2**lv
         fl = block_downsample(f, fac) if fac > 1 else f
         gl = block_downsample(g, fac) if fac > 1 else g
         subset_l = tuple(max(MIN_PYRAMID_SUBSET, (w // fac) // 2 * 2) for w in subset)
@@ -553,10 +611,16 @@ def pyramid_search(
             info["per_level"].append({"level": lv, "n_ok": 0, "radius": rad_l, "subset": subset_l})
             continue
         disp_full = _clean_field(d, grid_shape, outlier_threshold)
-        info["per_level"].append({
-            "level": lv, "n_ok": n_ok, "radius": rad_l, "subset": subset_l,
-            "median_cc": float(np.nanmedian(res["cc"])), "clipped_frac": float(np.mean(res["clipped"][res["ok"]])),
-        })
+        info["per_level"].append(
+            {
+                "level": lv,
+                "n_ok": n_ok,
+                "radius": rad_l,
+                "subset": subset_l,
+                "median_cc": float(np.nanmedian(res["cc"])),
+                "clipped_frac": float(np.mean(res["clipped"][res["ok"]])),
+            }
+        )
         info["cc"] = res["cc"]
         info["pce"] = res["pce"]
         info["ok"] = res["ok"]

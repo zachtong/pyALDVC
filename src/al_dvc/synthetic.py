@@ -102,7 +102,10 @@ def rotation_displacement(angle_deg: float, axis: str = "z", centre=(0.0, 0.0, 0
 
 
 def warp_volume_lagrangian(
-    ref: NDArray, disp: DispFunc, n_iter: int = 25, order: int = 5,
+    ref: NDArray,
+    disp: DispFunc,
+    n_iter: int = 25,
+    order: int = 5,
 ) -> NDArray[np.float32]:
     """Deformed volume ``g(x) = f(X)`` with ``x = X + u(X)`` (fixed-point inversion)."""
     ref64 = np.asarray(ref, dtype=np.float64)

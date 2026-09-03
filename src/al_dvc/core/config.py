@@ -22,11 +22,14 @@ FTriple = tuple[float, float, float]
 
 # MATLAB main_ALDVC.m: ALVarBetaList = [sqrt(1e-5),1e-2,sqrt(1e-3),1e-1,sqrt(1e-1)] * mean(h)^2 * mu
 DEFAULT_BETA_RANGE: tuple[float, ...] = (
-    math.sqrt(1e-5), 1e-2, math.sqrt(1e-3), 1e-1, math.sqrt(1e-1),
+    math.sqrt(1e-5),
+    1e-2,
+    math.sqrt(1e-3),
+    1e-1,
+    math.sqrt(1e-1),
 )
 
-_TRIPLE_INT_FIELDS = ("winsize", "winstepsize", "search_radius", "init_subset",
-                      "strain_plane_fit_halfwidth")
+_TRIPLE_INT_FIELDS = ("winsize", "winstepsize", "search_radius", "init_subset", "strain_plane_fit_halfwidth")
 _TRIPLE_FLOAT_FIELDS = ("voxel_size",)
 
 
@@ -40,14 +43,14 @@ class DVCPara:
 
     # --- 1. Volume of interest & physical units ---
     voi: VOIRange = field(default_factory=VOIRange)
-    voxel_size: FTriple = (1.0, 1.0, 1.0)      # physical size of one voxel (x, y, z)
-    units: str = "voxel"                        # label for exports/plots
-    volume_shape: Triple = (0, 0, 0)            # (nz, ny, nx); filled by the pipeline
-    prefilter_sigma: float = 0.0                # Gaussian pre-smoothing of every volume (voxels; 0 = off)
+    voxel_size: FTriple = (1.0, 1.0, 1.0)  # physical size of one voxel (x, y, z)
+    units: str = "voxel"  # label for exports/plots
+    volume_shape: Triple = (0, 0, 0)  # (nz, ny, nx); filled by the pipeline
+    prefilter_sigma: float = 0.0  # Gaussian pre-smoothing of every volume (voxels; 0 = off)
 
     # --- 2. Subset and node grid ---
-    winsize: Triple = (32, 32, 32)              # subset size (x, y, z); even integers
-    winstepsize: Triple = (16, 16, 16)          # node spacing (x, y, z)
+    winsize: Triple = (32, 32, 32)  # subset size (x, y, z); even integers
+    winstepsize: Triple = (16, 16, 16)  # node spacing (x, y, z)
 
     # --- 3. Initial guess ---
     # "pyramid": coarse-to-fine NCC (robust to large motion; default)
@@ -56,37 +59,44 @@ class DVCPara:
     # "previous": reuse the previous frame's result (falls back to pyramid on
     #             the first frame / reference switch)
     init_guess_method: Literal["pyramid", "ncc", "zero", "previous"] = "pyramid"
-    search_radius: Triple = (8, 8, 8)           # NCC search half-width per axis (voxels)
-    init_subset: Triple | None = None           # NCC template size; None -> winsize
-    global_shift: bool = True                   # rigid pre-shift by phase correlation
-    pyramid_levels: int = 0                     # 0 = automatic
-    ncc_auto_expand: bool = True                # grow search radius when peaks are clipped
-    ncc_max_expand: int = 3                     # max number of doublings
-    init_outlier_threshold: float = 2.0         # universal median test (0 disables)
-    init_min_pce: float = 0.0                   # drop NCC results with PCE below this (0 disables)
+    search_radius: Triple = (8, 8, 8)  # NCC search half-width per axis (voxels)
+    init_subset: Triple | None = None  # NCC template size; None -> winsize
+    global_shift: bool = True  # rigid pre-shift by phase correlation
+    pyramid_levels: int = 0  # 0 = automatic
+    ncc_auto_expand: bool = True  # grow search radius when peaks are clipped
+    ncc_max_expand: int = 3  # max number of doublings
+    init_outlier_threshold: float = 2.0  # universal median test (0 disables)
+    init_min_pce: float = 0.0  # drop NCC results with PCE below this (0 disables)
 
     # --- 4. Local IC-GN (Subproblem 1) ---
-    icgn_tol: float = 1e-2                      # relative gradient-norm tolerance
+    icgn_tol: float = 1e-2  # relative gradient-norm tolerance (MATLAB criterion)
+    icgn_dp_tol: float = 1e-3  # parameter-increment tolerance [voxel]; gradient terms scaled by winsize/2
+    icgn_patience: int = 5  # stop a node after this many iterations without improvement of the
+    # ZNCC (12-DOF) or of the step norm (3-DOF); 0 disables
     icgn_max_iter: int = 100
     interp_method: Literal["cubic", "bspline", "linear"] = "cubic"
-    min_valid_ratio: float = 0.5                # min fraction of mask-valid voxels per subset
-    local_outlier_threshold: float = 2.0        # median test after the local pass (0 disables)
-    hessian_cond_max: float = 1e12              # reject subsets whose Hessian is worse conditioned
+    min_valid_ratio: float = 0.5  # min fraction of mask-valid voxels per subset
+    local_outlier_threshold: float = 2.0  # median test after the local pass (0 disables); MATLAB default.
+    # Flags ~10-15 % of nodes on noisy anisotropic scans, which
+    # measurably lowers the local error there (see docs/design.md)
+    hessian_cond_max: float = 1e12  # reject subsets whose Hessian is worse conditioned
 
     # --- 5. ADMM (Subproblem 2 + iterations) ---
     use_global_step: bool = True
     mu: float = 1e-3
-    beta: float | None = None                   # None -> auto-tune (L-curve) per reference frame
+    beta: float | None = None  # None -> auto-tune (L-curve) per reference frame
     beta_range: tuple[float, ...] = DEFAULT_BETA_RANGE
-    admm_max_iter: int = 4                      # total ADMM steps including the first local+global pass
-    admm_tol: float = 1e-2                      # stop when RMS update of U (voxels) drops below
+    beta_criterion: str = "matlab"  # L-curve score: 'matlab' = |u-u_hat| + h^2 |F-grad u_hat| (discrete
+    # minimum, MATLAB parity) or 'normalized' (z-scored sum, refined)
+    admm_max_iter: int = 4  # total ADMM steps including the first local+global pass
+    admm_tol: float = 1e-2  # stop when RMS update of U (voxels) drops below
     subpb2_method: Literal["fem", "fd"] = "fem"
     gauss_pt_order: int = 2
     dual_update: Literal["accumulate", "reset"] = "accumulate"
     global_solver: Literal["auto", "pcg", "direct"] = "auto"
     pcg_tol: float = 1e-8
     pcg_max_iter: int = 500
-    alpha: float = 0.0                          # extra Laplacian smoothing weight (0 = off)
+    alpha: float = 0.0  # extra Laplacian smoothing weight (0 = off)
 
     # --- 6. Post-smoothing (Gaussian, sigma in node units; 0 = off) ---
     disp_smoothing: float = 0.0
@@ -94,9 +104,9 @@ class DVCPara:
 
     # --- 7. Strain ---
     strain_method: Literal["plane_fit", "fem", "fd", "direct"] = "plane_fit"
-    strain_plane_fit_halfwidth: Triple = (1, 1, 1)   # in nodes; (1,1,1) = 3x3x3 window
+    strain_plane_fit_halfwidth: Triple = (1, 1, 1)  # in nodes; (1,1,1) = 3x3x3 window
     strain_type: Literal["infinitesimal", "green_lagrange", "euler_almansi", "hencky"] = "infinitesimal"
-    strain_edge_trim: bool = True               # flag nodes whose fitting window is incomplete
+    strain_edge_trim: bool = True  # flag nodes whose fitting window is incomplete
 
     # --- 8. Multi-frame tracking ---
     reference_mode: Literal["accumulative", "incremental"] = "accumulative"
@@ -105,8 +115,8 @@ class DVCPara:
 
     # --- 9. Compute ---
     backend: Literal["numba", "numpy"] = "numba"
-    n_threads: int = 0                          # 0 = all cores
-    store_local_result: bool = True             # keep U_local / F_local in FrameResult
+    n_threads: int = 0  # 0 = all cores
+    store_local_result: bool = True  # keep U_local / F_local in FrameResult
     verbose: bool = True
 
     def __post_init__(self) -> None:
@@ -170,7 +180,8 @@ def validate_dvcpara(p: DVCPara) -> None:
         warnings.warn(
             f"winstepsize {p.winstepsize} exceeds winsize {p.winsize}: subsets do not "
             "overlap, the global step will be weakly constrained.",
-            UserWarning, stacklevel=3,
+            UserWarning,
+            stacklevel=3,
         )
     for k, s in zip("xyz", p.voxel_size):
         if not (s > 0) or not math.isfinite(s):
@@ -195,6 +206,10 @@ def validate_dvcpara(p: DVCPara) -> None:
 
     if not (0 < p.icgn_tol < 1):
         raise ValueError(f"icgn_tol must be in (0, 1) (got {p.icgn_tol}).")
+    if not (0 < p.icgn_dp_tol < 1):
+        raise ValueError(f"icgn_dp_tol must be in (0, 1) (got {p.icgn_dp_tol}).")
+    if p.icgn_patience < 0:
+        raise ValueError("icgn_patience must be >= 0 (0 disables stall detection).")
     if p.icgn_max_iter < 1:
         raise ValueError("icgn_max_iter must be >= 1.")
     if p.interp_method not in ("cubic", "bspline", "linear"):
@@ -210,6 +225,8 @@ def validate_dvcpara(p: DVCPara) -> None:
         raise ValueError("beta must be positive or None (auto).")
     if len(p.beta_range) < 1 or any(b <= 0 for b in p.beta_range):
         raise ValueError("beta_range must contain positive values.")
+    if p.beta_criterion not in ("matlab", "normalized"):
+        raise ValueError(f"beta_criterion must be 'matlab' or 'normalized' (got {p.beta_criterion!r}).")
     if p.admm_max_iter < 1:
         raise ValueError("admm_max_iter must be >= 1.")
     if p.admm_tol <= 0:

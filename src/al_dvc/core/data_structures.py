@@ -14,7 +14,7 @@ Layout contracts (see docs/design.md, section 4):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from typing import Protocol
 
 import numpy as np
 from numpy.typing import NDArray
@@ -30,6 +30,7 @@ STATUS_INVALID_SUBSET = 3
 STATUS_SINGULAR = 4
 STATUS_NAN = 5
 STATUS_SKIPPED = 6  # node not solved (masked out before the solver ran)
+STATUS_STALLED = 7  # no objective improvement for icgn_patience iterations (hopeless node)
 
 STATUS_NAMES: dict[int, str] = {
     STATUS_CONVERGED: "converged",
@@ -39,6 +40,7 @@ STATUS_NAMES: dict[int, str] = {
     STATUS_SINGULAR: "singular",
     STATUS_NAN: "nan",
     STATUS_SKIPPED: "skipped",
+    STATUS_STALLED: "stalled",
 }
 
 
@@ -370,11 +372,19 @@ class StrainResult:
     method: str
 
     _FIELD_ALIASES = {
-        "strain_exx": "exx", "strain_eyy": "eyy", "strain_ezz": "ezz",
-        "strain_exy": "exy", "strain_exz": "exz", "strain_eyz": "eyz",
-        "strain_von_mises": "von_mises", "strain_max_shear": "max_shear",
-        "strain_volumetric": "volumetric", "strain_rotation": "rotation_deg",
-        "disp_x": "disp_u", "disp_y": "disp_v", "disp_z": "disp_w",
+        "strain_exx": "exx",
+        "strain_eyy": "eyy",
+        "strain_ezz": "ezz",
+        "strain_exy": "exy",
+        "strain_exz": "exz",
+        "strain_eyz": "eyz",
+        "strain_von_mises": "von_mises",
+        "strain_max_shear": "max_shear",
+        "strain_volumetric": "volumetric",
+        "strain_rotation": "rotation_deg",
+        "disp_x": "disp_u",
+        "disp_y": "disp_v",
+        "disp_z": "disp_w",
     }
 
     def field(self, name: str, trimmed: bool = True) -> NDArray[np.float64]:

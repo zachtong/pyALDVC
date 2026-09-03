@@ -43,12 +43,25 @@ def test_tuple_and_dict_inputs():
     assert p.voi.z == (0, 30)
 
 
-@pytest.mark.parametrize("kwargs", [
-    dict(winsize=15), dict(winsize=2), dict(winstepsize=0), dict(mu=0), dict(icgn_tol=2),
-    dict(admm_max_iter=0), dict(subpb2_method="spectral"), dict(strain_type="log"),
-    dict(interp_method="quintic"), dict(min_valid_ratio=0), dict(voxel_size=(1, 0, 1)),
-    dict(gauss_pt_order=4), dict(init_guess_method="fft"),
-])
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        dict(winsize=15),
+        dict(winsize=2),
+        dict(winstepsize=0),
+        dict(mu=0),
+        dict(icgn_tol=2),
+        dict(icgn_dp_tol=0),
+        dict(admm_max_iter=0),
+        dict(subpb2_method="spectral"),
+        dict(strain_type="log"),
+        dict(interp_method="quintic"),
+        dict(min_valid_ratio=0),
+        dict(voxel_size=(1, 0, 1)),
+        dict(gauss_pt_order=4),
+        dict(init_guess_method="fft"),
+    ],
+)
 def test_invalid_parameters_raise(kwargs):
     with pytest.raises((ValueError, TypeError)):
         dvcpara_default(**kwargs)
@@ -97,5 +110,6 @@ def test_P_UF_roundtrip_and_matlab_order():
     assert np.allclose(U, U2) and np.allclose(F, F2)
     m = F_to_matlab_order(F)
     # MATLAB order per node: F11 F21 F31 F12 F22 F32 F13 F23 F33
-    assert np.allclose(m[:9], [F[0, 0, 0], F[0, 1, 0], F[0, 2, 0], F[0, 0, 1], F[0, 1, 1], F[0, 2, 1],
-                               F[0, 0, 2], F[0, 1, 2], F[0, 2, 2]])
+    assert np.allclose(
+        m[:9], [F[0, 0, 0], F[0, 1, 0], F[0, 2, 0], F[0, 0, 1], F[0, 1, 1], F[0, 2, 1], F[0, 0, 2], F[0, 1, 2], F[0, 2, 2]]
+    )

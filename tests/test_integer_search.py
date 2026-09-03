@@ -10,7 +10,11 @@ from al_dvc.solver.integer_search import (
     phase_correlation_shift,
     pyramid_search,
 )
-from al_dvc.synthetic import affine_displacement, generate_speckle_volume, warp_volume_lagrangian
+from al_dvc.synthetic import (
+    affine_displacement,
+    generate_speckle_volume,
+    warp_volume_lagrangian,
+)
 
 
 @pytest.fixture(scope="module")
@@ -80,6 +84,7 @@ def test_pyramid_recovers_large_shift():
     info = pyramid_search(f, g, coords, mesh.grid_shape, (16, 16, 16), (4, 4, 4), levels=levels, global_shift=None)
     assert np.all(np.abs(info["disp"] - np.array(shift)) < 0.3)
     # with the global pre-shift the coarse level is unnecessary but harmless
-    info2 = pyramid_search(f, g, coords, mesh.grid_shape, (16, 16, 16), (4, 4, 4), levels=0,
-                           global_shift=phase_correlation_shift(f, g))
+    info2 = pyramid_search(
+        f, g, coords, mesh.grid_shape, (16, 16, 16), (4, 4, 4), levels=0, global_shift=phase_correlation_shift(f, g)
+    )
     assert np.all(np.abs(info2["disp"] - np.array(shift)) < 0.3)

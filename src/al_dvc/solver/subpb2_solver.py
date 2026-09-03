@@ -33,7 +33,7 @@ class GlobalSystem:
     beta: float
     mu: float
     alpha: float
-    A: sparse.csr_matrix              # active x active
+    A: sparse.csr_matrix  # active x active
     inv_diag: NDArray[np.float64]
     active_idx: NDArray[np.int64]
     lu: object | None
@@ -60,8 +60,17 @@ def build_global_system(ops: GlobalOperators, beta: float, mu: float, alpha: flo
             logger.warning("Sparse LU failed (%s); falling back to PCG.", exc)
             solver = "pcg"
     return GlobalSystem(
-        ops=ops, beta=beta, mu=mu, alpha=alpha, A=A, inv_diag=inv_diag, active_idx=active_idx,
-        lu=lu, solver=solver, pcg_tol=para.pcg_tol, pcg_max_iter=para.pcg_max_iter,
+        ops=ops,
+        beta=beta,
+        mu=mu,
+        alpha=alpha,
+        A=A,
+        inv_diag=inv_diag,
+        active_idx=active_idx,
+        lu=lu,
+        solver=solver,
+        pcg_tol=para.pcg_tol,
+        pcg_max_iter=para.pcg_max_iter,
     )
 
 

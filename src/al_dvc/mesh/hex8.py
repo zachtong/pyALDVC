@@ -16,8 +16,14 @@ from numpy.typing import NDArray
 # Signs of each node in natural coordinates, shape (8, 3)
 HEX8_SIGNS = np.array(
     [
-        [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
-        [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1],
+        [-1, -1, -1],
+        [1, -1, -1],
+        [1, 1, -1],
+        [-1, 1, -1],
+        [-1, -1, 1],
+        [1, -1, 1],
+        [1, 1, 1],
+        [-1, 1, 1],
     ],
     dtype=np.float64,
 )

@@ -32,8 +32,12 @@ STATUS_INVALID_SUBSET = 3
 STATUS_SINGULAR = 4
 STATUS_NAN = 5
 STATUS_SKIPPED = 6
+STATUS_STALLED = 7
 
 ABS_TOL = 1e-5  # MATLAB: normOfWNew*normOfWNewInit < 1e-5
+STALL_ZNCC_EPS = 1e-4  # a 12-DOF iteration must raise the ZNCC by this much to count as progress
+STALL_STEP_DECAY = 0.999  # a 3-DOF iteration must shrink the step norm by this factor to count as progress
+SCHEDULE_LANES = 64  # stripes of the block-cyclic node schedule in the parallel IC-GN wrappers
 LM_DAMPING_3DOF = 1e-3
 
 
@@ -84,9 +88,11 @@ def _chol_solve12(L, b, x):
 @njit(cache=JIT_CACHE, inline="always")
 def _inv3(a, out):
     """Inverse of a 3x3 matrix via cofactors. Returns the determinant."""
-    det = (a[0, 0] * (a[1, 1] * a[2, 2] - a[1, 2] * a[2, 1])
-           - a[0, 1] * (a[1, 0] * a[2, 2] - a[1, 2] * a[2, 0])
-           + a[0, 2] * (a[1, 0] * a[2, 1] - a[1, 1] * a[2, 0]))
+    det = (
+        a[0, 0] * (a[1, 1] * a[2, 2] - a[1, 2] * a[2, 1])
+        - a[0, 1] * (a[1, 0] * a[2, 2] - a[1, 2] * a[2, 0])
+        + a[0, 2] * (a[1, 0] * a[2, 1] - a[1, 1] * a[2, 0])
+    )
     if abs(det) < 1e-300:
         return 0.0
     inv = 1.0 / det
@@ -146,8 +152,7 @@ def compose_warp_inplace(P, dP):
 
 
 @njit(cache=JIT_CACHE)
-def _precompute_one(x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask,
-                    min_valid_ratio, cond_max, H, L):
+def _precompute_one(x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, cond_max, H, L):
     """Fill ``H`` (12x12) and ``L`` for one node.
 
     Returns ``(meanf, bottomf, n_valid, ok)``.
@@ -159,8 +164,7 @@ def _precompute_one(x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask,
         for j in range(12):
             H[i, j] = 0.0
 
-    if (x0 - hx < 0 or x0 + hx >= nx or y0 - hy < 0 or y0 + hy >= ny
-            or z0 - hz < 0 or z0 + hz >= nz):
+    if x0 - hx < 0 or x0 + hx >= nx or y0 - hy < 0 or y0 + hy >= ny or z0 - hz < 0 or z0 + hz >= nz:
         return 0.0, 1.0, 0, False
 
     sd = np.empty(12)
@@ -256,8 +260,21 @@ def precompute_nodes(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, c
     valid = np.zeros(N, dtype=np.bool_)
     for n in prange(N):
         meanf, bottomf, nv, ok = _precompute_one(
-            coords[n, 0], coords[n, 1], coords[n, 2], hx, hy, hz,
-            f, gx, gy, gz, mask, min_valid_ratio, cond_max, H_all[n], L_all[n],
+            coords[n, 0],
+            coords[n, 1],
+            coords[n, 2],
+            hx,
+            hy,
+            hz,
+            f,
+            gx,
+            gy,
+            gz,
+            mask,
+            min_valid_ratio,
+            cond_max,
+            H_all[n],
+            L_all[n],
         )
         meanf_all[n] = meanf
         bottomf_all[n] = bottomf
@@ -354,8 +371,9 @@ def _zncc_from_buffer(x0, y0, z0, hx, hy, hz, f, mask, gbuf, meanf, bottomf, mea
 
 
 @njit(cache=JIT_CACHE)
-def _icgn_12dof_single(P, x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask, g, mode,
-                       L, meanf, bottomf, tol, max_iter, gbuf):
+def _icgn_12dof_single(
+    P, x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask, g, mode, L, meanf, bottomf, tol, dp_tol, max_iter, patience, gbuf
+):
     """Iterate one node in place. Returns ``(n_iter, status, zncc)``."""
     b = np.empty(12)
     dP = np.empty(12)
@@ -363,6 +381,10 @@ def _icgn_12dof_single(P, x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask, g, mode,
     norm_init = -1.0
     half_scale = max(hx, max(hy, hz))
     zncc = np.nan
+    best_zncc = -2.0
+    best_dp = 1e300
+    stall = 0
+    P_best = np.empty(12)
 
     for it in range(1, max_iter + 1):
         ok, n_valid, meang, bottomg = _warp_and_sample(P, x0, y0, z0, hx, hy, hz, mask, g, mode, gbuf)
@@ -430,8 +452,24 @@ def _icgn_12dof_single(P, x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask, g, mode,
         dp_norm = np.sqrt(dp_norm)
         if not np.isfinite(dp_norm):
             return it, STATUS_NAN, np.nan
-        if dp_norm < tol:
+        if dp_norm < dp_tol:
             return it, STATUS_CONVERGED, zncc
+        improved = zncc > best_zncc + STALL_ZNCC_EPS
+        if improved:
+            best_zncc = zncc
+            for k in range(12):
+                P_best[k] = P[k]
+        if dp_norm < best_dp * STALL_STEP_DECAY:
+            best_dp = dp_norm
+            improved = True
+        if improved:
+            stall = 0
+        else:
+            stall += 1
+            if patience > 0 and stall >= patience:
+                for k in range(12):
+                    P[k] = P_best[k]
+                return it, STATUS_STALLED, best_zncc
 
         if not compose_warp_inplace(P, dP):
             return it, STATUS_SINGULAR, zncc
@@ -440,8 +478,9 @@ def _icgn_12dof_single(P, x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask, g, mode,
 
 
 @njit(parallel=True, cache=JIT_CACHE)
-def icgn_12dof_parallel(coords, P0, hx, hy, hz, f, gx, gy, gz, mask, g, mode,
-                        L_all, meanf_all, bottomf_all, valid, tol, max_iter):
+def icgn_12dof_parallel(
+    coords, P0, hx, hy, hz, f, gx, gy, gz, mask, g, mode, L_all, meanf_all, bottomf_all, valid, tol, dp_tol, max_iter, patience
+):
     """Parallel 12-DOF IC-GN over all nodes.
 
     Returns ``(P_out (N,12), n_iter (N,), status (N,), zncc (N,))``.
@@ -452,10 +491,20 @@ def icgn_12dof_parallel(coords, P0, hx, hy, hz, f, gx, gy, gz, mask, g, mode,
     status = np.full(N, STATUS_SKIPPED, dtype=np.int8)
     zncc = np.full(N, np.nan)
     S = (2 * hx + 1) * (2 * hy + 1) * (2 * hz + 1)
-    for n in prange(N):
+    for n in range(N):
         if not valid[n]:
             status[n] = STATUS_INVALID_SUBSET
+    idx = np.flatnonzero(valid)
+    M = idx.size
+    L = (M + SCHEDULE_LANES - 1) // SCHEDULE_LANES
+    # block-cyclic schedule over SCHEDULE_LANES stripes of the active-node list: every static
+    # prange chunk then touches all regions of the grid, so spatial clusters of skipped or
+    # hard nodes cannot idle most threads, while runs of consecutive nodes keep cache locality
+    for kk in prange(SCHEDULE_LANES * L):
+        p = (kk % SCHEDULE_LANES) * L + kk // SCHEDULE_LANES
+        if p >= M:
             continue
+        n = idx[p]
         gbuf = np.empty(S)
         P = P_out[n]
         finite = True
@@ -466,9 +515,28 @@ def icgn_12dof_parallel(coords, P0, hx, hy, hz, f, gx, gy, gz, mask, g, mode,
             status[n] = STATUS_NAN
             continue
         it, st, zc = _icgn_12dof_single(
-            P, coords[n, 0], coords[n, 1], coords[n, 2], hx, hy, hz,
-            f, gx, gy, gz, mask, g, mode, L_all[n], meanf_all[n], bottomf_all[n],
-            tol, max_iter, gbuf,
+            P,
+            coords[n, 0],
+            coords[n, 1],
+            coords[n, 2],
+            hx,
+            hy,
+            hz,
+            f,
+            gx,
+            gy,
+            gz,
+            mask,
+            g,
+            mode,
+            L_all[n],
+            meanf_all[n],
+            bottomf_all[n],
+            tol,
+            dp_tol,
+            max_iter,
+            patience,
+            gbuf,
         )
         n_iter[n] = it
         status[n] = st
@@ -483,9 +551,36 @@ def icgn_12dof_parallel(coords, P0, hx, hy, hz, f, gx, gy, gz, mask, g, mode,
 
 
 @njit(cache=JIT_CACHE)
-def _icgn_3dof_single(P, x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask, g, mode,
-                      H, meanf, bottomf, u_old, vdual, mu, tol, max_iter, gbuf):
+def _icgn_3dof_single(
+    P,
+    x0,
+    y0,
+    z0,
+    hx,
+    hy,
+    hz,
+    f,
+    gx,
+    gy,
+    gz,
+    mask,
+    g,
+    mode,
+    H,
+    meanf,
+    bottomf,
+    u_old,
+    vdual,
+    mu,
+    tol,
+    dp_tol,
+    max_iter,
+    patience,
+    gbuf,
+):
     """Translation-only IC-GN at one node. Returns ``(n_iter, status, zncc)``."""
+    best_dn = 1e300
+    stall = 0
     bf2 = bottomf * bottomf
     if bf2 < 1e-30:
         bf2 = 1e-30
@@ -567,8 +662,15 @@ def _icgn_3dof_single(P, x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask, g, mode,
         dn = np.sqrt(dt[0] * dt[0] + dt[1] * dt[1] + dt[2] * dt[2])
         if not np.isfinite(dn):
             return it, STATUS_NAN, np.nan
-        if dn < tol:
+        if dn < dp_tol:
             return it, STATUS_CONVERGED, zncc
+        if dn < best_dn * STALL_STEP_DECAY:
+            best_dn = dn
+            stall = 0
+        else:
+            stall += 1
+            if patience > 0 and stall >= patience:
+                return it, STATUS_STALLED, zncc
         # translation-only inverse compositional update: t <- t - A dt
         P[9] -= a00 * dt[0] + a01 * dt[1] + a02 * dt[2]
         P[10] -= a10 * dt[0] + a11 * dt[1] + a12 * dt[2]
@@ -578,8 +680,31 @@ def _icgn_3dof_single(P, x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask, g, mode,
 
 
 @njit(parallel=True, cache=JIT_CACHE)
-def icgn_3dof_parallel(coords, U_old, F_fixed, vdual, hx, hy, hz, f, gx, gy, gz, mask, g, mode,
-                       H_all, meanf_all, bottomf_all, valid, mu, tol, max_iter):
+def icgn_3dof_parallel(
+    coords,
+    U_old,
+    F_fixed,
+    vdual,
+    hx,
+    hy,
+    hz,
+    f,
+    gx,
+    gy,
+    gz,
+    mask,
+    g,
+    mode,
+    H_all,
+    meanf_all,
+    bottomf_all,
+    valid,
+    mu,
+    tol,
+    dp_tol,
+    max_iter,
+    patience,
+):
     """Parallel 3-DOF IC-GN (ADMM subproblem 1) over all nodes.
 
     Args:
@@ -595,10 +720,20 @@ def icgn_3dof_parallel(coords, U_old, F_fixed, vdual, hx, hy, hz, f, gx, gy, gz,
     status = np.full(N, STATUS_SKIPPED, dtype=np.int8)
     zncc = np.full(N, np.nan)
     S = (2 * hx + 1) * (2 * hy + 1) * (2 * hz + 1)
-    for n in prange(N):
+    for n in range(N):
         if not valid[n]:
             status[n] = STATUS_INVALID_SUBSET
+    idx = np.flatnonzero(valid)
+    M = idx.size
+    L = (M + SCHEDULE_LANES - 1) // SCHEDULE_LANES
+    # block-cyclic schedule over SCHEDULE_LANES stripes of the active-node list: every static
+    # prange chunk then touches all regions of the grid, so spatial clusters of skipped or
+    # hard nodes cannot idle most threads, while runs of consecutive nodes keep cache locality
+    for kk in prange(SCHEDULE_LANES * L):
+        p = (kk % SCHEDULE_LANES) * L + kk // SCHEDULE_LANES
+        if p >= M:
             continue
+        n = idx[p]
         gbuf = np.empty(S)
         P = np.empty(12)
         finite = True
@@ -615,9 +750,31 @@ def icgn_3dof_parallel(coords, U_old, F_fixed, vdual, hx, hy, hz, f, gx, gy, gz,
             status[n] = STATUS_NAN
             continue
         it, st, zc = _icgn_3dof_single(
-            P, coords[n, 0], coords[n, 1], coords[n, 2], hx, hy, hz,
-            f, gx, gy, gz, mask, g, mode, H_all[n], meanf_all[n], bottomf_all[n],
-            U_old[n], vdual[n], mu, tol, max_iter, gbuf,
+            P,
+            coords[n, 0],
+            coords[n, 1],
+            coords[n, 2],
+            hx,
+            hy,
+            hz,
+            f,
+            gx,
+            gy,
+            gz,
+            mask,
+            g,
+            mode,
+            H_all[n],
+            meanf_all[n],
+            bottomf_all[n],
+            U_old[n],
+            vdual[n],
+            mu,
+            tol,
+            dp_tol,
+            max_iter,
+            patience,
+            gbuf,
         )
         for k in range(3):
             U_out[n, k] = P[9 + k]
@@ -643,10 +800,21 @@ def evaluate_zncc_parallel(coords, P_all, hx, hy, hz, f, mask, g, mode, meanf_al
             continue
         gbuf = np.empty(S)
         ok, nv, meang, bottomg = _warp_and_sample(
-            P_all[n], coords[n, 0], coords[n, 1], coords[n, 2], hx, hy, hz, mask, g, mode, gbuf,
+            P_all[n],
+            coords[n, 0],
+            coords[n, 1],
+            coords[n, 2],
+            hx,
+            hy,
+            hz,
+            mask,
+            g,
+            mode,
+            gbuf,
         )
         if not ok:
             continue
-        out[n] = _zncc_from_buffer(coords[n, 0], coords[n, 1], coords[n, 2], hx, hy, hz,
-                                   f, mask, gbuf, meanf_all[n], bottomf_all[n], meang, bottomg)
+        out[n] = _zncc_from_buffer(
+            coords[n, 0], coords[n, 1], coords[n, 2], hx, hy, hz, f, mask, gbuf, meanf_all[n], bottomf_all[n], meang, bottomg
+        )
     return out

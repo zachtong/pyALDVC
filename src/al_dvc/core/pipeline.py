@@ -1,12 +1,12 @@
 """Full AL-DVC pipeline (MATLAB ``main_ALDVC.m`` Sections 2-8).
 
-    Section 2  normalise volumes, build the node grid
-    Section 3  initial guess (global shift + pyramid NCC), outlier cleaning
-    Section 4  local 12-DOF IC-GN (subproblem 1, first pass)
-    Section 5  global step (subproblem 2) with beta auto-tuning
-    Section 6  ADMM iterations (3-DOF local / global / dual update)
-    Section 7  cumulative displacement composition (incremental tracking)
-    Section 8  strain
+Section 2  normalise volumes, build the node grid
+Section 3  initial guess (global shift + pyramid NCC), outlier cleaning
+Section 4  local 12-DOF IC-GN (subproblem 1, first pass)
+Section 5  global step (subproblem 2) with beta auto-tuning
+Section 6  ADMM iterations (3-DOF local / global / dual update)
+Section 7  cumulative displacement composition (incremental tracking)
+Section 8  strain
 """
 
 from __future__ import annotations
@@ -21,7 +21,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .._numba_compat import set_num_threads
-from ..io.volume_ops import ListVolumeProvider, build_reference_bundle, prepare_deformed, presmooth_volume
+from ..io.volume_ops import (
+    ListVolumeProvider,
+    build_reference_bundle,
+    prepare_deformed,
+    presmooth_volume,
+)
 from ..mesh.grid_mesh import apply_mask_to_mesh, build_grid_axes, mesh_setup
 from ..solver.beta_tuning import auto_tune_beta
 from ..solver.global_operators import build_global_operators, nodal_gradient
@@ -120,7 +125,11 @@ def run_aldvc(
     base_mesh = mesh_setup(x0, y0, z0)
     logger.info(
         "Node grid %s (%d nodes), spacing %s, winsize %s, volume %s",
-        base_mesh.grid_shape, base_mesh.n_nodes, base_mesh.spacing, para.winsize, shape,
+        base_mesh.grid_shape,
+        base_mesh.n_nodes,
+        base_mesh.spacing,
+        para.winsize,
+        shape,
     )
 
     ref_cache: OrderedDict[int, dict] = OrderedDict()
@@ -139,8 +148,7 @@ def run_aldvc(
         f = presmooth_volume(provider.get_normalized(ref_idx), para.prefilter_sigma)
         mask = provider.get_mask(ref_idx)
         bundle = build_reference_bundle(f, mask)
-        mesh = apply_mask_to_mesh(base_mesh, bundle.mask if mask is not None else None, para.winsize,
-                                  para.min_valid_ratio)
+        mesh = apply_mask_to_mesh(base_mesh, bundle.mask if mask is not None else None, para.winsize, para.min_valid_ratio)
         ctx = precompute_local_context(mesh, bundle, para)
         mesh.node_valid = ctx.valid.copy()
         ops = None
@@ -254,15 +262,23 @@ def run_aldvc(
                     res_u.append(_rms(U2 - U1))
                     res_f.append(_rms(F2 - F1))
                     logger.info("ADMM step %d: |dU_global|=%.3e |dU_local|=%.3e (tol %.1e)", step, du_g, du_l, para.admm_tol)
-                    progress(base + (0.6 + 0.3 * (step - 1) / max(1, para.admm_max_iter - 1)) * span,
-                             f"Frame {k}: ADMM step {step}")
+                    progress(
+                        base + (0.6 + 0.3 * (step - 1) / max(1, para.admm_max_iter - 1)) * span, f"Frame {k}: ADMM step {step}"
+                    )
                     if du_g < para.admm_tol or du_l < para.admm_tol:
                         break
                 timings["subpb2"] = timings.get("subpb2", 0.0) + t_sub2
                 admm_info = ADMMInfo(
-                    beta=beta, mu=mu, n_steps=n_steps, update_global=tuple(upd_g), update_local=tuple(upd_l),
-                    primal_residual_u=tuple(res_u), primal_residual_f=tuple(res_f),
-                    local_info=tuple(local_infos), subpb2_time=t_sub2, beta_sweep=beta_sweep,
+                    beta=beta,
+                    mu=mu,
+                    n_steps=n_steps,
+                    update_global=tuple(upd_g),
+                    update_local=tuple(upd_l),
+                    primal_residual_u=tuple(res_u),
+                    primal_residual_f=tuple(res_f),
+                    local_info=tuple(local_infos),
+                    subpb2_time=t_sub2,
+                    beta_sweep=beta_sweep,
                 )
                 U_final, F_final = U2, F2
                 zncc = local_infos[-1].zncc
@@ -273,11 +289,15 @@ def run_aldvc(
                 status = info_local.status
 
             results[k - 1] = FrameResult(
-                U=U_final, F=F_final, ref_frame=ref_idx,
+                U=U_final,
+                F=F_final,
+                ref_frame=ref_idx,
                 U_local=U_local if para.store_local_result else None,
                 F_local=F_local if para.store_local_result else None,
                 U0=U0 if para.store_local_result else None,
-                zncc=zncc, status=status, admm=admm_info,
+                zncc=zncc,
+                status=status,
+                admm=admm_info,
             )
             mesh_by_frame[k - 1] = mesh
             prev_ref, prev_U = ref_idx, U_final

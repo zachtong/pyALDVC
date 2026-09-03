@@ -4,6 +4,39 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `al_dvc.io.matlab_results`: reader for the MATLAB ALDVC `results_ws*_st*.mat`
+  files (0-based coordinates, `(N, 3)` / `(N, 3, 3)` layouts) and node matching.
+- `scripts/compare_matlab.py`: node-wise cross-validation against the MATLAB
+  results shipped with the reference code, with a solver-equivalence check
+  (both codes' local solutions refined by the same kernel) and a ZNCC
+  objective comparison; writes `reports/matlab_crossval_<tag>.pdf`.
+- `icgn_dp_tol`: separate IC-GN parameter-increment tolerance (default 1e-3
+  voxel); `icgn_tol` keeps the MATLAB relative gradient-norm meaning.
+- `icgn_patience` and status code `stalled` (7): IC-GN gives up on a node after
+  five iterations without objective improvement instead of running to the
+  100-iteration cap; textureless regions no longer dominate the run time.
+- The IC-GN kernels walk the active nodes in a block-cyclic order, so spatial
+  clusters of skipped or hard nodes (masks, inpainted nodes, textureless
+  layers, node subsets) no longer leave most threads idle (79k-node scan:
+  local step 115 -> ~350 nodes/s together with the stall rule).
+- Numba kernels for volume normalisation and the 7-point gradient;
+  `compute_gradients_np` and `voi_mean_std` expose the NumPy reference and
+  the VOI statistics.
+
+### Changed
+- The automatic `beta` selection uses the MATLAB L-curve score
+  `|u-u_hat| + h^2 |F-grad u_hat|` by default (`beta_criterion="matlab"`); the
+  previous z-normalised score remains available as `"normalized"`.
+- IC-GN stops on the increment criterion at 1e-3 voxel instead of 1e-2. On
+  real CT data with weak z-texture the looser value left a 0.03-0.05 voxel
+  unconverged residual in `w`; the cost is about twice the local iterations.
+- Pre-processing of a 1024x1024x306 scan (321 M voxels) drops from about
+  30 s to 1.1 s (parallel Numba normalisation 0.2 s and gradients 0.9 s; the
+  SciPy gradient alone took 9 s).
+
 ## [0.1.0] - 2026-09-02
 
 Initial release: a complete Python port of the MATLAB ALDVC pipeline with

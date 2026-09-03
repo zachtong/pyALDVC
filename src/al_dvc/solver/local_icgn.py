@@ -21,8 +21,8 @@ from ..core.data_structures import (
     STATUS_SKIPPED,
     DVCMesh,
     LocalSolveInfo,
-    ReferenceBundle,
     P_from_UF,
+    ReferenceBundle,
     UF_from_P,
 )
 from ..utils.inpaint import fill_nan_grid
@@ -36,14 +36,14 @@ logger = logging.getLogger(__name__)
 class LocalContext:
     """Per-(reference, mesh) precomputed data for the local solvers."""
 
-    coords_int: NDArray[np.int64]      # (N, 3) [x, y, z]
-    half: tuple[int, int, int]         # (hx, hy, hz)
-    H_all: NDArray[np.float64]         # (N, 12, 12)
-    L_all: NDArray[np.float64]         # (N, 12, 12) Cholesky factors
+    coords_int: NDArray[np.int64]  # (N, 3) [x, y, z]
+    half: tuple[int, int, int]  # (hx, hy, hz)
+    H_all: NDArray[np.float64]  # (N, 12, 12)
+    L_all: NDArray[np.float64]  # (N, 12, 12) Cholesky factors
     meanf: NDArray[np.float64]
     bottomf: NDArray[np.float64]
     n_valid: NDArray[np.int64]
-    valid: NDArray[np.bool_]           # solver-valid nodes
+    valid: NDArray[np.bool_]  # solver-valid nodes
     precompute_time: float
 
     @property
@@ -70,26 +70,53 @@ def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara)
         from .numba_kernels import precompute_nodes
 
         H_all, L_all, meanf, bottomf, n_valid, valid = precompute_nodes(
-            coords_int, hx, hy, hz, ref.f, ref.gx, ref.gy, ref.gz, ref.mask,
-            float(para.min_valid_ratio), float(para.hessian_cond_max),
+            coords_int,
+            hx,
+            hy,
+            hz,
+            ref.f,
+            ref.gx,
+            ref.gy,
+            ref.gz,
+            ref.mask,
+            float(para.min_valid_ratio),
+            float(para.hessian_cond_max),
         )
     else:
         from .reference_kernels import precompute_nodes_np
 
         H_all, L_all, meanf, bottomf, n_valid, valid = precompute_nodes_np(
-            coords_int, hx, hy, hz, ref.f, ref.gx, ref.gy, ref.gz, ref.mask,
-            float(para.min_valid_ratio), float(para.hessian_cond_max),
+            coords_int,
+            hx,
+            hy,
+            hz,
+            ref.f,
+            ref.gx,
+            ref.gy,
+            ref.gz,
+            ref.mask,
+            float(para.min_valid_ratio),
+            float(para.hessian_cond_max),
         )
     valid = np.asarray(valid, dtype=bool) & np.asarray(mesh.node_valid, dtype=bool)
     dt = time.perf_counter() - t0
     logger.info(
         "Local precompute: %d nodes, %d valid (%.1f%%), %.2fs",
-        coords_int.shape[0], int(valid.sum()), 100.0 * valid.mean() if valid.size else 0.0, dt,
+        coords_int.shape[0],
+        int(valid.sum()),
+        100.0 * valid.mean() if valid.size else 0.0,
+        dt,
     )
     return LocalContext(
-        coords_int=coords_int, half=(hx, hy, hz), H_all=H_all, L_all=L_all,
-        meanf=np.asarray(meanf), bottomf=np.asarray(bottomf), n_valid=np.asarray(n_valid),
-        valid=valid, precompute_time=dt,
+        coords_int=coords_int,
+        half=(hx, hy, hz),
+        H_all=H_all,
+        L_all=L_all,
+        meanf=np.asarray(meanf),
+        bottomf=np.asarray(bottomf),
+        n_valid=np.asarray(n_valid),
+        valid=valid,
+        precompute_time=dt,
     )
 
 
@@ -126,15 +153,51 @@ def local_icgn(
         from .numba_kernels import icgn_12dof_parallel
 
         P, n_iter, status, zncc = icgn_12dof_parallel(
-            ctx.coords_int, P0, hx, hy, hz, ref.f, ref.gx, ref.gy, ref.gz, ref.mask, g, mode,
-            ctx.L_all, ctx.meanf, ctx.bottomf, ctx.valid, float(para.icgn_tol), int(para.icgn_max_iter),
+            ctx.coords_int,
+            P0,
+            hx,
+            hy,
+            hz,
+            ref.f,
+            ref.gx,
+            ref.gy,
+            ref.gz,
+            ref.mask,
+            g,
+            mode,
+            ctx.L_all,
+            ctx.meanf,
+            ctx.bottomf,
+            ctx.valid,
+            float(para.icgn_tol),
+            float(para.icgn_dp_tol),
+            int(para.icgn_max_iter),
+            int(para.icgn_patience),
         )
     else:
         from .reference_kernels import icgn_12dof_batch_np
 
         P, n_iter, status, zncc = icgn_12dof_batch_np(
-            ctx.coords_int, P0, hx, hy, hz, ref.f, ref.gx, ref.gy, ref.gz, ref.mask, g, mode,
-            ctx.H_all, ctx.meanf, ctx.bottomf, ctx.valid, float(para.icgn_tol), int(para.icgn_max_iter),
+            ctx.coords_int,
+            P0,
+            hx,
+            hy,
+            hz,
+            ref.f,
+            ref.gx,
+            ref.gy,
+            ref.gz,
+            ref.mask,
+            g,
+            mode,
+            ctx.H_all,
+            ctx.meanf,
+            ctx.bottomf,
+            ctx.valid,
+            float(para.icgn_tol),
+            float(para.icgn_dp_tol),
+            int(para.icgn_max_iter),
+            int(para.icgn_patience),
         )
     solve_time = time.perf_counter() - t0
 
@@ -154,8 +217,12 @@ def local_icgn(
     n_bad = int(np.sum(bad & (status != STATUS_INVALID_SUBSET) & (status != STATUS_SKIPPED)))
     logger.info(
         "Local IC-GN: %d/%d converged, %d bad (%.1f%%), median ZNCC=%.4f, %.2fs",
-        int(np.sum(status == STATUS_CONVERGED)), N, int(bad.sum()), 100.0 * bad.mean(),
-        float(np.nanmedian(zncc)) if np.isfinite(zncc).any() else float("nan"), solve_time,
+        int(np.sum(status == STATUS_CONVERGED)),
+        N,
+        int(bad.sum()),
+        100.0 * bad.mean(),
+        float(np.nanmedian(zncc)) if np.isfinite(zncc).any() else float("nan"),
+        solve_time,
     )
 
     U, F = fill_bad_nodes(U, F, bad, mesh)

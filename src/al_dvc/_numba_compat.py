@@ -19,7 +19,8 @@ import warnings
 
 try:  # pragma: no cover - exercised implicitly by every kernel test
     import numba as _numba
-    from numba import njit as _njit, prange as _prange
+    from numba import njit as _njit
+    from numba import prange as _prange
 
     HAS_NUMBA = True
 except ImportError:  # pragma: no cover
@@ -62,11 +63,16 @@ njit = _njit
 prange = _prange
 
 
-def get_num_threads() -> int:
-    """Number of threads Numba will use for ``prange`` loops."""
-    if HAS_NUMBA:
-        return int(_numba.get_num_threads())
-    return 1
+if HAS_NUMBA:
+    # Numba's own thread-count query (also callable from jitted code, but doing so
+    # disables on-disk caching; the kernels use a thread-independent block-cyclic
+    # schedule instead -- numba.set_parallel_chunksize had no measurable effect).
+    get_num_threads = _numba.get_num_threads
+else:  # pragma: no cover
+
+    def get_num_threads() -> int:
+        """Number of threads for ``prange`` loops (1 without Numba)."""
+        return 1
 
 
 def set_num_threads(n: int) -> None:

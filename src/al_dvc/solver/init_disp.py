@@ -11,7 +11,12 @@ from ..core.config import DVCPara
 from ..core.data_structures import DVCMesh
 from ..utils.inpaint import fill_nan_grid
 from ..utils.outlier_detection import universal_median_test
-from .integer_search import DEFAULT_INIT_SUBSET, ncc_search_expanding, phase_correlation_shift, pyramid_search
+from .integer_search import (
+    DEFAULT_INIT_SUBSET,
+    ncc_search_expanding,
+    phase_correlation_shift,
+    pyramid_search,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +52,17 @@ def compute_initial_guess(
 
     if method == "pyramid":
         info = pyramid_search(
-            f, g, coords, mesh.grid_shape, subset, para.search_radius, para.pyramid_levels,
-            global_shift=shift, outlier_threshold=para.init_outlier_threshold,
-            auto_expand=para.ncc_auto_expand, max_expand=para.ncc_max_expand,
+            f,
+            g,
+            coords,
+            mesh.grid_shape,
+            subset,
+            para.search_radius,
+            para.pyramid_levels,
+            global_shift=shift,
+            outlier_threshold=para.init_outlier_threshold,
+            auto_expand=para.ncc_auto_expand,
+            max_expand=para.ncc_max_expand,
         )
         disp = info["disp"]
         ok = info.get("ok", np.ones(N, dtype=bool))
@@ -57,13 +70,21 @@ def compute_initial_guess(
         info["method"] = "pyramid"
     else:
         shift0 = None if shift is None else np.tile(np.round(shift).astype(np.int64), (N, 1))
-        res = ncc_search_expanding(f, g, coords, subset, tuple(int(r) for r in para.search_radius), shift0,
-                                   para.ncc_auto_expand, para.ncc_max_expand)
+        res = ncc_search_expanding(
+            f, g, coords, subset, tuple(int(r) for r in para.search_radius), shift0, para.ncc_auto_expand, para.ncc_max_expand
+        )
         disp = res["disp"]
         ok = res["ok"]
         pce = res["pce"]
-        info = {"method": "ncc", "radius": res["radius"], "expansions": res["expansions"], "cc": res["cc"],
-                "pce": pce, "ok": ok, "clipped": res["clipped"]}
+        info = {
+            "method": "ncc",
+            "radius": res["radius"],
+            "expansions": res["expansions"],
+            "cc": res["cc"],
+            "pce": pce,
+            "ok": ok,
+            "clipped": res["clipped"],
+        }
 
     U0, bad = clean_initial_guess(disp, ok, pce, mesh, para)
     info["n_bad"] = int(bad.sum())

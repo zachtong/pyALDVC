@@ -106,8 +106,9 @@ def sample_volume(vol, z, y, x, mode):
             yy = iy - 1 + j
             wyj = wy[j] * wzk
             xb = ix - 1
-            row = (vol[zz, yy, xb] * wx[0] + vol[zz, yy, xb + 1] * wx[1]
-                   + vol[zz, yy, xb + 2] * wx[2] + vol[zz, yy, xb + 3] * wx[3])
+            row = (
+                vol[zz, yy, xb] * wx[0] + vol[zz, yy, xb + 1] * wx[1] + vol[zz, yy, xb + 2] * wx[2] + vol[zz, yy, xb + 3] * wx[3]
+            )
             val += wyj * row
     return val
 

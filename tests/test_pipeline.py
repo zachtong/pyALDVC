@@ -9,13 +9,11 @@ from al_dvc.core.pipeline import run_aldvc
 from al_dvc.synthetic import (
     add_noise,
     affine_displacement,
-    generate_speckle_volume,
     rotation_displacement,
     sinusoidal_displacement,
     warp_volume_lagrangian,
 )
-
-from tests.conftest import CENTRE, F_AFFINE, SHAPE, gt_at, interior_mask
+from tests.conftest import CENTRE, F_AFFINE, gt_at, interior_mask
 
 
 def _rmse(a, b, sel):

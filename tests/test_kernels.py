@@ -12,9 +12,13 @@ from al_dvc.core.data_structures import (
 from al_dvc.io.volume_ops import prefilter_bspline
 from al_dvc.solver import numba_kernels as nk
 from al_dvc.solver import reference_kernels as rk
-from al_dvc.solver.interp_kernels import INTERP_BSPLINE, INTERP_CUBIC, INTERP_LINEAR, sample_points
-
-from tests.conftest import CENTRE, F_AFFINE, T_AFFINE
+from al_dvc.solver.interp_kernels import (
+    INTERP_BSPLINE,
+    INTERP_CUBIC,
+    INTERP_LINEAR,
+    sample_points,
+)
+from tests.conftest import F_AFFINE
 
 
 @pytest.fixture(scope="module")
@@ -65,12 +69,14 @@ def test_compose_warp_matches_reference():
     ok = nk.compose_warp_inplace(P1, dP)
     P2 = rk.compose_warp_np(P, dP)
     assert ok and np.allclose(P1, P2, atol=1e-13)
+
     # W(P_new) = W(P) W(dP)^-1  -> W(P_new) W(dP) = W(P)
     def W(p):
         M = np.eye(4)
         M[:3, :3] = np.eye(3) + p[:9].reshape(3, 3)
         M[:3, 3] = p[9:]
         return M
+
     assert np.allclose(W(P1) @ W(dP), W(P), atol=1e-12)
 
 
@@ -94,8 +100,8 @@ def test_precompute_rejects_masked_and_border_subsets(normalized_pair):
     mask[:, :, 20:] = 0
     coords = np.array([[30, 32, 28], [3, 32, 28], [10, 30, 30]], dtype=np.int64)
     _, _, _, _, nv, valid = nk.precompute_nodes(coords, 6, 6, 6, d["f"], d["gx"], d["gy"], d["gz"], mask, 0.5, 1e12)
-    assert not valid[0]          # fully masked subset
-    assert not valid[1]          # subset leaves the volume
+    assert not valid[0]  # fully masked subset
+    assert not valid[1]  # subset leaves the volume
     assert valid[2] and nv[2] == 13**3
 
 
@@ -109,16 +115,34 @@ def test_icgn_12dof_numba_matches_reference_and_truth(normalized_pair, mode):
     u_gt = np.column_stack(d["disp"](coords[:, 0].astype(float), coords[:, 1].astype(float), coords[:, 2].astype(float)))
     P0 = np.zeros((3, 12))
     P0[:, 9:] = np.round(u_gt)
-    P, it, st, zc = nk.icgn_12dof_parallel(coords, P0.copy(), *half, d["f"], d["gx"], d["gy"], d["gz"], d["mask"], g, mode,
-                                          L_all, mf, bf, valid, 1e-2, 100)
+    P, it, st, zc = nk.icgn_12dof_parallel(
+        coords, P0.copy(), *half, d["f"], d["gx"], d["gy"], d["gz"], d["mask"], g, mode, L_all, mf, bf, valid, 1e-2, 1e-3, 100, 5
+    )
     assert np.all(st == STATUS_CONVERGED) and np.all(it <= 10)
     tol_u = 0.03 if mode != INTERP_LINEAR else 0.06
     assert np.all(np.abs(P[:, 9:] - u_gt) < tol_u)
     assert np.all(np.abs(P[:, :9] - F_AFFINE.ravel()) < 0.01)
     assert np.all(zc > 0.95) and np.all(zc <= 1.0 + 1e-9)
     for n in range(3):
-        Pr, itr, str_, zcr = rk.icgn_12dof_np(P0[n], coords[n], half, d["f"], d["gx"], d["gy"], d["gz"], d["mask"], g, mode,
-                                              H_all[n], mf[n], bf[n], 1e-2, 100)
+        Pr, itr, str_, zcr = rk.icgn_12dof_np(
+            P0[n],
+            coords[n],
+            half,
+            d["f"],
+            d["gx"],
+            d["gy"],
+            d["gz"],
+            d["mask"],
+            g,
+            mode,
+            H_all[n],
+            mf[n],
+            bf[n],
+            1e-2,
+            1e-3,
+            100,
+            5,
+        )
         assert itr == it[n] and str_ == st[n]
         assert np.allclose(P[n], Pr, atol=1e-10)
         assert np.isclose(zc[n], zcr, atol=1e-10)
@@ -132,8 +156,26 @@ def test_icgn_12dof_status_codes(normalized_pair):
     P0 = np.zeros((2, 12))
     P0[0, 9] = 60.0  # warps outside the volume
     valid[1] = False
-    P, it, st, zc = nk.icgn_12dof_parallel(coords, P0.copy(), *half, d["f"], d["gx"], d["gy"], d["gz"], d["mask"], d["g"],
-                                          INTERP_CUBIC, L_all, mf, bf, valid, 1e-2, 100)
+    P, it, st, zc = nk.icgn_12dof_parallel(
+        coords,
+        P0.copy(),
+        *half,
+        d["f"],
+        d["gx"],
+        d["gy"],
+        d["gz"],
+        d["mask"],
+        d["g"],
+        INTERP_CUBIC,
+        L_all,
+        mf,
+        bf,
+        valid,
+        1e-2,
+        1e-3,
+        100,
+        5,
+    )
     assert st[0] == STATUS_OUT_OF_BOUNDS and np.isnan(zc[0])
     assert st[1] == STATUS_INVALID_SUBSET
 
@@ -148,13 +190,54 @@ def test_icgn_3dof_numba_matches_reference(normalized_pair):
     F_fixed = np.tile(F_AFFINE, (2, 1, 1))
     vd = np.array([[0.05, 0.0, -0.02], [0.0, 0.01, 0.0]])
     mu = 1e-3
-    U, it, st, zc = nk.icgn_3dof_parallel(coords, U_old, F_fixed, vd, *half, d["f"], d["gx"], d["gy"], d["gz"], d["mask"],
-                                         d["g"], INTERP_CUBIC, H_all, mf, bf, valid, mu, 1e-2, 100)
+    U, it, st, zc = nk.icgn_3dof_parallel(
+        coords,
+        U_old,
+        F_fixed,
+        vd,
+        *half,
+        d["f"],
+        d["gx"],
+        d["gy"],
+        d["gz"],
+        d["mask"],
+        d["g"],
+        INTERP_CUBIC,
+        H_all,
+        mf,
+        bf,
+        valid,
+        mu,
+        1e-2,
+        1e-3,
+        100,
+        5,
+    )
     assert np.all(st == STATUS_CONVERGED)
     assert np.all(np.abs(U - u_gt) < 0.05)
     for n in range(2):
-        Ur, itr, str_, zcr = rk.icgn_3dof_np(U_old[n], F_fixed[n], vd[n], coords[n], half, d["f"], d["gx"], d["gy"], d["gz"],
-                                             d["mask"], d["g"], INTERP_CUBIC, H_all[n], mf[n], bf[n], mu, 1e-2, 100)
+        Ur, itr, str_, zcr = rk.icgn_3dof_np(
+            U_old[n],
+            F_fixed[n],
+            vd[n],
+            coords[n],
+            half,
+            d["f"],
+            d["gx"],
+            d["gy"],
+            d["gz"],
+            d["mask"],
+            d["g"],
+            INTERP_CUBIC,
+            H_all[n],
+            mf[n],
+            bf[n],
+            mu,
+            1e-2,
+            1e-3,
+            100,
+            5,
+        )
         assert itr == it[n] and np.allclose(U[n], Ur, atol=1e-10)
 
 
@@ -170,8 +253,26 @@ def test_masked_subset_solves(normalized_pair):
     u_gt = np.column_stack(d["disp"](np.array([30.0]), np.array([32.0]), np.array([28.0])))
     P0 = np.zeros((1, 12))
     P0[:, 9:] = np.round(u_gt)
-    P, it, st, zc = nk.icgn_12dof_parallel(coords, P0.copy(), *half, d["f"], d["gx"], d["gy"], d["gz"], mask, d["g"],
-                                          INTERP_CUBIC, L_all, mf, bf, valid, 1e-2, 100)
+    P, it, st, zc = nk.icgn_12dof_parallel(
+        coords,
+        P0.copy(),
+        *half,
+        d["f"],
+        d["gx"],
+        d["gy"],
+        d["gz"],
+        mask,
+        d["g"],
+        INTERP_CUBIC,
+        L_all,
+        mf,
+        bf,
+        valid,
+        1e-2,
+        1e-3,
+        100,
+        5,
+    )
     assert st[0] == STATUS_CONVERGED
     assert np.all(np.abs(P[0, 9:] - u_gt[0]) < 0.05)
     assert 0.9 < zc[0] <= 1.0 + 1e-9
