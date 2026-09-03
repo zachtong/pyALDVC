@@ -162,23 +162,47 @@ Numbers from a 112x120x128 speckle volume (feature size ~4 voxels), subset
 | translation (3.4, -2.6, 1.2) | 0.003 - 0.006 | 1.6e-4 / 0.5e-4 |
 | affine 2 % strain | 0.004 | 3.0e-4 / 2.3e-4 |
 | rotation 5 deg, large motion 12 voxels | 0.001 - 0.006 | 2e-4 / 1e-4 |
-| affine 2 % with `interp_method="bspline"` | 0.0005 | 2.3e-4 / 0.3e-4 |
+| affine 2 % with `interp_method="bspline"` | 0.0002 | 0.5e-4 / 0.1e-4 |
 | affine 2 %, noise sd 0.01 (SNR ~ 6) | 0.012 (0.011 with `prefilter_sigma=0.8`) | 0.8e-3 |
 | affine 2 %, noise sd 0.03 (SNR ~ 2) | 0.045 (0.032 with pre-smoothing) | 2.8e-3 |
 | cylinder mask, 3-frame accumulative / incremental | 0.004 / 0.009 | -- |
 | sinusoid, amplitude 1 voxel, wavelength 80 (subset 16) | 0.05 (first-order subset bias) | -- |
 
-Throughput on a 24-core workstation (Numba warm, ADMM with 2-4 steps):
+Throughput on a 24-core workstation (Intel Core Ultra 9 285K, Numba warm, ADMM with
+2-4 steps, increment tolerance 1e-3 voxel):
 
 | volume | subset / step | nodes | total | of which local IC-GN |
 |---|---|---|---|---|
-| 128^3 | 16 / 8 | 2 197 | 0.9 s | 0.2 s |
-| 256^3 | 32 / 16 | 2 744 | 4 - 6 s | 1.4 - 2.6 s |
-| 256^3 | 32 / 8 | 19 683 | 20 - 21 s | 9.5 - 10 s |
-| 256^3 | 48 / 16 | 2 197 | 7.4 s | 3.9 s |
+| 128^3 | 16 / 8 | 2 197 | 1.0 s | 0.2 s |
+| 256^3 | 32 / 16 | 2 744 | 4.1 s | 2.0 s |
+| 256^3 | 32 / 8 | 19 683 | 25 s | 14 s |
+| 256^3 | 48 / 16 | 2 197 | 8.4 s | 5.1 s |
+| 384^3 | 32 / 16 | 10 648 | 14 s | 7.4 s |
+| 1024 x 1024 x 306 micro-CT (MATLAB example) | 32 / 8 | 79 200 | 12.5 min | 3.6 min + 7.9 min for three 3-DOF passes |
 
 See `reports/validation_synthetic.pdf` and `reports/performance.pdf` for the
 complete tables, noise sweep, spatial-resolution study and stage timings.
+
+### Agreement with the MATLAB ALDVC code
+
+`scripts/compare_matlab.py` reruns the micro-CT example shipped with the
+MATLAB code (`20190504_cut`, 1024x1024x306, 79,200 nodes at subset 32 / step
+8) on the MATLAB node positions and compares node by node
+(`reports/matlab_crossval_ws32_st8.pdf`). On the interior nodes converged in
+both codes:
+
+| quantity | median difference (u, v, w) [voxel] |
+|---|---|
+| local IC-GN solution | 0.0044, 0.0049, 0.041 |
+| final AL-DVC displacement | 0.0048, 0.0055, 0.020 |
+| both local solutions refined by the same kernel | 0.0001, 0.0001, 0.0012 |
+
+The two IC-GN implementations minimise the same functional; the stored
+solutions differ along z because the scan has 7x less texture in that
+direction and both codes stop early there. The automatic `beta` equals the
+MATLAB value, and the ZNCC of the pyALDVC fields is never below MATLAB's.
+The run takes 12.5 min on a 24-core workstation. See `docs/design.md`,
+section 10.
 
 ## Project layout
 

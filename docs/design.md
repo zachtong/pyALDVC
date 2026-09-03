@@ -7,7 +7,7 @@ This document records the decisions that were made *before* code was written
 and the contracts that every module must respect.
 
 Sections 1-3 describe the algorithm as it exists in MATLAB and what changes.
-Sections 4-8 are the Python contracts. Section 9 is the roadmap.
+Sections 4-8 are the Python contracts. Section 9 is the roadmap, section 10 the cross-validation against the MATLAB code.
 
 ---
 
@@ -284,3 +284,83 @@ Decisions recorded 2026-09-02: GUI before GPU (the CPU code already handles the
 82,800-node reference case in minutes, whereas nobody has used the code on real
 scans yet); the GUI is a standalone pyALDVC application, not a mode inside
 pyALDIC.
+
+
+## 10. Cross-validation against the MATLAB code
+
+`scripts/compare_matlab.py` runs pyALDVC on the data set shipped with the
+MATLAB code (`DVC_images/20190504_cut_01/02.mat`, micro-CT, 1024x1024x306
+uint16) with the parameters of `results_ws32_st8.mat` (subset 32, step 8,
+finite-difference global step, cubic interpolation, `dual_update="reset"`,
+`beta` from the L-curve) on exactly the MATLAB node positions, and compares
+node by node. The lowest MATLAB node layer touches the volume border and is
+dropped by the margin rule; 79,200 of the 82,800 nodes remain. The report is
+`reports/matlab_crossval_ws32_st8.pdf`.
+
+Two comparisons are independent of either code's stopping rule and outlier
+handling and therefore decisive:
+
+* **Solver equivalence.** Both codes' local IC-GN solutions are refined by the
+  pyALDVC kernel to an increment tolerance of 1e-4. On 15,769 interior nodes
+  the refined solutions differ by a median of 0.0001 / 0.0001 / 0.0012 voxel
+  (u / v / w) and the gradients by 4e-5. The two implementations minimise the
+  same functional. 7 % of the nodes end in distinct optima, almost all in
+  `w`, because the scan has 7x less gradient energy along z than in-plane
+  (mean squared gradient 0.57 / 0.50 / 0.08) and the ZNSSD surface is flat
+  along z (Hessian uncertainty proxy `sqrt(H^-1)` 2.5x larger for `w`).
+* **Objective values.** The ZNCC of every stored solution, evaluated with the
+  pyALDVC kernel on the 61,699 nodes converged in both codes: local solutions
+  0.9243 (pyALDVC) vs 0.9228 (MATLAB), refined 0.9269 vs 0.9267, final AL-DVC
+  fields 0.9210 vs 0.9200. pyALDVC is never below MATLAB.
+
+Node-wise differences pyALDVC - MATLAB on the 54,401 interior nodes converged
+in both codes (voxel; gradients dimensionless):
+
+| quantity | median abs (u, v, w) | rms (u, v, w) | > 0.1 voxel |
+|---|---|---|---|
+| local IC-GN | 0.0044, 0.0049, 0.041 | 0.080, 0.089, 0.224 | 23 % |
+| final AL-DVC | 0.0048, 0.0055, 0.020 | 0.066, 0.070, 0.195 | 13 % |
+| final gradient F | 8.8e-4 (mean of 9) | 9.5e-3 | 22 % (> 1e-2) |
+
+The in-plane agreement (0.005 voxel) is at the level of the convergence
+tolerances. The `w` differences come from three sources, all understood:
+both codes stop early along the flat z direction (MATLAB's relative-gradient
+rule moves by 0.04 voxel when refined, pyALDVC's increment rule at 1e-2 by
+0.03, which is why `icgn_dp_tol` is now 1e-3); the outlier rules differ
+(MATLAB's `RemoveOutliers3` and pyALDVC's universal median test both flag
+10-15 % of the nodes on this scan, not the same ones); and the distinct optima
+above.
+
+Other findings from the same run:
+
+* The automatic `beta` equals the MATLAB value (0.02024) with the MATLAB
+  L-curve score; the z-normalised score picked 0.0054 and gave a lower final
+  ZNCC, hence the change of default.
+* The six upper node layers of the MATLAB VOI lie outside the specimen. MATLAB
+  reports |U| > 10 voxel at 60-80 % of those nodes; pyALDVC marks them
+  `stalled` / `out_of_bounds` (6,191 + 910 of 79,200) after a few iterations
+  instead of iterating to the cap. pyALDVC converges 72,027 nodes in the first
+  pass with 8.2 mean iterations, MATLAB 62,256 with 27.9.
+* MATLAB's finite-difference global step spreads an outlier node into a
+  cross-shaped artefact along the grid axes; the pyALDVC field is smooth
+  there.
+* Wall time on the 24-core workstation: 12.5 min for the 79,200 nodes
+  (initial guess 58 s, 12-DOF pass 218 s, three 3-DOF passes 471 s, global
+  steps < 1 s) plus 3.9 min for the equivalence check on 18,108 sampled
+  nodes. Before the stall rule and the block-cyclic schedule the 12-DOF pass
+  alone took 688 s.
+
+The second MATLAB result file, `results_ws30_st30.mat` (`eyes_0/1`, OCT
+volumes of an optic nerve head with a large, non-affine deformation; subset
+30, step 30, 1,155 nodes), is a diverged run: every MATLAB node hit the
+100-iteration cap and the stored displacement has a median magnitude of 86
+voxel (up to 527) in a 496-voxel-wide volume. It cannot serve as a reference
+and is used as a robustness case (`reports/matlab_crossval_ws30_st30.pdf`):
+pyALDVC does not solve it either with these parameters (134 of 1,155 nodes
+converge, 511 reach the iteration cap, 510 stall, the median test flags
+almost every node), but it says so through the status codes and returns a
+smooth field close to the phase-correlation shift instead of a diverged
+one. The ZNCC of the pyALDVC fields is 0.30 against 0.09-0.12 for the MATLAB
+fields. Solving this case would need a coarse-to-fine strategy for the
+whole IC-GN (not only the initial guess) and larger subsets; it is on the
+roadmap as a real-scan feature.

@@ -13,6 +13,11 @@ All notable changes to pyALDVC are documented here. The format follows
   results shipped with the reference code, with a solver-equivalence check
   (both codes' local solutions refined by the same kernel) and a ZNCC
   objective comparison; writes `reports/matlab_crossval_<tag>.pdf`.
+  On the micro-CT example both codes' local solutions coincide to 0.001
+  voxel once refined by the same kernel and the final fields agree to
+  0.005 / 0.006 / 0.02 voxel (median, u / v / w); on the diverged `eyes`
+  example pyALDVC reports the failure through status codes instead of
+  returning an 86-voxel field.
 - `icgn_dp_tol`: separate IC-GN parameter-increment tolerance (default 1e-3
   voxel); `icgn_tol` keeps the MATLAB relative gradient-norm meaning.
 - `icgn_patience` and status code `stalled` (7): IC-GN gives up on a node after

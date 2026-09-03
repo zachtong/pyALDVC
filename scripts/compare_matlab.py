@@ -92,6 +92,7 @@ MAX_CROP_PAD = 96  # cap for diverged MATLAB results (e.g. the eyes data set)
 REFINE_DP_TOL = 1e-4  # increment tolerance of the solver-equivalence refinement
 REFINE_MAX_ITER = 200
 REFINE_MAX_NODES = 20_000  # refine at most this many (randomly sampled) nodes
+MIN_CONVERGED_NODES = 10  # below this the 'converged' masks fall back to all valid nodes
 INTERP_MODES = {"cubic": INTERP_CUBIC, "linear": INTERP_LINEAR, "bspline": INTERP_BSPLINE}
 
 
@@ -223,9 +224,12 @@ def compare(result, res: MatlabResults) -> dict:
     else:
         theirs_conv = np.ones(mesh.n_nodes, bool)
     both = ours_conv & theirs_conv & mesh.node_valid
+    fallback = int(both.sum()) < MIN_CONVERGED_NODES
+    if fallback:  # e.g. a diverged MATLAB run: keep the plots meaningful on all valid nodes
+        both = mesh.node_valid.copy()
     masks = {"all": mesh.node_valid.copy(), "converged": both, "converged interior": both & interior}
 
-    cmp = {"idx": idx, "masks": masks, "rows": [], "interior": interior}
+    cmp = {"idx": idx, "masks": masks, "rows": [], "interior": interior, "converged_fallback": fallback}
     pairs = [
         ("U0 (initial guess)", fr.U0, m.U0, DISP_OUTLIER_VOXEL * 10),
         ("U_local (12-DOF IC-GN)", fr.U_local, m.U_local, DISP_OUTLIER_VOXEL),
@@ -396,8 +400,14 @@ def _slice_rows(fig, axes, mesh, ours, theirs, mask, comp_names, unit, iz, offse
         b = mesh.to_grid(np.where(mask, theirs[:, r], np.nan))[iz]
         d = a - b
         both = np.concatenate([a.ravel(), b.ravel()])
-        vmin, vmax = np.nanpercentile(both, 1), np.nanpercentile(both, 99)
-        dl = max(float(np.nanpercentile(np.abs(d), 99)), 1e-3)
+        finite = both[np.isfinite(both)]
+        if finite.size == 0:
+            for c in range(3):
+                axes[r, c].axis("off")
+            continue
+        vmin, vmax = np.nanpercentile(finite, 1), np.nanpercentile(finite, 99)
+        dd = np.abs(d[np.isfinite(d)])
+        dl = max(float(np.nanpercentile(dd, 99)) if dd.size else 0.0, 1e-3)
         for c, (img, ttl, cmap, lo, hi) in enumerate(
             [
                 (b, f"MATLAB {name}", "viridis", vmin, vmax),
@@ -532,6 +542,8 @@ def write_report(path: Path, ctx: dict) -> None:
                 )
         lines.append("")
         lines.append("Convergence (frame 1):")
+        if cmp.get("converged_fallback"):
+            lines.append("  NOTE: fewer than 10 nodes converged in both codes; the 'converged' masks below use all valid nodes.")
         li = fr.admm.local_info
         ours_iter = [f"{np.mean(x.n_iter[x.status == 0]):.1f}" for x in li]
         theirs_iter = (
@@ -710,6 +722,9 @@ def write_report(path: Path, ctx: dict) -> None:
             x, y = theirs[sel, c], ours[sel, c]
             ok_ = np.isfinite(x) & np.isfinite(y)
             axes[c].plot(x[ok_], y[ok_], ".", ms=2, alpha=0.4)
+            if ok_.sum() < 2:
+                axes[c].axis("off")
+                continue
             lo, hi = np.nanmin(x[ok_]), np.nanmax(x[ok_])
             axes[c].plot([lo, hi], [lo, hi], "k-", lw=0.8)
             r = np.corrcoef(x[ok_], y[ok_])[0, 1] if ok_.sum() > 2 else np.nan
