@@ -27,7 +27,7 @@ ParaView export, tests against analytic ground truth and a command line.
 | **Robustness** | boolean masks on the reference and on the deformed frame (masked subsets, trimmed elements), per-node status codes, stall detection, low-texture rejection, Gaussian pre-smoothing for low-SNR data, partial results on cancel |
 | **Uncertainty** | per-node standard deviation of u, v, w from the IC-GN normal equations (`U_std`, exported as `disp_std_*`), calibrated on synthetic noise (`reports/uncertainty.pdf`) |
 | **Performance** | Numba `prange` kernels that read subsets in place (no per-node subset cache, so memory stays ~22 bytes/voxel); scalar global operator assembled once, solved by PCG for all three components |
-| **Tracking** | accumulative, incremental or any reference-frame schedule; cumulative displacement composition |
+| **Tracking** | accumulative, incremental or any reference-frame schedule; cumulative displacement composition; per-frame checkpoints and resume |
 | **Strain** | plane fit (3D Savitzky-Golay), FEM nodal, finite difference or direct ADMM gradient; infinitesimal, Green-Lagrange, Euler-Almansi, Hencky; principal / von Mises / volumetric / rotation; physical voxel sizes |
 | **I/O** | TIFF stacks, slice folders, MATLAB `.mat` (v5/v7.3, MATLAB axis order handled), NumPy; exports to `.npz`, `.mat`, CSV, VTK `.vti` (+ `.pvd` time series) and a PDF report |
 
@@ -81,6 +81,13 @@ leaves the field of view):
 ```python
 result = run_aldvc(para, [ref, f1, f2, f3], masks=[mask0, mask1, mask2, mask3])
 para_inc = dvcpara_default(winsize=32, winstepsize=16, reference_mode="incremental")
+```
+
+Long sequences can be checkpointed frame by frame and resumed after an
+interruption (`al-dvc run --checkpoint DIR`, or the `checkpoint` config key):
+
+```python
+result = run_aldvc(para, provider, checkpoint_dir="scan/checkpoints")  # reuses finished frames on rerun
 ```
 
 Large sequences stream from disk with a bounded cache:

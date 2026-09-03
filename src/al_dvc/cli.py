@@ -98,7 +98,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"Volumes ({len(paths)}): {[p.name for p in paths]}")
     provider = FileVolumeProvider(paths, para.voi, mask_paths, load_kwargs=cfg.get("load_kwargs", {}))
     t0 = time.perf_counter()
-    result = run_aldvc(para, provider, progress_fn=_progress_printer, compute_strain=not args.no_strain)
+    checkpoint = args.checkpoint or cfg.get("checkpoint")
+    result = run_aldvc(
+        para,
+        provider,
+        progress_fn=_progress_printer,
+        compute_strain=not args.no_strain,
+        checkpoint_dir=checkpoint,
+        resume=not args.restart,
+    )
     print(f"Done in {time.perf_counter() - t0:.1f}s; exporting to {out_dir}")
     out_dir.mkdir(parents=True, exist_ok=True)
     if "npz" in exports:
@@ -246,6 +254,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--no-strain", action="store_true")
     r.add_argument("--export", nargs="+", choices=["npz", "mat", "csv", "vtk", "report", "summary"])
     r.add_argument("--set", nargs="*", metavar="KEY=JSON", help="override any DVCPara field, e.g. mu=1e-3")
+    r.add_argument("--checkpoint", metavar="DIR", help="write per-frame checkpoints here and resume from them")
+    r.add_argument("--restart", action="store_true", help="ignore existing checkpoints in --checkpoint")
     r.set_defaults(func=cmd_run)
 
     s = sub.add_parser("synth", help="generate a synthetic speckle volume sequence")

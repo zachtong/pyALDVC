@@ -7,6 +7,11 @@ All notable changes to pyALDVC are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Per-frame checkpoints: `run_aldvc(..., checkpoint_dir=DIR)` writes one
+  `frame_<k>.npz` per finished frame pair (plus `meta.json`) and reuses them on
+  a later call; a directory written with other parameters, volumes, schedule
+  or grid is rejected (`CheckpointMismatch`) unless `resume=False`. CLI:
+  `al-dvc run --checkpoint DIR [--restart]`. `scripts/make_checkpoint_report.py`.
 - Deformed-frame masks: a frame's mask now also applies when the frame is the
   deformed one. Masked voxels are NaN in the sampled volume, subset voxels whose
   interpolation stencil touches them drop out of the node's correlation (the

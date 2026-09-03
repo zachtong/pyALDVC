@@ -15,6 +15,7 @@ import logging
 import time
 from collections import OrderedDict
 from dataclasses import replace
+from pathlib import Path
 from typing import Callable
 
 import numpy as np
@@ -38,6 +39,7 @@ from ..solver.uncertainty import displacement_uncertainty
 from ..strain.compute_strain import compute_strain as _compute_strain
 from ..utils.grid_interp import interp_grid_field
 from ..utils.validation import validate_para_against_volume
+from .checkpoint import Checkpoint, CheckpointMismatch
 from .config import DVCPara
 from .data_structures import (
     ADMMInfo,
@@ -80,6 +82,8 @@ def run_aldvc(
     progress_fn: Callable[[float, str], None] | None = None,
     stop_fn: Callable[[], bool] | None = None,
     compute_strain: bool = True,
+    checkpoint_dir: str | Path | None = None,
+    resume: bool = True,
 ) -> PipelineResult:
     """Execute the AL-DVC pipeline on a sequence of volumes.
 
@@ -124,6 +128,13 @@ def run_aldvc(
     progress(0.0, "Section 2: building node grid")
     x0, y0, z0 = build_grid_axes(para.voi, shape, para.winsize, para.winstepsize)  # type: ignore[arg-type]
     base_mesh = mesh_setup(x0, y0, z0)
+    ckpt: Checkpoint | None = None
+    if checkpoint_dir is not None:
+        ckpt = Checkpoint(checkpoint_dir)
+        ckpt.prepare(para, shape, schedule, base_mesh, n_frames, resume)
+        done_frames = ckpt.completed_frames()
+        if done_frames:
+            logger.info("Checkpoint %s: reusing %d completed frame(s)", ckpt.dir, len(done_frames))
     logger.info(
         "Node grid %s (%d nodes), spacing %s, winsize %s, volume %s",
         base_mesh.grid_shape,
@@ -180,6 +191,16 @@ def run_aldvc(
             ref_idx = schedule.parent(k)
             progress(base, f"Frame {k}/{n_pairs}: reference {ref_idx}")
             t_frame = time.perf_counter()
+            if ckpt is not None and ckpt.has(k):
+                fr_ck, mesh_ck = ckpt.load(k, base_mesh)
+                if fr_ck.ref_frame != ref_idx:
+                    raise CheckpointMismatch(f"checkpoint frame {k} used reference {fr_ck.ref_frame}, schedule says {ref_idx}")
+                results[k - 1] = fr_ck
+                mesh_by_frame[k - 1] = mesh_ck
+                prev_ref, prev_U = ref_idx, fr_ck.U
+                timings[f"frame_{k}"] = 0.0
+                progress(base + span, f"Frame {k}: loaded from checkpoint")
+                continue
 
             ref = get_reference(ref_idx)
             bundle, mesh, ctx, ops = ref["bundle"], ref["mesh"], ref["ctx"], ref["ops"]
@@ -307,6 +328,8 @@ def run_aldvc(
             )
             mesh_by_frame[k - 1] = mesh
             prev_ref, prev_U = ref_idx, U_final
+            if ckpt is not None:
+                ckpt.save(k, results[k - 1], mesh)
             timings[f"frame_{k}"] = time.perf_counter() - t_frame
             logger.info("Frame %d/%d done in %.1fs", k, n_pairs, timings[f"frame_{k}"])
     except RunCancelled as exc:
