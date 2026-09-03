@@ -158,8 +158,10 @@ filled from the nearest finite one) to every node as the start of the full
 pass, which then begins within ~0.1 voxel with the local gradient already in
 place. This is pyALDIC's seed-propagation idea (solve few nodes, propagate
 U and F) in a parallel-friendly form: no sequential wave, every node still
-runs the full IC-GN. The NCC cost drops by k^3; the fine pass needs fewer
-iterations. Frames that reuse a previous solution (`previous`) skip it.
+runs the full IC-GN. The NCC cost drops by k^3 (micro-CT example: initial
+guess 50 -> 17 s, run 233 -> 206 s with the same result); on clean synthetic
+data the fine pass also needs fewer iterations (2.9 -> 1.8), on the noisy
+scan it does not. Frames that reuse a previous solution (`previous`) skip it.
 
 ### Noise-corrected Gauss-Newton steps
 
