@@ -365,7 +365,9 @@ Other findings from the same run:
 * MATLAB's finite-difference global step spreads an outlier node into a
   cross-shaped artefact along the grid axes; the pyALDVC field is smooth
   there.
-* Wall time on the 24-core workstation: 12.5 min for the 79,200 nodes
+* Wall time on the 24-core workstation: 4.4 min for the 79,200 nodes (12.5 min
+  before the kernel optimisation of 0.3.2: initial guess 48 s, local IC-GN 67 s,
+  three 3-DOF passes 143 s)
   (initial guess 58 s, 12-DOF pass 218 s, three 3-DOF passes 471 s, global
   steps < 1 s) plus 3.9 min for the equivalence check on 18,108 sampled
   nodes. Before the stall rule and the block-cyclic schedule the 12-DOF pass
