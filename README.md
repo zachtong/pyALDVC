@@ -102,14 +102,15 @@ result = run_aldvc(para, provider)
 ### Graphical application
 
 ```bash
-pip install "al-dvc[gui]"
+pip install "al-dvc[gui]"          # add [gui3d] for the pyvista 3-D view
 al-dvc-gui                 # or: al-dvc gui [session.aldvc]
 ```
 
 A standalone PySide6 window (`al_dvc.gui`, architecture shared with pyALDIC):
 volume list with masks, parameter form with a memory estimate, run controls
-with progress and log, a three-plane slice viewer with result overlays,
-summary and exports. Sessions (`.aldvc`) keep volumes, parameters, output
+with progress and log, a three-plane slice viewer with result overlays, a
+3-D view (pyvista: field slices, node points, iso-surface, warped lattice,
+displacement arrows, volume slices; `reports/view3d.pdf`), summary and exports. Sessions (`.aldvc`) keep volumes, parameters, output
 folder and display state; `Help > Run self-test` (or `al-dvc-gui --self-test`)
 checks an installation. English and Simplified Chinese; the kernels compile in
 the background after the window opens. `reports/gui.pdf` shows the screens.

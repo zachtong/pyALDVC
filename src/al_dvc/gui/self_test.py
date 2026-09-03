@@ -97,10 +97,29 @@ def check_mini_run() -> str:
     return f"{result.dvc_mesh.n_nodes} nodes, {100 * conv:.0f}% converged, report written, {elapsed:.1f} s"
 
 
+def check_view3d() -> str:
+    """Off-screen pyvista render (optional dependency: reported, never a failure, when missing)."""
+    from .view3d_scene import available
+
+    if not available():
+        return "pyvista not installed (optional: pip install al-dvc[gui3d])"
+    import pyvista as pv
+    import vtk
+
+    pl = pv.Plotter(off_screen=True, window_size=(96, 72))
+    pl.add_mesh(pv.Cube(), color="orange")
+    img = pl.screenshot(None, return_img=True)
+    pl.close()
+    if img is None or img.std() < 1.0:
+        raise CheckFailed("off-screen render produced a blank image")
+    return f"pyvista {pv.__version__}, VTK {vtk.vtkVersion.GetVTKVersion()}, off-screen render ok"
+
+
 CHECKS: list[tuple[str, Callable[[], str]]] = [
     ("Qt and theme", check_qt),
     ("Numba kernels", check_numba),
     ("Translations", check_languages),
+    ("3-D view (pyvista)", check_view3d),
     ("Mini run through the GUI worker", check_mini_run),
 ]
 

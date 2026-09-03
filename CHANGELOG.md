@@ -4,6 +4,15 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- 3-D view tab in the GUI (`al_dvc.gui.view3d_scene`, `panels/view3d.py`,
+  extra `gui3d` = pyvista + pyvistaqt): field slices, node points, iso-surface,
+  warped lattice, displacement arrows, volume slices, camera presets and PNG
+  screenshots; interactive pyvistaqt widget with an off-screen fallback;
+  `scripts/make_view3d_report.py` (`reports/view3d.pdf`).
+
 ## [0.3.0] - 2026-09-03
 
 "Usable without code": a standalone graphical application and a portable

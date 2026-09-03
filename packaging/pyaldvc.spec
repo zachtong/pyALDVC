@@ -84,6 +84,10 @@ hiddenimports = [
     "matplotlib.backends.backend_qtagg",
     "matplotlib.backends.backend_agg",
     "matplotlib.backends.backend_pdf",
+    # 3-D view (pyvista on VTK; the interactor widget lives in pyvistaqt).
+    "pyvista",
+    "pyvistaqt",
+    "vtkmodules.qt.QVTKRenderWindowInteractor",
     # Volume readers selected by file extension at runtime.
     "tifffile",
     "h5py",
@@ -108,7 +112,7 @@ excludes = [
     "PySide6.Qt3DRender", "PySide6.QtAxContainer", "PySide6.QtBluetooth", "PySide6.QtCharts", "PySide6.QtConcurrent",
     "PySide6.QtDataVisualization", "PySide6.QtDBus", "PySide6.QtDesigner", "PySide6.QtGraphs", "PySide6.QtGraphsWidgets",
     "PySide6.QtHelp", "PySide6.QtHttpServer", "PySide6.QtLocation", "PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets",
-    "PySide6.QtNetworkAuth", "PySide6.QtNfc", "PySide6.QtOpenGL", "PySide6.QtOpenGLWidgets", "PySide6.QtPdf",
+    "PySide6.QtNetworkAuth", "PySide6.QtNfc", "PySide6.QtPdf",
     "PySide6.QtPdfWidgets", "PySide6.QtPositioning", "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtQuick3D",
     "PySide6.QtQuickControls2", "PySide6.QtQuickTest", "PySide6.QtQuickWidgets", "PySide6.QtRemoteObjects",
     "PySide6.QtScxml", "PySide6.QtSensors", "PySide6.QtSerialBus", "PySide6.QtSerialPort", "PySide6.QtSpatialAudio",

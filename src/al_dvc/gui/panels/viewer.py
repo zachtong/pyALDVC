@@ -92,8 +92,7 @@ class SliceViewer(QWidget):
         self.redraw()
 
     def _on_slider(self, axis: str, value: int) -> None:
-        self._state.slice_index[axis] = int(value)
-        self.redraw()
+        self._state.set_slice(axis, int(value))  # emits display_changed -> redraw here and in the 3-D view
 
     # ------------------------------------------------------------------ drawing
     def _field_grid(self):

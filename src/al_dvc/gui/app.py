@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QScrollArea,
     QSplitter,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -35,6 +36,7 @@ from .kernel_warmup import START_DELAY_MS, KernelWarmup
 from .panels.param_panel import ParamPanel
 from .panels.results_panel import ResultsPanel
 from .panels.run_panel import RunPanel
+from .panels.view3d import View3DPanel
 from .panels.viewer import SliceViewer
 from .panels.volume_panel import VolumePanel
 from .session import SESSION_SUFFIX, SessionError, apply_session, load_session, save_session
@@ -72,6 +74,10 @@ class MainWindow(QMainWindow):
         self.param_panel = ParamPanel(self.state)
         self.run_panel = RunPanel(self.state)
         self.viewer = SliceViewer(self.state)
+        self.view3d = View3DPanel(self.state)
+        self.center_tabs = QTabWidget()
+        self.center_tabs.addTab(self.viewer, "")
+        self.center_tabs.addTab(self.view3d, "")
         self.results_panel = ResultsPanel(self.state)
 
         self._sections = {
@@ -95,7 +101,7 @@ class MainWindow(QMainWindow):
         right.setMinimumWidth(300)
         splitter = QSplitter()
         splitter.addWidget(left)
-        splitter.addWidget(self.viewer)
+        splitter.addWidget(self.center_tabs)
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -289,6 +295,8 @@ class MainWindow(QMainWindow):
         self._sections["volumes"].label.setText(self.tr("Volumes"))
         self._sections["parameters"].label.setText(self.tr("Parameters"))
         self._sections["run"].label.setText(self.tr("Run"))
+        self.center_tabs.setTabText(0, self.tr("Slices"))
+        self.center_tabs.setTabText(1, self.tr("3-D view"))
         self._menus["file"].setTitle(self.tr("&File"))
         self._menus["view"].setTitle(self.tr("&View"))
         self._menus["language"].setTitle(self.tr("Language"))

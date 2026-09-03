@@ -84,6 +84,10 @@ def main(argv=None) -> int:
         grab("4. Result: exx overlay")
         window.results_panel.export("report")
         grab("5. After exporting the PDF report")
+        window.center_tabs.setCurrentWidget(window.view3d)
+        window.view3d.arrows.setChecked(True)
+        grab("6. 3-D view tab (off-screen fallback renderer)")
+        window.center_tabs.setCurrentWidget(window.viewer)
     res = window.state.results
     window.close()
 
@@ -103,7 +107,8 @@ def main(argv=None) -> int:
             f"Synthetic pair {SHAPE[::-1]} (x,y,z), subset 24, step 12: {res.dvc_mesh.n_nodes} nodes,",
             f"run through the GUI worker in {run_time:.1f} s (JIT already warm).",
             "",
-            "Limitations: the viewer shows node-grid fields as blocks on the mid-planes (no 3-D rendering);",
+            "Limitations: the slice viewer shows node-grid fields as blocks on the mid-planes; the 3-D tab",
+            "renders off-screen (static) when Qt has no OpenGL context, as in these screenshots;",
             "large volumes are loaded fully into memory when added; exports run on the UI thread.",
         ]
         y = 0.95

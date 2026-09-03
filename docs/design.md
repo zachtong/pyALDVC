@@ -397,6 +397,27 @@ Differences from pyALDIC, all consequences of the data being 3-D:
   (`tests/test_gui.py`, `QT_QPA_PLATFORM=offscreen`; on Windows the offscreen
   platform needs `QT_QPA_FONTDIR=C:\Windows\Fonts` to render text).
 
+### 3-D view
+
+`view3d_scene.py` turns a result into pyvista datasets without Qt: the node
+lattice is a `pyvista.ImageData` (node spacing as voxel spacing, first node as
+origin) whose point order `n = iz*ny*nx + iy*nx + ix` is VTK's, so per-node
+arrays attach without reordering; non-converged nodes carry NaN and are drawn
+transparent. `build_scene(plotter, result, SceneOptions, volume)` draws one
+of four modes (orthogonal field slices at the slice-viewer positions, node
+points, an iso-surface at a fraction of the colour range, the lattice warped
+by the displacement), optional displacement glyphs on a strided subset
+(capped at 20,000), the volume outline and the image volume's three slices as
+grey planes (subsampled above 4 Mpixel). `render_image` / `render_png` run
+the same code off-screen. `panels/view3d.py` embeds a `pyvistaqt.QtInteractor`
+when Qt has an OpenGL context and otherwise falls back to the off-screen
+renderer with camera presets (the offscreen platform of the tests, some
+remote desktops), so the whole panel is testable headless. The panel follows
+the shared display state (field, frame, colour map, range, opacity) and the
+slice sliders, and only re-renders while its tab is visible. pyvista and
+pyvistaqt are the optional extra `gui3d`; without them the tab shows the
+install command.
+
 ### Portable Windows bundle
 
 `packaging/pyaldvc.spec` freezes the application with PyInstaller into a
