@@ -25,6 +25,11 @@ GUI follow-ups: a 3-D view, mask drawing on the slices, batch runs.
   session) and the CLI `al-dvc batch a.aldvc b.aldvc --export npz summary`;
   `scripts/make_batch_report.py` (`reports/batch.pdf`).
 
+### Fixed
+- Windows bundle: the VTK modules pyvista loads lazily are collected by a
+  build-time probe (a static analysis found 19 of them and the frozen 3-D view
+  reported pyvista as missing); the self-test names the import failure.
+
 ## [0.3.0] - 2026-09-03
 
 "Usable without code": a standalone graphical application and a portable

@@ -99,12 +99,13 @@ def check_mini_run() -> str:
 
 def check_view3d() -> str:
     """Off-screen pyvista render (optional dependency: reported, never a failure, when missing)."""
-    from .view3d_scene import available
+    from .view3d_scene import import_error
 
-    if not available():
-        return "pyvista not installed (optional: pip install al-dvc[gui3d])"
+    reason = import_error()
+    if reason is not None:
+        return f"pyvista not available ({reason}); optional: pip install al-dvc[gui3d]"
     import pyvista as pv
-    import vtk
+    from vtkmodules.vtkCommonCore import vtkVersion  # the 'vtk' facade package is not bundled
 
     pl = pv.Plotter(off_screen=True, window_size=(96, 72))
     pl.add_mesh(pv.Cube(), color="orange")
@@ -112,7 +113,7 @@ def check_view3d() -> str:
     pl.close()
     if img is None or img.std() < 1.0:
         raise CheckFailed("off-screen render produced a blank image")
-    return f"pyvista {pv.__version__}, VTK {vtk.vtkVersion.GetVTKVersion()}, off-screen render ok"
+    return f"pyvista {pv.__version__}, VTK {vtkVersion.GetVTKVersion()}, off-screen render ok"
 
 
 CHECKS: list[tuple[str, Callable[[], str]]] = [

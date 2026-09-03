@@ -38,7 +38,17 @@ from PySide6.QtWidgets import (
 )
 
 from ..app_state import AppState
-from ..view3d_scene import BACKGROUND, CAMERAS, MODES, SceneInfo, SceneOptions, available, build_scene, render_image
+from ..view3d_scene import (
+    BACKGROUND,
+    CAMERAS,
+    MODES,
+    SceneInfo,
+    SceneOptions,
+    available,
+    build_scene,
+    import_error,
+    render_image,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -336,7 +346,10 @@ class View3DPanel(QWidget):
 
     def _hint_text(self) -> str:
         if self.backend == "unavailable":
-            return self.tr("The 3-D view needs pyvista and pyvistaqt:\n{cmd}").format(cmd=INSTALL_HINT)
+            reason = import_error() or ""
+            return self.tr("The 3-D view needs pyvista and pyvistaqt:\n{cmd}").format(cmd=INSTALL_HINT) + (
+                f"\n\n{reason}" if reason else ""
+            )
         return self.tr("No results to show. Run an analysis first.")
 
     def retranslate_ui(self) -> None:

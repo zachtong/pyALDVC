@@ -462,7 +462,11 @@ files are collected under their package path (`al_dvc/gui/arrows`,
 bundle; numba's threading-layer modules, the Qt SVG plugin and the matplotlib
 `qtagg`/`agg`/`pdf` backends are hidden imports; `vcomp140.dll` is bundled so
 numba keeps the OpenMP layer; unused Qt modules, rival bindings and the TLS
-stack are excluded. `packaging/rthook_pyaldvc.py` gives matplotlib a writable
+stack are excluded. pyvista imports most `vtkmodules` lazily, so the spec runs
+a probe (import pyvista and pyvistaqt, render one scene with every feature
+the panel uses) and adds the modules that were loaded as hidden imports;
+the `vtk` facade package, which would pull in every VTK module, stays
+excluded. With VTK the bundle is about 620 MB unpacked. `packaging/rthook_pyaldvc.py` gives matplotlib a writable
 configuration directory, and `packaging/pyaldvc_launcher.py` is the entry
 script (kept out of the package so `al_dvc/__main__.py` is never collected as
 a second entry point). `tools/build_exe.py` runs PyInstaller with the pinned

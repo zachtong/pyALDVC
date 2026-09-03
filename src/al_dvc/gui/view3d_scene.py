@@ -33,13 +33,18 @@ CAMERAS = ("iso", "xy", "xz", "yz")
 BACKGROUND = "#1b1d23"
 
 
-def available() -> bool:
-    """True when pyvista can be imported."""
+def import_error() -> str | None:
+    """Why pyvista cannot be imported (``None`` when it can): shown by the self-test and the panel."""
     try:
         import pyvista  # noqa: F401
-    except Exception:
-        return False
-    return True
+    except Exception as exc:  # ImportError, or a broken VTK install raising something else
+        return f"{type(exc).__name__}: {exc}"
+    return None
+
+
+def available() -> bool:
+    """True when pyvista can be imported."""
+    return import_error() is None
 
 
 @dataclass(frozen=True)

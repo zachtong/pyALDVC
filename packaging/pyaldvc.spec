@@ -16,7 +16,7 @@ build time rather than discovered missing by a user.
 import glob
 import os
 
-from PyInstaller.utils.hooks import copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 SRC = os.path.join(SPECPATH, os.pardir, "src")
 PKG = os.path.join(SRC, "al_dvc")
@@ -84,9 +84,7 @@ hiddenimports = [
     "matplotlib.backends.backend_qtagg",
     "matplotlib.backends.backend_agg",
     "matplotlib.backends.backend_pdf",
-    # 3-D view (pyvista on VTK; the interactor widget lives in pyvistaqt).
-    "pyvista",
-    "pyvistaqt",
+    # 3-D view: pyvista, pyvistaqt and the VTK modules they import (see _vtk_modules_in_use below).
     "vtkmodules.qt.QVTKRenderWindowInteractor",
     # Volume readers selected by file extension at runtime.
     "tifffile",
@@ -98,6 +96,48 @@ hiddenimports = [
     "scipy.sparse.linalg",
     "scipy.fft",
 ]
+
+
+
+def _vtk_modules_in_use():
+    """VTK / pyvista modules loaded by importing pyvista, pyvistaqt and rendering one scene.
+
+    pyvista imports most ``vtkmodules.*`` lazily, so a static analysis collects
+    only a handful and the frozen import fails; collecting every VTK module
+    would add hundreds of MB. Importing the real thing in the build
+    environment gives the exact list for the installed versions.
+    """
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys, json; import pyvista as pv; import pyvistaqt; "
+        "pv.OFF_SCREEN = True; pl = pv.Plotter(off_screen=True, window_size=(64, 48)); "
+        "g = pv.ImageData(dimensions=(3, 3, 3)); import numpy as np; g.point_data['f'] = np.arange(27.0); "
+        "pl.add_mesh(g.slice_orthogonal(), scalars='f'); pl.add_mesh(g.outline()); pl.add_mesh(g.contour([13.0])); "
+        "pl.add_mesh(g.warp_by_vector() if 'v' in g.point_data else g); "
+        "c = pv.PolyData(np.zeros((2, 3))); c['vec'] = np.ones((2, 3)); c['mag'] = np.ones(2); "
+        "pl.add_mesh(c.glyph(orient='vec', scale='mag', factor=1.0)); pl.add_scalar_bar(title='f'); pl.add_axes(); "
+        "pl.view_isometric(); pl.screenshot(None, return_img=True); pl.close(); "
+        "print(json.dumps(sorted(m for m in sys.modules if m.startswith(('vtkmodules', 'pyvista', 'pyvistaqt', 'scooby', 'pooch')))))"
+    )
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True, timeout=600)
+    import json
+
+    modules = json.loads(out.stdout.strip().splitlines()[-1])
+    assert any(m.startswith("vtkmodules.vtkRendering") for m in modules), "probe did not load VTK rendering modules"
+    return modules
+
+
+try:
+    _view3d_modules = _vtk_modules_in_use()
+    hiddenimports += _view3d_modules
+    hiddenimports += [m for m in collect_submodules("pyvistaqt")]
+    datas += collect_data_files("pyvista", excludes=["**/*.py", "**/examples/**"])
+    datas += collect_data_files("pyvistaqt", excludes=["**/*.py"])
+    print(f"pyaldvc.spec: 3-D view -> {len(_view3d_modules)} pyvista/VTK modules collected")
+except Exception as _exc:  # no pyvista in the build environment: the tab shows the install hint
+    print(f"pyaldvc.spec: 3-D view not bundled ({_exc})")
 
 binaries = []
 # The OpenMP runtime behind numba's 'omp' threading layer (app-local deployment is
@@ -127,8 +167,10 @@ excludes = [
     "ssl", "_ssl",
     # numba threading layers other than omp/workqueue (tbb is not installed; its pool would only add a warning)
     "numba.np.ufunc.tbbpool",
+    # the "vtk" facade imports every VTK module (hundreds of MB); pyvista uses vtkmodules directly
+    "vtk",
     # optional heavy extras
-    "pyvista", "vtk", "IPython", "jupyter", "notebook", "tkinter",
+    "IPython", "jupyter", "notebook", "tkinter",
 ]
 
 a = Analysis(
