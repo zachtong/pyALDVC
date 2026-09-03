@@ -112,7 +112,9 @@ with progress and log, a three-plane slice viewer with result overlays and
 mask drawing (rectangle / ellipse / polygon / brush on any slice, extruded
 through all slices, one slice or a range; add / cut; undo; `reports/mask_tools.pdf`), a
 3-D view (pyvista: field slices, node points, iso-surface, warped lattice,
-displacement arrows, volume slices; `reports/view3d.pdf`), summary and exports. Sessions (`.aldvc`) keep volumes, parameters, output
+displacement arrows, volume slices; `reports/view3d.pdf`), summary and exports,
+and a batch dialog that runs several saved sessions one after another
+(`File > Batch run...`, the same as `al-dvc batch`; `reports/batch.pdf`). Sessions (`.aldvc`) keep volumes, parameters, output
 folder and display state; `Help > Run self-test` (or `al-dvc-gui --self-test`)
 checks an installation. English and Simplified Chinese; the kernels compile in
 the background after the window opens. `reports/gui.pdf` shows the screens.
@@ -132,6 +134,7 @@ al-dvc synth data/synth --shape 96 96 96 --mode stretch --value 0.02   # synthet
 al-dvc run --volumes data/synth -o results --winsize 24 --step 12 --export npz vtk report
 al-dvc run config.yaml                                                 # see examples/scripting/
 al-dvc plot results/aldvc.npz --field exx --frame 1
+al-dvc batch study/*.aldvc --export npz summary report              # sessions saved by the GUI, one after another
 al-dvc info scan/*.tif
 ```
 

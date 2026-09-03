@@ -144,13 +144,14 @@ class MainWindow(QMainWindow):
             ("save", self._on_save_session),
             ("save_as", self._on_save_session_as),
             ("add_volumes", self.volume_panel._on_add_files),
+            ("batch", self._on_batch),
             ("exit", self.close),
         ]:
             act = QAction(self)
             act.triggered.connect(slot)
             self._actions[key] = act
             self._menus["file"].addAction(act)
-            if key in ("save_as", "add_volumes"):
+            if key in ("save_as", "batch"):
                 self._menus["file"].addSeparator()
         self._menus["view"] = bar.addMenu("")
         self._menus["language"] = self._menus["view"].addMenu("")
@@ -242,6 +243,21 @@ class MainWindow(QMainWindow):
         return p
 
     # ------------------------------------------------------------------ help
+    def open_batch_dialog(self):
+        """The (single) batch dialog, created on first use and shown non-modally."""
+        from .dialogs.batch_dialog import BatchDialog
+
+        dialog = getattr(self, "batch_dialog", None)
+        if dialog is None:
+            dialog = BatchDialog(self.state, self, open_session=self.open_session_path)
+            self.batch_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        return dialog
+
+    def _on_batch(self) -> None:
+        self.open_batch_dialog()
+
     def _on_self_test(self) -> None:
         from .self_test import run_self_test
 
@@ -283,6 +299,10 @@ class MainWindow(QMainWindow):
         super().changeEvent(event)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        dialog = getattr(self, "batch_dialog", None)
+        if dialog is not None and dialog.running:
+            dialog.stop()
+            dialog.wait(60_000)
         if self.state.run_state in (RunState.RUNNING, RunState.STOPPING):
             if not self._message("question", self.tr("Analysis running"), self.tr("A run is in progress. Stop it and close?")):
                 event.ignore()
@@ -307,6 +327,7 @@ class MainWindow(QMainWindow):
             "save": self.tr("Save session"),
             "save_as": self.tr("Save session as..."),
             "add_volumes": self.tr("Add volumes..."),
+            "batch": self.tr("Batch run..."),
             "exit": self.tr("Exit"),
             "self_test": self.tr("Run self-test"),
             "about": self.tr("About pyALDVC"),
@@ -315,6 +336,9 @@ class MainWindow(QMainWindow):
             self._actions[key].setText(text)
         self._on_run_state_changed(self.state.run_state)
         self._sync_language_check()
+        dialog = getattr(self, "batch_dialog", None)
+        if dialog is not None:
+            dialog.retranslate_ui()
 
 
 # ---------------------------------------------------------------------- application

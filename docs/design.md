@@ -281,7 +281,7 @@ CLI: `al-dvc run config.yaml`, `al-dvc synth ...`, `al-dvc info volume.tif`,
 | 0.1.x | real-data hardening: node-wise cross-validation against the MATLAB ALDVC results shipped with the reference code (`scripts/compare_matlab.py`, `reports/matlab_crossval.pdf`), memory / throughput profile on a full 1024x1024x306 micro-CT pair, robustness on the `eyes` data set (where the MATLAB IC-GN does not converge), GitHub repository + CI |
 | 0.2 (released 2026-09-03) | "real-scan ready": deformed-frame masks in the kernel, per-node displacement uncertainty from the stored Hessian factors, per-frame checkpoints and resume, large-volume mode with on-the-fly gradients, tutorial notebook, PyPI publishing workflow (trusted publishing; the first upload needs the one-time PyPI setup described in `.github/workflows/publish.yml`). A coarse-to-fine IC-GN was considered and deferred: the current pipeline already converges at 100 % of the nodes for 30 degree rotations and 20 % strains on synthetic speckle, so the remaining hard cases (`eyes`) need larger subsets and a deformation-aware initial guess rather than resolution levels |
 | 0.3 (released 2026-09-03) | standalone PySide6 GUI in `al_dvc.gui` (see section 11): `AppState` + panels + worker thread + sessions + JSON-dictionary i18n + kernel warm-up + self-test, three-plane slice viewer with node-grid overlays; portable Windows bundle (PyInstaller spec, build script, frozen-bundle tests, release workflow attaching `pyALDVC-<version>-win64.zip` to each tag) |
-| 0.3.x (in progress) | GUI follow-ups: pyvista 3-D view (done), mask drawing on the slice viewer (done), batch runs over several sessions |
+| 0.3.1 | GUI follow-ups: pyvista 3-D view, mask drawing on the slice viewer, batch runs over several sessions (dialog and `al-dvc batch`) |
 | 0.4 | GPU backend (numba.cuda: tricubic sampling + per-node IC-GN, one block per node; global step stays on the CPU). A 2-3 day prototype measures the real speed-up first; Blackwell (sm_120) support in numba-cuda must be confirmed |
 | later | adaptive octree mesh (3D analogue of pyALDIC's quadtree) with hanging-node hex elements; second-order (30-DOF) subset shape functions to remove the first-order curvature bias; subset splitting at discontinuities |
 
@@ -436,6 +436,21 @@ the shared display state (field, frame, colour map, range, opacity) and the
 slice sliders, and only re-renders while its tab is visible. pyvista and
 pyvistaqt are the optional extra `gui3d`; without them the tab shows the
 install command.
+
+### Batch runs
+
+`batch.py` (no widgets) runs a list of `.aldvc` files in order:
+`run_session_file` loads the session, reads its volumes and masks (mask
+files, then drawn operations on top), runs the pipeline with the session's
+parameters and checkpoints, and writes the requested exports (`npz`,
+`summary`, `report`, `vtk`, `mat`, `csv`) into the session's output folder;
+every failure is recorded in the returned `BatchJob` so the next session
+starts. `BatchRunner` adds per-job and overall progress callbacks and a stop
+flag (the running session stops early through the pipeline's `stop_fn`, the
+rest is skipped). The dialog (`dialogs/batch_dialog.py`) wraps the runner in
+a `QThread`, shows a job table with status / nodes / convergence / time, two
+progress bars and a log, and can open a finished session in the window; the
+CLI `al-dvc batch` uses the same runner and exits non-zero when a job failed.
 
 ### Portable Windows bundle
 

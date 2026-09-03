@@ -238,6 +238,32 @@ def cmd_plot(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _batch_progress(index: int, n: int, frac: float, msg: str) -> None:
+    sys.stdout.write(f"\r[{index + 1}/{n} {100 * frac:5.1f}%] {msg:<64}")
+    sys.stdout.flush()
+    if frac >= 1.0:
+        sys.stdout.write("\n")
+
+
+def cmd_batch(args: argparse.Namespace) -> int:
+    """Run several session files one after another (exit code 1 when any job failed)."""
+    from .gui.batch import BatchRunner
+
+    runner = BatchRunner(
+        args.sessions,
+        exports=tuple(args.export),
+        checkpoints=not args.no_checkpoints,
+        compute_strain=not args.no_strain,
+        progress_fn=None if args.quiet else _batch_progress,
+    )
+    jobs = runner.run()
+    print(BatchRunner.summary_table(jobs))
+    for job in jobs:
+        if job.traceback and args.verbose:
+            print(job.traceback)
+    return 0 if all(job.status == "done" for job in jobs) else 1
+
+
 def cmd_gui(args: argparse.Namespace) -> int:
     """Launch the graphical application (needs the ``gui`` extra: ``pip install al-dvc[gui]``)."""
     try:
@@ -290,6 +316,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--frame", type=int, default=1)
     p.add_argument("-o", "--output")
     p.set_defaults(func=cmd_plot)
+    b = sub.add_parser("batch", help="run several .aldvc session files one after another")
+    b.add_argument("sessions", nargs="+", help="session files (.aldvc)")
+    b.add_argument("--export", nargs="+", default=["npz", "summary"], choices=["npz", "summary", "report", "vtk", "mat", "csv"])
+    b.add_argument("--no-checkpoints", action="store_true", help="do not write per-frame checkpoints")
+    b.add_argument("--no-strain", action="store_true", help="skip the strain computation")
+    b.add_argument("--quiet", action="store_true", help="no progress line")
+    b.add_argument("--verbose", action="store_true", help="print tracebacks of failed jobs")
+    b.set_defaults(func=cmd_batch)
     g = sub.add_parser("gui", help="launch the graphical application")
     g.add_argument("session", nargs="?", help="session file (.aldvc) to open")
     g.set_defaults(func=cmd_gui)

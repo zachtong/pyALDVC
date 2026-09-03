@@ -131,7 +131,6 @@ def test_polygon_brush_ellipse_and_escape(qapp, pair):
     viewer.mask_tools.set_tool("brush")
     viewer.mask_tools.radius.setValue(3)
     drag(viewer, 2, (10, 20), (30, 20))
-    ix = viewer.slice_indices()[2]
     mask = state.current_mask()
     assert mask[20, 10:31, :].all()  # the stroke spans every x (depth: all slices)
     assert mask[23, 20, 2] and not mask[24, 20, 2]  # x = 2 lies outside the polygon: only the stroke reaches it

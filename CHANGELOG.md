@@ -18,6 +18,10 @@ All notable changes to pyALDVC are documented here. The format follows
   or cut, invert / fill / clear, undo / redo, apply to the current or all
   frames, save as a mask volume; sessions store the drawing operations;
   `scripts/make_mask_tools_report.py` (`reports/mask_tools.pdf`).
+- Batch runs: `al_dvc.gui.batch` (`run_session_file`, `BatchRunner`), the
+  `File > Batch run...` dialog (job table, progress, log, stop, open a finished
+  session) and the CLI `al-dvc batch a.aldvc b.aldvc --export npz summary`;
+  `scripts/make_batch_report.py` (`reports/batch.pdf`).
 
 ## [0.3.0] - 2026-09-03
 
