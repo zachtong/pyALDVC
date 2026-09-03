@@ -191,6 +191,7 @@ The most useful fields:
 | `strain_type` | `"infinitesimal"` | `green_lagrange`, `euler_almansi`, `hencky` |
 | `reference_mode` | `"accumulative"` | or `"incremental"`; `frame_schedule` for custom trees |
 | `subset_stride` | 1 | sample every k-th subset voxel per axis: k^3 fewer voxels per IC-GN iteration (local steps 5x faster at k = 2 with subset 32), the same result on clean data, about 3x the noise-induced error (a subset with k^3 fewer voxels), the smoothing bias of the full span; 2 is a good choice for subsets of 32 and more on data with a decent SNR |
+| `icgn_noise_hessian` | True | Gauss-Newton steps with the noise-corrected Hessian once a node is in its fine-convergence phase: the stored Hessian is inflated by the reference-gradient noise, which makes the plain steps too short (16 instead of 6 iterations per node at SNR ~ 5); same fixed point, 2-2.5x fewer iterations on noisy data, no change on clean data |
 | `n_threads` | 0 (all) | Numba thread count |
 | `gradient_mode` | `"stored"` | `on_the_fly` drops the three gradient volumes (21 -> 9 bytes per voxel) for scans that do not fit otherwise; about 15-20 % slower local step |
 

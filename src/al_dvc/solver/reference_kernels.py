@@ -28,6 +28,20 @@ from .numba_kernels import MIN_SUBSET_VOXELS, MIN_VALID_FRACTION, STALL_STEP_DEC
 
 ABS_TOL = 1e-5
 LM_DAMPING_3DOF = 1e-3
+MIN_CORRECTED_FRACTION = 0.1
+NOISE_CORR_STEP = 0.5
+
+
+def corrected_hessian_np(H, pattern, corr):
+    """``H - corr * pattern`` with the translation-diagonal guard of the Numba kernel."""
+    limit = 1.0
+    for i in range(9, 12):
+        c = corr * pattern[i, i]
+        if c > 0:
+            limit = min(limit, (1.0 - MIN_CORRECTED_FRACTION) * H[i, i] / c)
+    if limit <= 0:
+        return None
+    return H - corr * limit * pattern
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +226,28 @@ def precompute_node_np(coord, half, f, gx, gy, gz, mask, min_valid_ratio=0.5, co
     return H, meanf, bottomf, n_valid, True
 
 
-def icgn_12dof_np(P0, coord, half, f, gx, gy, gz, mask, g, mode, H, meanf, bottomf, tol, dp_tol, max_iter, patience=0, stride=1):
+def icgn_12dof_np(
+    P0,
+    coord,
+    half,
+    f,
+    gx,
+    gy,
+    gz,
+    mask,
+    g,
+    mode,
+    H,
+    meanf,
+    bottomf,
+    tol,
+    dp_tol,
+    max_iter,
+    patience=0,
+    stride=1,
+    pattern=None,
+    noise_gain=0.0,
+):
     """Reference 12-DOF IC-GN for one node. Returns ``(P, n_iter, status, zncc)``."""
     x0, y0, z0 = (int(c) for c in coord)
     hx, hy, hz = half
@@ -237,6 +272,7 @@ def icgn_12dof_np(P0, coord, half, f, gx, gy, gz, mask, g, mode, H, meanf, botto
     best_dp = np.inf
     stall = 0
     P_best = P.copy()
+    last_dp = np.inf
     for it in range(1, max_iter + 1):
         xw, yw, zw = warp_points(P, x0, y0, z0, X, Y, Z)
         if not inside_domain_np(zw, yw, xw, g.shape).all():
@@ -261,10 +297,22 @@ def icgn_12dof_np(P0, coord, half, f, gx, gy, gz, mask, g, mode, H, meanf, botto
         zncc = float(np.sum((fv_d - meanf_d) * (gv_d - meang)) / (bottomf_d * bottomg))
         if norm_rel < tol or norm_abs < ABS_TOL:
             return P, it, STATUS_CONVERGED, zncc
-        dP = -np.linalg.solve(H, b)
+        H_step = H
+        if noise_gain > 0.0 and pattern is not None and pattern[9, 9] > 0 and last_dp < NOISE_CORR_STEP:
+            n_valid = int(ok_v.sum())
+            s2 = max(1.0 - zncc, 0.0) * bottomf_d**2 / n_valid
+            H0 = corrected_hessian_np(H, pattern, noise_gain * s2 * n_valid / pattern[9, 9])
+            if H0 is not None:
+                try:
+                    np.linalg.cholesky(H0)
+                    H_step = H0
+                except np.linalg.LinAlgError:
+                    H_step = H
+        dP = -np.linalg.solve(H_step, b)
         scaled = dP.copy()
         scaled[:9] *= half_scale
         dpn = float(np.linalg.norm(scaled))
+        last_dp = dpn
         if dpn < dp_tol:
             return P, it, STATUS_CONVERGED, zncc
         improved = zncc > best_zncc + STALL_ZNCC_EPS
@@ -309,6 +357,8 @@ def icgn_3dof_np(
     max_iter,
     patience=0,
     stride=1,
+    n_full=0.0,
+    noise_gain=0.0,
 ):
     """Reference 3-DOF IC-GN (ADMM subpb1) for one node."""
     x0, y0, z0 = (int(c) for c in coord)
@@ -330,8 +380,16 @@ def icgn_3dof_np(
     P[9:] = U_old
     A = np.eye(3) + P[:9].reshape(3, 3)
     bf2 = max(bottomf**2, 1e-30)  # proximal Hessian keeps the precomputed reference scale
-    H3 = H[9:, 9:] * 2.0 / bf2 + mu * np.eye(3)
-    Hd = H3 + LM_DAMPING_3DOF * np.max(np.diag(H3)) * np.eye(3)
+
+    def build_hd(corr):
+        Htt = H[9:, 9:].copy()
+        for i in range(3):
+            Htt[i, i] -= min(corr, (1.0 - MIN_CORRECTED_FRACTION) * Htt[i, i])
+        H3 = Htt * 2.0 / bf2 + mu * np.eye(3)
+        return H3 + LM_DAMPING_3DOF * np.max(np.diag(H3)) * np.eye(3)
+
+    Hd = build_hd(0.0)
+    last_dn = np.inf
     norm_init = None
     zncc = np.nan
     best_dn = np.inf
@@ -359,8 +417,13 @@ def icgn_3dof_np(
         zncc = float(np.sum((fv_d - meanf_d) * (gv_d - meang)) / (bottomf_d * bottomg))
         if norm_rel < tol or norm_abs < mu * 1e-4:
             return P[9:].copy(), it, STATUS_CONVERGED, zncc
+        if noise_gain > 0.0 and last_dn < NOISE_CORR_STEP:
+            n_valid = int(ok_v.sum())
+            s2 = max(1.0 - zncc, 0.0) * bottomf_d**2 / n_valid
+            Hd = build_hd(noise_gain * s2 * n_valid)
         dt = -np.linalg.solve(Hd, tb)
         dn = float(np.linalg.norm(dt))
+        last_dn = dn
         if dn < dp_tol:
             return P[9:].copy(), it, STATUS_CONVERGED, zncc
         if dn < best_dn * STALL_STEP_DECAY:
@@ -421,6 +484,8 @@ def icgn_12dof_batch_np(
     max_iter,
     patience=0,
     stride=1,
+    pattern=None,
+    noise_gain=0.0,
 ):
     N = coords.shape[0]
     P_out = np.array(P0, dtype=np.float64).copy()
@@ -452,6 +517,8 @@ def icgn_12dof_batch_np(
             max_iter,
             patience,
             stride,
+            pattern,
+            noise_gain,
         )
         P_out[n] = P
         n_iter[n] = it
@@ -485,6 +552,8 @@ def icgn_3dof_batch_np(
     max_iter,
     patience=0,
     stride=1,
+    n_full=0.0,
+    noise_gain=0.0,
 ):
     N = coords.shape[0]
     U_out = np.array(U_old, dtype=np.float64).copy()
@@ -519,6 +588,8 @@ def icgn_3dof_batch_np(
             max_iter,
             patience,
             stride,
+            n_full,
+            noise_gain,
         )
         U_out[n] = U
         n_iter[n] = it

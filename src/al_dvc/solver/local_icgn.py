@@ -46,6 +46,15 @@ class LocalContext:
     valid: NDArray[np.bool_]  # solver-valid nodes
     precompute_time: float
     stride: int = 1  # subset sampling stride used for H, meanf, bottomf and n_valid
+    noise_pattern: NDArray[np.float64] | None = None  # (12, 12) noise Hessian pattern of the sampled subset
+
+    def noise_args(self, para) -> tuple[NDArray[np.float64], float]:
+        """``(pattern, gain)`` for the kernels: gain 0 keeps the stored Hessian."""
+        from .uncertainty import STENCIL_NOISE_GAIN, noise_hessian_pattern
+
+        pattern = self.noise_pattern if self.noise_pattern is not None else noise_hessian_pattern(self.half, self.stride)
+        gain = float(STENCIL_NOISE_GAIN) if getattr(para, "icgn_noise_hessian", True) else 0.0
+        return np.ascontiguousarray(pattern, dtype=np.float64), gain
 
     @property
     def n_nodes(self) -> int:
@@ -59,6 +68,12 @@ def _use_numba(para: DVCPara) -> bool:
 def _configure_threads(para: DVCPara) -> None:
     if para.n_threads > 0:
         set_num_threads(para.n_threads)
+
+
+def _noise_pattern(hx: int, hy: int, hz: int, stride: int) -> NDArray[np.float64]:
+    from .uncertainty import noise_hessian_pattern
+
+    return np.ascontiguousarray(noise_hessian_pattern((hx, hy, hz), stride), dtype=np.float64)
 
 
 def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara) -> LocalContext:
@@ -122,6 +137,7 @@ def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara)
         valid=valid,
         precompute_time=dt,
         stride=stride,
+        noise_pattern=_noise_pattern(hx, hy, hz, stride),
     )
 
 
@@ -152,6 +168,7 @@ def local_icgn(
     mode = INTERP_MODE_BY_NAME[para.interp_method]
     hx, hy, hz = ctx.half
     g = np.ascontiguousarray(g, dtype=np.float32)
+    pattern, gain = ctx.noise_args(para)
 
     t0 = time.perf_counter()
     if _use_numba(para):
@@ -179,6 +196,9 @@ def local_icgn(
             int(para.icgn_max_iter),
             int(para.icgn_patience),
             ctx.stride,
+            ctx.H_all,
+            pattern,
+            gain,
         )
     else:
         from .reference_kernels import icgn_12dof_batch_np
@@ -205,6 +225,8 @@ def local_icgn(
             int(para.icgn_max_iter),
             int(para.icgn_patience),
             ctx.stride,
+            pattern,
+            gain,
         )
     solve_time = time.perf_counter() - t0
 

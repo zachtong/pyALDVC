@@ -22,6 +22,12 @@ All notable changes to pyALDVC are documented here. The format follows
   holding a float32 copy of every frame of a sequence.
 
 ### Added
+- `icgn_noise_hessian` (default on): the IC-GN kernels subtract the expected
+  reference-gradient noise inflation `c s^2 (I3 (x) M)` from the stored Hessian
+  once a node's step is below half a voxel (`s^2` from the current ZNCC, the
+  model of `uncertainty.py`). The fixed point is unchanged; noisy data converge
+  in 2-2.5x fewer iterations (SNR ~ 5: 16 -> 6.5 iterations per node), clean
+  data are untouched. `tests/test_noise_hessian.py`.
 - `subset_stride`: sample every k-th subset voxel per axis (k^3 fewer samples
   per IC-GN iteration; the Hessian, the statistics and the uncertainty model
   use the sampled set); 4.7x faster local steps at k = 2 with subset 32.

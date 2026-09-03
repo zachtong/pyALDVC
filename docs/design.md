@@ -147,6 +147,21 @@ Only 3-4 ADMM iterations are needed in practice. The output is `u_hat`
 | Precision | volumes float32 in memory, all kernel accumulations float64 | halves RAM, no accuracy loss (verified in tests) |
 | Pre-processing | normalisation statistics and the 7-point gradient in parallel Numba kernels (`voi_mean_std`, `_gradient_stencil7`), NumPy/SciPy references kept for tests | the SciPy `correlate1d` path took 30 s on a 1024x1024x306 scan, more than the whole local step for 80k nodes |
 
+### Noise-corrected Gauss-Newton steps
+
+IC-GN keeps the reference-subset Hessian `H = sum J J^T` fixed. With noisy
+data `E[H] = H0 + c s^2 (I3 (x) M)` (section 6 of `uncertainty.py`: `c` the
+variance gain of the gradient stencil, `s^2` the per-voxel residual variance,
+`M` the subset moment matrix), so the plain steps are too short by the
+inflation and the iteration converges linearly (16 iterations per node at
+SNR ~ 5 instead of 6). Once a node's step is below `NOISE_CORR_STEP` (0.5
+voxel, so that `1 - ZNCC` measures noise rather than misalignment), the
+kernels solve with `H - c s^2 (n_valid / n_full) pattern` (re-factored per
+iteration, 12x12 Cholesky, negligible), keeping at least 10 % of the
+translation diagonal. The fixed point `b = 0` does not depend on the Hessian,
+so the solution is the same; `icgn_noise_hessian=False` restores the plain
+steps (the 3-DOF ADMM kernel corrects its translation block the same way).
+
 ## 4. Coordinate and layout contracts
 
 These are the rules every module follows. Violations are bugs.

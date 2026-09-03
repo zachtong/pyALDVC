@@ -52,6 +52,8 @@ def subpb1_solver(
     mode = INTERP_MODE_BY_NAME[para.interp_method]
     hx, hy, hz = ctx.half
     g = np.ascontiguousarray(g, dtype=np.float32)
+    pattern, gain = ctx.noise_args(para)
+    n_full = float(pattern[9, 9])
 
     t0 = time.perf_counter()
     if HAS_NUMBA and para.backend == "numba":
@@ -82,6 +84,8 @@ def subpb1_solver(
             int(para.icgn_max_iter),
             int(para.icgn_patience),
             ctx.stride,
+            n_full,
+            gain,
         )
     else:
         from .reference_kernels import icgn_3dof_batch_np
@@ -111,6 +115,8 @@ def subpb1_solver(
             int(para.icgn_max_iter),
             int(para.icgn_patience),
             ctx.stride,
+            n_full,
+            gain,
         )
     solve_time = time.perf_counter() - t0
     U = np.asarray(U, dtype=np.float64)

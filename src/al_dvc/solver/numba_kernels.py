@@ -77,6 +77,28 @@ def _cholesky12(H, L):
     return True
 
 
+MIN_CORRECTED_FRACTION = 0.1  # never remove more than 90 % of the translation diagonal
+NOISE_CORR_STEP = 0.5  # apply the noise correction once the previous step is below this many voxels
+
+
+@njit(cache=JIT_CACHE)
+def _corrected_cholesky12(H, pattern, corr, H0, L0):
+    """``L0 L0^T = H - corr * pattern`` with the translation-diagonal guard; False if not SPD."""
+    limit = 1.0
+    for i in range(9, 12):
+        c = corr * pattern[i, i]
+        if c > 0.0:
+            lim = (1.0 - MIN_CORRECTED_FRACTION) * H[i, i] / c
+            if lim < limit:
+                limit = lim
+    if limit <= 0.0:
+        return False
+    for i in range(12):
+        for j in range(12):
+            H0[i, j] = H[i, j] - corr * limit * pattern[i, j]
+    return _cholesky12(H0, L0)
+
+
 @njit(cache=JIT_CACHE, inline="always")
 def _chol_solve12(L, b, x):
     """Solve ``L L^T x = b`` in place (b is not modified)."""
@@ -426,12 +448,47 @@ def _zncc_from_buffer(x0, y0, z0, hx, hy, hz, stride, f, mask, gbuf, meanf, bott
 
 @njit(cache=JIT_CACHE)
 def _icgn_12dof_single(
-    P, x0, y0, z0, hx, hy, hz, stride, f, gx, gy, gz, mask, g, mode, L, meanf, bottomf, tol, dp_tol, max_iter, patience, gbuf
+    P,
+    x0,
+    y0,
+    z0,
+    hx,
+    hy,
+    hz,
+    stride,
+    f,
+    gx,
+    gy,
+    gz,
+    mask,
+    g,
+    mode,
+    L,
+    meanf,
+    bottomf,
+    tol,
+    dp_tol,
+    max_iter,
+    patience,
+    gbuf,
+    H,
+    pattern,
+    noise_gain,
 ):
-    """Iterate one node in place. Returns ``(n_iter, status, zncc)``."""
+    """Iterate one node in place. Returns ``(n_iter, status, zncc)``.
+
+    With ``noise_gain > 0`` the Gauss-Newton step uses the noise-corrected Hessian
+    ``H - c s^2 (n_valid / n_full) pattern`` (``s^2`` from the current ZNCC, see
+    ``uncertainty.py``): the stored Hessian is inflated by the reference-gradient noise,
+    which makes the plain steps too short and the convergence linear. Same fixed point.
+    """
     b = np.empty(12)
     dP = np.empty(12)
     negb = np.empty(12)
+    H0 = np.empty((12, 12))
+    L0 = np.empty((12, 12))
+    n_full = pattern[9, 9]
+    last_dp = 1e300  # previous (raw) step norm: the residual variance is noise-only once the step is small
     norm_init = -1.0
     half_scale = max(hx, max(hy, hz))
     zncc = np.nan
@@ -504,7 +561,15 @@ def _icgn_12dof_single(
 
         for k in range(12):
             negb[k] = -b[k]
-        _chol_solve12(L, negb, dP)
+        use_corrected = False
+        if noise_gain > 0.0 and n_full > 0.0 and last_dp < NOISE_CORR_STEP:
+            s2 = max(1.0 - zncc, 0.0) * bottomf_d * bottomf_d / n_valid
+            corr = noise_gain * s2 * (n_valid / n_full)
+            use_corrected = _corrected_cholesky12(H, pattern, corr, H0, L0)
+        if use_corrected:
+            _chol_solve12(L0, negb, dP)
+        else:
+            _chol_solve12(L, negb, dP)
 
         # parameter-update norm with gradient terms scaled to voxels at the subset edge
         dp_norm = 0.0
@@ -516,6 +581,7 @@ def _icgn_12dof_single(
         dp_norm = np.sqrt(dp_norm)
         if not np.isfinite(dp_norm):
             return it, STATUS_NAN, np.nan
+        last_dp = dp_norm
         if dp_norm < dp_tol:
             return it, STATUS_CONVERGED, zncc
         improved = zncc > best_zncc + STALL_ZNCC_EPS
@@ -542,7 +608,7 @@ def _icgn_12dof_single(
 
 
 @njit(parallel=True, cache=JIT_CACHE)
-def icgn_12dof_parallel(
+def _icgn_12dof_parallel_jit(
     coords,
     P0,
     hx,
@@ -563,9 +629,15 @@ def icgn_12dof_parallel(
     dp_tol,
     max_iter,
     patience,
-    stride=1,
+    stride,
+    H_all,
+    pattern,
+    noise_gain,
 ):
     """Parallel 12-DOF IC-GN over all nodes.
+
+    ``H_all`` (N,12,12) and ``pattern`` (12,12, the noise Hessian pattern of the sampled
+    subset) feed the noise-corrected Hessian; ``noise_gain = 0`` keeps the stored one.
 
     Returns ``(P_out (N,12), n_iter (N,), status (N,), zncc (N,))``.
     """
@@ -622,6 +694,9 @@ def icgn_12dof_parallel(
             max_iter,
             patience,
             gbuf,
+            H_all[n],
+            pattern,
+            noise_gain,
         )
         n_iter[n] = it
         status[n] = st
@@ -633,6 +708,27 @@ def icgn_12dof_parallel(
 # 3-DOF IC-GN with fixed F and proximal penalty (ADMM subproblem 1,
 # MATLAB funICGN_Subpb13)
 # ---------------------------------------------------------------------------
+
+
+@njit(cache=JIT_CACHE)
+def _build_h3(H, bf2, mu, corr, H3, Hd, Hinv):
+    """``Hinv = (2 (H_tt - corr I) / bf2 + mu I + LM damping)^-1``; False when singular or over-corrected."""
+    for i in range(3):
+        for j in range(3):
+            H3[i, j] = H[9 + i, 9 + j] * 2.0 / bf2
+        limit_i = (1.0 - MIN_CORRECTED_FRACTION) * H[9 + i, 9 + i]
+        c = corr if corr < limit_i else limit_i
+        H3[i, i] -= c * 2.0 / bf2
+        H3[i, i] += mu
+    max_diag = max(H3[0, 0], max(H3[1, 1], H3[2, 2]))
+    if not (max_diag > 0.0):
+        return False
+    for i in range(3):
+        for j in range(3):
+            Hd[i, j] = H3[i, j]
+        Hd[i, i] += LM_DAMPING_3DOF * max_diag
+    det = _inv3(Hd, Hinv)
+    return det != 0.0
 
 
 @njit(cache=JIT_CACHE)
@@ -663,8 +759,14 @@ def _icgn_3dof_single(
     max_iter,
     patience,
     gbuf,
+    n_full,
+    noise_gain,
 ):
-    """Translation-only IC-GN at one node. Returns ``(n_iter, status, zncc)``."""
+    """Translation-only IC-GN at one node. Returns ``(n_iter, status, zncc)``.
+
+    ``noise_gain > 0`` subtracts the reference-gradient noise inflation ``c s^2 n_valid I``
+    from the translation block of the Hessian (``n_full``: sampled voxels of a full subset).
+    """
     best_dn = 1e300
     stall = 0
     bf2 = bottomf * bottomf
@@ -672,20 +774,13 @@ def _icgn_3dof_single(
         bf2 = 1e-30
     # H3 = 2 * H_tt / bottomf^2 + mu I   (H_tt = translation block of the 12x12 Hessian)
     H3 = np.empty((3, 3))
-    for i in range(3):
-        for j in range(3):
-            H3[i, j] = H[9 + i, 9 + j] * 2.0 / bf2
-        H3[i, i] += mu
-    max_diag = max(H3[0, 0], max(H3[1, 1], H3[2, 2]))
     Hd = np.empty((3, 3))
     Hinv = np.empty((3, 3))
-    for i in range(3):
-        for j in range(3):
-            Hd[i, j] = H3[i, j]
-        Hd[i, i] += LM_DAMPING_3DOF * max_diag
-    det = _inv3(Hd, Hinv)
-    if det == 0.0:
+
+    def_ok = _build_h3(H, bf2, mu, 0.0, H3, Hd, Hinv)
+    if not def_ok:
         return 0, STATUS_SINGULAR, np.nan
+    last_dn = 1e300
 
     b = np.empty(3)
     tb = np.empty(3)
@@ -749,6 +844,10 @@ def _icgn_3dof_single(
         # MATLAB: break when normOfWNew < tol or normOfWNew*normOfWNewInit < mu*1e-4
         if norm_rel < tol or norm_abs < mu * 1e-4:
             return it, STATUS_CONVERGED, zncc
+        if noise_gain > 0.0 and last_dn < NOISE_CORR_STEP:
+            s2 = max(1.0 - zncc, 0.0) * bottomf_d * bottomf_d / n_valid
+            if not _build_h3(H, bf2, mu, noise_gain * s2 * n_valid, H3, Hd, Hinv):
+                _build_h3(H, bf2, mu, 0.0, H3, Hd, Hinv)
 
         for i in range(3):
             s = 0.0
@@ -758,6 +857,7 @@ def _icgn_3dof_single(
         dn = np.sqrt(dt[0] * dt[0] + dt[1] * dt[1] + dt[2] * dt[2])
         if not np.isfinite(dn):
             return it, STATUS_NAN, np.nan
+        last_dn = dn
         if dn < dp_tol:
             return it, STATUS_CONVERGED, zncc
         if dn < best_dn * STALL_STEP_DECAY:
@@ -776,7 +876,7 @@ def _icgn_3dof_single(
 
 
 @njit(parallel=True, cache=JIT_CACHE)
-def icgn_3dof_parallel(
+def _icgn_3dof_parallel_jit(
     coords,
     U_old,
     F_fixed,
@@ -800,9 +900,14 @@ def icgn_3dof_parallel(
     dp_tol,
     max_iter,
     patience,
-    stride=1,
+    stride,
+    n_full,
+    noise_gain,
 ):
     """Parallel 3-DOF IC-GN (ADMM subproblem 1) over all nodes.
+
+    ``n_full``: sampled voxels of a full subset (noise correction scale); ``noise_gain = 0``
+    keeps the stored Hessian.
 
     Args:
         U_old: ``(N, 3)`` global-step displacement ``u_hat`` (start point and prox centre).
@@ -873,6 +978,8 @@ def icgn_3dof_parallel(
             max_iter,
             patience,
             gbuf,
+            n_full,
+            noise_gain,
         )
         for k in range(3):
             U_out[n, k] = P[9 + k]
@@ -880,6 +987,134 @@ def icgn_3dof_parallel(
         status[n] = st
         zncc[n] = zc
     return U_out, n_iter, status, zncc
+
+
+def icgn_12dof_parallel(
+    coords,
+    P0,
+    hx,
+    hy,
+    hz,
+    f,
+    gx,
+    gy,
+    gz,
+    mask,
+    g,
+    mode,
+    L_all,
+    meanf_all,
+    bottomf_all,
+    valid,
+    tol,
+    dp_tol,
+    max_iter,
+    patience,
+    stride=1,
+    H_all=None,
+    pattern=None,
+    noise_gain=0.0,
+):
+    """Parallel 12-DOF IC-GN over all nodes; returns ``(P_out, n_iter, status, zncc)``.
+
+    ``H_all`` (N,12,12), ``pattern`` (12,12) and ``noise_gain`` enable the noise-corrected
+    Hessian (see :func:`_icgn_12dof_single`); without them the stored Cholesky factors are used.
+    """
+    if H_all is None or pattern is None or noise_gain <= 0.0:
+        H_all = np.zeros((1, 12, 12)) if H_all is None else H_all
+        pattern = np.zeros((12, 12))
+        noise_gain = 0.0
+        if H_all.shape[0] != coords.shape[0]:
+            H_all = np.zeros((coords.shape[0], 12, 12))
+    return _icgn_12dof_parallel_jit(
+        coords,
+        P0,
+        hx,
+        hy,
+        hz,
+        f,
+        gx,
+        gy,
+        gz,
+        mask,
+        g,
+        mode,
+        L_all,
+        meanf_all,
+        bottomf_all,
+        valid,
+        tol,
+        dp_tol,
+        max_iter,
+        patience,
+        int(stride),
+        np.ascontiguousarray(H_all, dtype=np.float64),
+        np.ascontiguousarray(pattern, dtype=np.float64),
+        float(noise_gain),
+    )
+
+
+def icgn_3dof_parallel(
+    coords,
+    U_old,
+    F_fixed,
+    vdual,
+    hx,
+    hy,
+    hz,
+    f,
+    gx,
+    gy,
+    gz,
+    mask,
+    g,
+    mode,
+    H_all,
+    meanf_all,
+    bottomf_all,
+    valid,
+    mu,
+    tol,
+    dp_tol,
+    max_iter,
+    patience,
+    stride=1,
+    n_full=0.0,
+    noise_gain=0.0,
+):
+    """Parallel 3-DOF IC-GN (ADMM subproblem 1); returns ``(U_out, n_iter, status, zncc)``.
+
+    ``n_full`` (sampled voxels of a full subset) and ``noise_gain`` enable the noise-corrected
+    translation Hessian; ``noise_gain = 0`` keeps the stored one.
+    """
+    return _icgn_3dof_parallel_jit(
+        coords,
+        U_old,
+        F_fixed,
+        vdual,
+        hx,
+        hy,
+        hz,
+        f,
+        gx,
+        gy,
+        gz,
+        mask,
+        g,
+        mode,
+        H_all,
+        meanf_all,
+        bottomf_all,
+        valid,
+        mu,
+        tol,
+        dp_tol,
+        max_iter,
+        patience,
+        int(stride),
+        float(n_full),
+        float(noise_gain),
+    )
 
 
 # ---------------------------------------------------------------------------
