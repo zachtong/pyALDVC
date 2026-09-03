@@ -34,6 +34,7 @@ from ..solver.init_disp import compute_initial_guess
 from ..solver.local_icgn import local_icgn, precompute_local_context
 from ..solver.subpb1_solver import subpb1_solver
 from ..solver.subpb2_solver import build_global_system, solve_subpb2
+from ..solver.uncertainty import displacement_uncertainty
 from ..strain.compute_strain import compute_strain as _compute_strain
 from ..utils.grid_interp import interp_grid_field
 from ..utils.validation import validate_para_against_volume
@@ -288,6 +289,7 @@ def run_aldvc(
                 zncc = info_local.zncc
                 status = info_local.status
 
+            U_std = displacement_uncertainty(ctx, zncc, status)
             results[k - 1] = FrameResult(
                 U=U_final,
                 F=F_final,
@@ -296,6 +298,7 @@ def run_aldvc(
                 F_local=F_local if para.store_local_result else None,
                 U0=U0 if para.store_local_result else None,
                 zncc=zncc,
+                U_std=U_std,
                 status=status,
                 admm=admm_info,
             )

@@ -325,6 +325,8 @@ class FrameResult:
         U_local: ``(N, 3)`` local (subset-only) IC-GN result before ADMM.
         F_local: ``(N, 3, 3)`` local IC-GN gradient.
         U0: ``(N, 3)`` initial guess used.
+        U_std: ``(N, 3)`` standard deviation of u, v, w (voxels) from the
+            IC-GN normal equations at converged nodes, NaN elsewhere.
         zncc: ``(N,)`` final zero-normalised cross-correlation per node.
         status: ``(N,)`` node status codes of the final local pass.
         ref_frame: index of the reference frame of this pair.
@@ -339,6 +341,7 @@ class FrameResult:
     F_local: NDArray[np.float64] | None = None
     U0: NDArray[np.float64] | None = None
     zncc: NDArray[np.float64] | None = None
+    U_std: NDArray[np.float64] | None = None
     status: NDArray[np.int8] | None = None
     admm: ADMMInfo | None = None
 

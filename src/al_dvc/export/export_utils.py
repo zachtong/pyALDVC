@@ -11,6 +11,7 @@ from numpy.typing import NDArray
 from ..core.data_structures import FrameResult, PipelineResult, StrainResult
 
 DISP_FIELDS = ("disp_u", "disp_v", "disp_w", "disp_magnitude")
+STD_FIELDS = ("disp_std_u", "disp_std_v", "disp_std_w", "disp_std")
 STRAIN_FIELDS = (
     "exx",
     "eyy",
@@ -27,7 +28,7 @@ STRAIN_FIELDS = (
     "det_F",
     "rotation_deg",
 )
-ALL_FIELDS = DISP_FIELDS + STRAIN_FIELDS
+ALL_FIELDS = DISP_FIELDS + STD_FIELDS + STRAIN_FIELDS
 
 
 def ensure_dir(path: str | Path) -> Path:
@@ -63,6 +64,12 @@ def field_array(result: PipelineResult, frame: int, name: str, trimmed: bool = T
         if name == "disp_w":
             return U[:, 2]
         return np.linalg.norm(U, axis=1)
+    if name in STD_FIELDS:
+        if fr.U_std is None:
+            raise ValueError("displacement uncertainty is not available for this result (U_std is None)")
+        S = np.asarray(fr.U_std, dtype=np.float64) * np.asarray(result.dvc_para.voxel_size, dtype=np.float64)[None, :]
+        comp = {"disp_std_u": 0, "disp_std_v": 1, "disp_std_w": 2}.get(name)
+        return S[:, comp] if comp is not None else np.linalg.norm(S, axis=1)
     if frame >= len(result.result_strain):
         raise ValueError(f"strain field '{name}' requested but strain was not computed")
     sr: StrainResult = result.result_strain[frame]

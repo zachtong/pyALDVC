@@ -142,6 +142,7 @@ Only 3-4 ADMM iterations are needed in practice. The output is `u_hat`
 | Strain plane fit | weighted 3-D Savitzky-Golay via 14 correlations + batched 4x4 solves | identical numbers to the MATLAB per-node loop, vectorised; masks enter as zero weights |
 | Outlier test | universal median test (3x3x3, eps = 0.1 voxel), threshold default 2.0 | Westerweel & Scarano 2005 |
 | NaN filling | spring model: sparse Laplacian solve with known nodes as Dirichlet data (= `inpaint_nans3` method 0/1) | exact analogue, vectorised |
+| Displacement uncertainty | `Cov(P) = 2 s^2 H0^-1 + c s^4 H0^-1 (I3 (x) M) H0^-1` with `s^2 = (1 - ZNCC) bottomf^2 / n` from the residual, `H0 = H - c s^2 (I3 (x) M)` the noise-corrected Hessian, `c` the stencil noise gain and `M` the subset moment matrix; translation block -> `U_std` | zero extra cost (the Hessians are stored anyway); the plain `2 s^2 H^-1` estimate is 2-3x too small at SNR 3 because the noisy reference gradient inflates `H` and the gradient-noise x deformed-noise product adds variance. Calibrated 20-35 % below the empirical error for SNR >= 3 (`reports/uncertainty.pdf`) |
 | Precision | volumes float32 in memory, all kernel accumulations float64 | halves RAM, no accuracy loss (verified in tests) |
 | Pre-processing | normalisation statistics and the 7-point gradient in parallel Numba kernels (`voi_mean_std`, `_gradient_stencil7`), NumPy/SciPy references kept for tests | the SciPy `correlate1d` path took 30 s on a 1024x1024x306 scan, more than the whole local step for 80k nodes |
 

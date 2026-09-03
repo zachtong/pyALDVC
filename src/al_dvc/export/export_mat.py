@@ -45,6 +45,7 @@ def export_mat(result: PipelineResult, path: str | Path) -> Path:
     U_int = np.empty((n,), dtype=object)
     F_int = np.empty((n,), dtype=object)
     zncc = np.empty((n,), dtype=object)
+    ustd = np.empty((n,), dtype=object)
     for k, fr in enumerate(result.result_disp):
         U[k] = fr.U
         U_acc[k] = fr.U_accum if fr.U_accum is not None else fr.U
@@ -52,6 +53,7 @@ def export_mat(result: PipelineResult, path: str | Path) -> Path:
         U_int[k] = fr.U.reshape(-1, 1)
         F_int[k] = F_to_matlab_order(fr.F).reshape(-1, 1)
         zncc[k] = fr.zncc if fr.zncc is not None else np.array([])
+        ustd[k] = fr.U_std if fr.U_std is not None else np.array([])
     data.update(
         {
             "ResultDisp": U,
@@ -60,6 +62,7 @@ def export_mat(result: PipelineResult, path: str | Path) -> Path:
             "ResultDisp_interleaved": U_int,
             "ResultDefGrad_interleaved": F_int,
             "ResultZNCC": zncc,
+            "ResultDispStd": ustd,
         }
     )
     if result.result_strain:

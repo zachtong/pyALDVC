@@ -77,6 +77,8 @@ def export_vtk(
         data: dict[str, np.ndarray] = {"displacement": U, "node_valid": mesh.node_valid.astype(np.float32)}
         if fr.zncc is not None:
             data["zncc"] = fr.zncc
+        if fr.U_std is not None:
+            data["displacement_std"] = np.asarray(fr.U_std) * vs[None, :]
         for f in fields:
             data[f] = field_array(result, k, f, trimmed=trimmed)
         p = out / f"{basename}_{frame_tag(k, n)}.vti"

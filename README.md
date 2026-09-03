@@ -24,7 +24,8 @@ ParaView export, tests against analytic ground truth and a command line.
 |---|---|
 | **Algorithm** | 12-DOF local IC-GN (ZNSSD, tricubic / B-spline / trilinear sampling) + hex8 FEM or finite-difference global step + ADMM with automatic L-curve tuning of the penalty `beta` |
 | **Initial guess** | global phase-correlation pre-shift, coarse-to-fine pyramid NCC with automatic search-radius expansion, universal-median outlier test, harmonic inpainting |
-| **Robustness** | boolean VOI masks (masked subsets, trimmed elements), per-node status codes, low-texture rejection, Gaussian pre-smoothing for low-SNR data, partial results on cancel |
+| **Robustness** | boolean VOI masks (masked subsets, trimmed elements), per-node status codes, stall detection, low-texture rejection, Gaussian pre-smoothing for low-SNR data, partial results on cancel |
+| **Uncertainty** | per-node standard deviation of u, v, w from the IC-GN normal equations (`U_std`, exported as `disp_std_*`), calibrated on synthetic noise (`reports/uncertainty.pdf`) |
 | **Performance** | Numba `prange` kernels that read subsets in place (no per-node subset cache, so memory stays ~22 bytes/voxel); scalar global operator assembled once, solved by PCG for all three components |
 | **Tracking** | accumulative, incremental or any reference-frame schedule; cumulative displacement composition |
 | **Strain** | plane fit (3D Savitzky-Golay), FEM nodal, finite difference or direct ADMM gradient; infinitesimal, Green-Lagrange, Euler-Almansi, Hencky; principal / von Mises / volumetric / rotation; physical voxel sizes |
@@ -62,6 +63,7 @@ result = run_aldvc(para, [ref, dfm])
 
 mesh = result.dvc_mesh                  # node coordinates (N, 3) = [x, y, z], grid_shape (nz, ny, nx)
 U = result.result_disp[0].U             # (N, 3) displacement in voxels
+U_std = result.result_disp[0].U_std     # (N, 3) per-node standard deviation (voxels), NaN where not converged
 E = result.result_strain[0]             # exx, eyy, ezz, exy, exz, eyz, principal, von_mises, ...
 exx_grid = mesh.to_grid(E.field("exx")) # (nz, ny, nx) grid, NaN where unreliable
 

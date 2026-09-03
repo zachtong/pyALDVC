@@ -51,6 +51,8 @@ def export_npz(result: PipelineResult, path: str | Path) -> Path:
             arrays["status" + tag] = fr.status
         if fr.U_local is not None:
             arrays["U_local" + tag] = fr.U_local
+        if fr.U_std is not None:
+            arrays["U_std" + tag] = fr.U_std
     for k, sr in enumerate(result.result_strain):
         tag = f"_{k + 1}"
         for name in ("exx", "eyy", "ezz", "exy", "exz", "eyz", "von_mises", "max_shear", "volumetric", "det_F", "rotation_deg"):

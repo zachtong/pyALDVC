@@ -60,6 +60,8 @@ def export_report(
     units = para.units
     if fields is None:
         fields = ["disp_u", "disp_v", "disp_w"]
+        if result.result_disp and result.result_disp[0].U_std is not None:
+            fields.append("disp_std")
         if result.result_strain:
             fields += ["exx", "eyy", "ezz", "exy", "exz", "eyz", "von_mises"]
 

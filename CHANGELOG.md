@@ -7,6 +7,11 @@ All notable changes to pyALDVC are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `FrameResult.U_std`: per-node standard deviation of u, v, w from the IC-GN
+  normal equations (noise-corrected Hessian, see `al_dvc.solver.uncertainty`),
+  exported as `disp_std_u/v/w`, `disp_std` (npz `U_std`, vti `displacement_std`,
+  mat `ResultDispStd`) and shown in the PDF report; `scripts/make_uncertainty_report.py`
+  calibrates it against synthetic noise (`reports/uncertainty.pdf`).
 - `al_dvc.io.matlab_results`: reader for the MATLAB ALDVC `results_ws*_st*.mat`
   files (0-based coordinates, `(N, 3)` / `(N, 3, 3)` layouts) and node matching.
 - `scripts/compare_matlab.py`: node-wise cross-validation against the MATLAB
