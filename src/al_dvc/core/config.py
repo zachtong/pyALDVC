@@ -115,6 +115,8 @@ class DVCPara:
 
     # --- 9. Compute ---
     backend: Literal["numba", "numpy"] = "numba"
+    gradient_mode: Literal["stored", "on_the_fly"] = "stored"  # "on_the_fly": no gradient volumes (-12 bytes/voxel),
+    # about 15-20 % slower local step
     n_threads: int = 0  # 0 = all cores
     store_local_result: bool = True  # keep U_local / F_local in FrameResult
     verbose: bool = True
@@ -262,6 +264,10 @@ def validate_dvcpara(p: DVCPara) -> None:
         raise ValueError("cumulative_interp must be 'linear' or 'cubic'.")
     if p.backend not in ("numba", "numpy"):
         raise ValueError("backend must be 'numba' or 'numpy'.")
+    if p.gradient_mode not in ("stored", "on_the_fly"):
+        raise ValueError("gradient_mode must be 'stored' or 'on_the_fly'.")
+    if p.gradient_mode == "on_the_fly" and p.backend == "numpy":
+        raise ValueError("gradient_mode='on_the_fly' needs the numba backend.")
     if p.n_threads < 0:
         raise ValueError("n_threads must be >= 0 (0 = all cores).")
 

@@ -244,10 +244,21 @@ def prepare_deformed(vol: NDArray[np.float32], interp_method: str, mask: NDArray
 def build_reference_bundle(
     f: NDArray[np.float32],
     mask: NDArray[np.bool_] | None,
+    gradient_mode: str = "stored",
 ) -> ReferenceBundle:
-    """Gradients + mask for a normalised reference volume."""
+    """Gradients + mask for a normalised reference volume.
+
+    ``gradient_mode="on_the_fly"`` skips the three gradient volumes (12 bytes
+    per voxel); the kernels then evaluate the 7-point stencil on ``f`` at the
+    subset voxels and receive 1x1x1 placeholders instead.
+    """
     f = np.ascontiguousarray(f, dtype=np.float32)
-    gx, gy, gz = compute_gradients(f)
+    if gradient_mode == "on_the_fly":
+        gx = gy = gz = np.zeros((1, 1, 1), dtype=np.float32)
+    elif gradient_mode == "stored":
+        gx, gy, gz = compute_gradients(f)
+    else:
+        raise ValueError(f"gradient_mode must be 'stored' or 'on_the_fly' (got {gradient_mode!r})")
     if mask is None:
         m = np.ones(f.shape, dtype=np.uint8)
     else:
@@ -308,3 +319,31 @@ class ListVolumeProvider:
 
     def get_mask(self, idx: int) -> NDArray[np.bool_] | None:
         return self._masks[idx]
+
+
+def memory_model(
+    shape: tuple[int, int, int],
+    gradient_mode: str = "stored",
+    interp_method: str = "cubic",
+    masked: bool = False,
+    n_volumes: int = 2,
+) -> dict[str, float]:
+    """Resident bytes per voxel and total for the volumes a frame pair keeps in memory.
+
+    Counts the normalised reference and deformed volumes (float32), the
+    reference gradients (12 bytes with ``gradient_mode="stored"``, 0 with
+    ``"on_the_fly"``), the uint8 reference mask, the B-spline coefficient
+    array of the deformed volume (``interp_method="bspline"``) and the masked
+    copy of the deformed volume (``masked``). ``n_volumes`` normalised
+    volumes are held (2 for a pair; the streaming provider keeps a bounded
+    cache). Raw input volumes and the per-node arrays are not included.
+    """
+    per_voxel = 4.0 * n_volumes + 1.0
+    if gradient_mode == "stored":
+        per_voxel += 12.0
+    if interp_method == "bspline":
+        per_voxel += 4.0
+    if masked:
+        per_voxel += 4.0
+    n = float(np.prod(shape))
+    return {"bytes_per_voxel": per_voxel, "total_bytes": per_voxel * n, "total_gb": per_voxel * n / 1e9}

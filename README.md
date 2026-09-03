@@ -26,7 +26,7 @@ ParaView export, tests against analytic ground truth and a command line.
 | **Initial guess** | global phase-correlation pre-shift, coarse-to-fine pyramid NCC with automatic search-radius expansion, universal-median outlier test, harmonic inpainting |
 | **Robustness** | boolean masks on the reference and on the deformed frame (masked subsets, trimmed elements), per-node status codes, stall detection, low-texture rejection, Gaussian pre-smoothing for low-SNR data, partial results on cancel |
 | **Uncertainty** | per-node standard deviation of u, v, w from the IC-GN normal equations (`U_std`, exported as `disp_std_*`), calibrated on synthetic noise (`reports/uncertainty.pdf`) |
-| **Performance** | Numba `prange` kernels that read subsets in place (no per-node subset cache, so memory stays ~22 bytes/voxel); scalar global operator assembled once, solved by PCG for all three components |
+| **Performance** | Numba `prange` kernels that read subsets in place (no per-node subset cache: 21 bytes per voxel, 9 with `gradient_mode="on_the_fly"`); scalar global operator assembled once, solved by PCG for all three components |
 | **Tracking** | accumulative, incremental or any reference-frame schedule; cumulative displacement composition; per-frame checkpoints and resume |
 | **Strain** | plane fit (3D Savitzky-Golay), FEM nodal, finite difference or direct ADMM gradient; infinitesimal, Green-Lagrange, Euler-Almansi, Hencky; principal / von Mises / volumetric / rotation; physical voxel sizes |
 | **I/O** | TIFF stacks, slice folders, MATLAB `.mat` (v5/v7.3, MATLAB axis order handled), NumPy; exports to `.npz`, `.mat`, CSV, VTK `.vti` (+ `.pvd` time series) and a PDF report |
@@ -161,6 +161,7 @@ The most useful fields:
 | `strain_type` | `"infinitesimal"` | `green_lagrange`, `euler_almansi`, `hencky` |
 | `reference_mode` | `"accumulative"` | or `"incremental"`; `frame_schedule` for custom trees |
 | `n_threads` | 0 (all) | Numba thread count |
+| `gradient_mode` | `"stored"` | `on_the_fly` drops the three gradient volumes (21 -> 9 bytes per voxel) for scans that do not fit otherwise; about 15-20 % slower local step |
 
 ## Accuracy and performance
 

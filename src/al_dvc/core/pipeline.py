@@ -25,6 +25,7 @@ from .._numba_compat import set_num_threads
 from ..io.volume_ops import (
     ListVolumeProvider,
     build_reference_bundle,
+    memory_model,
     prepare_deformed,
     presmooth_volume,
 )
@@ -128,6 +129,13 @@ def run_aldvc(
     progress(0.0, "Section 2: building node grid")
     x0, y0, z0 = build_grid_axes(para.voi, shape, para.winsize, para.winstepsize)  # type: ignore[arg-type]
     base_mesh = mesh_setup(x0, y0, z0)
+    mem = memory_model(shape, para.gradient_mode, para.interp_method, masks is not None)
+    logger.info(
+        "Resident volume memory per frame pair: %.1f bytes/voxel, %.2f GB (gradient_mode=%s)",
+        mem["bytes_per_voxel"],
+        mem["total_gb"],
+        para.gradient_mode,
+    )
     ckpt: Checkpoint | None = None
     if checkpoint_dir is not None:
         ckpt = Checkpoint(checkpoint_dir)
@@ -159,7 +167,7 @@ def run_aldvc(
         t0 = time.perf_counter()
         f = presmooth_volume(provider.get_normalized(ref_idx), para.prefilter_sigma)
         mask = provider.get_mask(ref_idx)
-        bundle = build_reference_bundle(f, mask)
+        bundle = build_reference_bundle(f, mask, para.gradient_mode)
         mesh = apply_mask_to_mesh(base_mesh, bundle.mask if mask is not None else None, para.winsize, para.min_valid_ratio)
         ctx = precompute_local_context(mesh, bundle, para)
         mesh.node_valid = ctx.valid.copy()

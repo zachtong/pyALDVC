@@ -211,16 +211,18 @@ Let `V = nz*ny*nx` (voxels), `N` nodes, `S = prod(winsize + 1)` subset voxels.
 | Resident array | dtype | size |
 |---|---|---|
 | reference volume (normalised) | float32 | 4V |
-| reference gradients gx, gy, gz | float32 | 12V |
+| reference gradients gx, gy, gz (`gradient_mode="stored"`; 0 with `"on_the_fly"`, where the kernels evaluate the stencil on f) | float32 | 12V |
 | deformed volume (normalised, optionally B-spline prefiltered) | float32 | 4V |
 | masks (optional) | uint8 | 2V |
 | per-node cache: H (12x12), meanf, bottomf, n_valid | float64 | 147N * 8 |
 | per-node results U, F, status, iter, zncc | float64 | ~13N * 8 |
 | global operators Kg, M, G_x, G_y, G_z | CSR float64 | ~27N nnz each |
 
-Total ~ 22 V bytes. A 512^3 volume pair costs ~3 GB; 1024^3 ~ 24 GB. Frames
-stream from disk through `VolumeProvider` so only one reference and one
-deformed volume are resident.
+Total 21 V bytes (9 V with `gradient_mode="on_the_fly"`, at 15-20 % more
+local-step time). A 512^3 volume pair costs 2.8 GB (1.2 GB); 1024^3 costs
+22.5 GB (9.7 GB); 1536^3 costs 76 GB (33 GB). `memory_model` computes these
+numbers and the pipeline logs them at start. Frames stream from disk through
+`VolumeProvider` so only one reference and one deformed volume are resident.
 
 Kernel cost per IC-GN iteration: `N * S` samples, each a 64-tap tricubic
 read plus ~30 flops. Measured numbers are in `reports/performance.pdf`
@@ -277,7 +279,7 @@ CLI: `al-dvc run config.yaml`, `al-dvc synth ...`, `al-dvc info volume.tif`,
 |---|---|
 | **0.1 (this)** | core library, numba CPU backend, FEM/FD global step, pyramid NCC, masks, strain, exports (npz/mat/csv/vtk/pdf), CLI, synthetic validation reports |
 | 0.1.x | real-data hardening: node-wise cross-validation against the MATLAB ALDVC results shipped with the reference code (`scripts/compare_matlab.py`, `reports/matlab_crossval.pdf`), memory / throughput profile on a full 1024x1024x306 micro-CT pair, robustness on the `eyes` data set (where the MATLAB IC-GN does not converge), GitHub repository + CI |
-| 0.2 | "real-scan ready": deformed-frame masks in the kernel (done), per-node displacement uncertainty from the stored Hessian factors (done), per-frame checkpoints and resume for long sequences (done), large-volume mode (on-the-fly gradients, memory budget), real-data tutorial notebook, PyPI release |
+| 0.2 | "real-scan ready": deformed-frame masks in the kernel (done), per-node displacement uncertainty from the stored Hessian factors (done), per-frame checkpoints and resume for long sequences (done), large-volume mode with on-the-fly gradients (done), real-data tutorial notebook, PyPI release |
 | 0.3 | standalone PySide6 GUI (own repository and application, architecture copied from pyALDIC's `gui` package: sessions, worker threads, panels, i18n, background kernel warm-up, portable Windows build); 3D-specific parts are the three-plane slice viewer and an optional pyvista view |
 | 0.4 | GPU backend (numba.cuda: tricubic sampling + per-node IC-GN, one block per node; global step stays on the CPU). A 2-3 day prototype measures the real speed-up first; Blackwell (sm_120) support in numba-cuda must be confirmed |
 | later | adaptive octree mesh (3D analogue of pyALDIC's quadtree) with hanging-node hex elements; second-order (30-DOF) subset shape functions to remove the first-order curvature bias; subset splitting at discontinuities |

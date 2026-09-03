@@ -7,6 +7,12 @@ All notable changes to pyALDVC are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Large-volume mode `gradient_mode="on_the_fly"`: the kernels evaluate the
+  7-point stencil on the reference at the subset voxels instead of reading three
+  stored gradient volumes; resident memory drops from 21 to 9 bytes per voxel
+  (a 1500^3 scan fits in 32 GB) for about 15-20 % more local-step time. The
+  pipeline logs the memory model (`memory_model`) at start;
+  `scripts/make_large_volume_report.py` measures both modes.
 - Per-frame checkpoints: `run_aldvc(..., checkpoint_dir=DIR)` writes one
   `frame_<k>.npz` per finished frame pair (plus `meta.json`) and reuses them on
   a later call; a directory written with other parameters, volumes, schedule

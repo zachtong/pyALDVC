@@ -153,6 +153,33 @@ def compose_warp_inplace(P, dP):
 # ---------------------------------------------------------------------------
 
 
+@njit(cache=JIT_CACHE, inline="always")
+def _grad_at(f, gx, gy, gz, zz, yy, xx):
+    """Reference gradient at a voxel: the stored arrays, or the 7-point stencil on ``f``
+    when the gradient volumes are the 1x1x1 placeholders of ``gradient_mode="on_the_fly"``."""
+    if gx.shape[0] == f.shape[0]:
+        return float(gx[zz, yy, xx]), float(gy[zz, yy, xx]), float(gz[zz, yy, xx])
+    c1 = 0.75
+    c2 = -0.15
+    c3 = 1.0 / 60.0
+    gxv = (
+        c1 * (float(f[zz, yy, xx + 1]) - float(f[zz, yy, xx - 1]))
+        + c2 * (float(f[zz, yy, xx + 2]) - float(f[zz, yy, xx - 2]))
+        + c3 * (float(f[zz, yy, xx + 3]) - float(f[zz, yy, xx - 3]))
+    )
+    gyv = (
+        c1 * (float(f[zz, yy + 1, xx]) - float(f[zz, yy - 1, xx]))
+        + c2 * (float(f[zz, yy + 2, xx]) - float(f[zz, yy - 2, xx]))
+        + c3 * (float(f[zz, yy + 3, xx]) - float(f[zz, yy - 3, xx]))
+    )
+    gzv = (
+        c1 * (float(f[zz + 1, yy, xx]) - float(f[zz - 1, yy, xx]))
+        + c2 * (float(f[zz + 2, yy, xx]) - float(f[zz - 2, yy, xx]))
+        + c3 * (float(f[zz + 3, yy, xx]) - float(f[zz - 3, yy, xx]))
+    )
+    return gxv, gyv, gzv
+
+
 @njit(cache=JIT_CACHE)
 def _precompute_one(x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, cond_max, H, L):
     """Fill ``H`` (12x12) and ``L`` for one node.
@@ -185,9 +212,7 @@ def _precompute_one(x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio
                     continue
                 X = float(dx)
                 fv = float(f[zz, yy, xx])
-                gxv = float(gx[zz, yy, xx])
-                gyv = float(gy[zz, yy, xx])
-                gzv = float(gz[zz, yy, xx])
+                gxv, gyv, gzv = _grad_at(f, gx, gy, gz, zz, yy, xx)
                 n_valid += 1
                 sum_f += fv
                 sum_f2 += fv * fv
@@ -431,9 +456,10 @@ def _icgn_12dof_single(
                     X = float(dx)
                     res = (float(f[zz, yy, xx]) - meanf_d) / bottomf_d - (gv - meang) / bottomg
                     idx += 1
-                    gxv = float(gx[zz, yy, xx]) * res
-                    gyv = float(gy[zz, yy, xx]) * res
-                    gzv = float(gz[zz, yy, xx]) * res
+                    dfx, dfy, dfz = _grad_at(f, gx, gy, gz, zz, yy, xx)
+                    gxv = dfx * res
+                    gyv = dfy * res
+                    gzv = dfz * res
                     b[0] += gxv * X
                     b[1] += gxv * Y
                     b[2] += gxv * Z
@@ -659,9 +685,10 @@ def _icgn_3dof_single(
                         continue
                     res = (float(f[zz, yy, xx]) - meanf_d) / bottomf_d - (gv - meang) / bottomg
                     idx += 1
-                    b[0] += float(gx[zz, yy, xx]) * res
-                    b[1] += float(gy[zz, yy, xx]) * res
-                    b[2] += float(gz[zz, yy, xx]) * res
+                    dfx, dfy, dfz = _grad_at(f, gx, gy, gz, zz, yy, xx)
+                    b[0] += dfx * res
+                    b[1] += dfy * res
+                    b[2] += dfz * res
         norm_abs = 0.0
         for k in range(3):
             b[k] *= bottomf_d
