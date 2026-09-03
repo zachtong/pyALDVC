@@ -1,6 +1,6 @@
 """End-to-end example on synthetic data with ground truth.
 
-    python examples/scripting/run_synthetic.py [output_dir]
+python examples/scripting/run_synthetic.py [output_dir]
 """
 
 from __future__ import annotations
@@ -37,8 +37,11 @@ def main(out_dir: Path) -> None:
     dfm = warp_volume_lagrangian(ref, disp)
 
     para = dvcpara_default(
-        winsize=24, winstepsize=8, search_radius=6,
-        voxel_size=(2.5, 2.5, 2.5), units="um",
+        winsize=24,
+        winstepsize=8,
+        search_radius=6,
+        voxel_size=(2.5, 2.5, 2.5),
+        units="um",
     )
     t0 = time.perf_counter()
     result = run_aldvc(para, [ref, dfm])

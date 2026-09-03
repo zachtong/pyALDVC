@@ -4,7 +4,11 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0] - 2026-09-03
+
+"Real-scan ready": validated against the MATLAB code on a micro-CT scan,
+with masks on the deformed frame, per-node uncertainty, checkpoints and a
+large-volume mode.
 
 ### Added
 - Large-volume mode `gradient_mode="on_the_fly"`: the kernels evaluate the

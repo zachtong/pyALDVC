@@ -34,6 +34,7 @@ ParaView export, tests against analytic ground truth and a command line.
 ## Installation
 
 ```bash
+pip install al-dvc           # from PyPI (once the 0.2 release is published)
 pip install -e ".[dev]"      # from a clone of this repository
 ```
 
@@ -217,6 +218,14 @@ direction and both codes stop early there. The automatic `beta` equals the
 MATLAB value, and the ZNCC of the pyALDVC fields is never below MATLAB's.
 The run takes 12.5 min on a 24-core workstation. See `docs/design.md`,
 section 10.
+
+## Tutorial
+
+`examples/tutorial_real_data.ipynb` (and the equivalent script
+`examples/scripting/tutorial_real_data.py`) walks through a complete run:
+loading volumes, parameters and memory, running with a checkpoint directory,
+reading status codes, ZNCC and uncertainty, slice plots, exports. Without
+your own files it runs on a synthetic pair with a known deformation.
 
 ## Project layout
 

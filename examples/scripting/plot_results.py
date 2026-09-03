@@ -1,6 +1,6 @@
 """Re-plot exported results without recomputing anything.
 
-    python examples/scripting/plot_results.py results/aldvc.npz exx 1 out.png
+python examples/scripting/plot_results.py results/aldvc.npz exx 1 out.png
 """
 
 from __future__ import annotations
@@ -20,9 +20,16 @@ from al_dvc.viz import plot_field_slices
 def main(npz: str, field: str = "exx", frame: int = 1, out: str | None = None) -> None:
     d = load_npz_result(npz)
     grid = tuple(int(s) for s in d["grid_shape"])
-    mesh = DVCMesh(coordinates=d["coordinates"], elements=d["elements"], grid_shape=grid,
-                   x0=d["x0"], y0=d["y0"], z0=d["z0"], spacing=tuple(float(s) for s in d["spacing"]),
-                   node_valid=d["node_valid"])
+    mesh = DVCMesh(
+        coordinates=d["coordinates"],
+        elements=d["elements"],
+        grid_shape=grid,
+        x0=d["x0"],
+        y0=d["y0"],
+        z0=d["z0"],
+        spacing=tuple(float(s) for s in d["spacing"]),
+        node_valid=d["node_valid"],
+    )
     key = f"{field}_{frame}"
     if key not in d:
         raise SystemExit(f"{key} not in archive; available: {sorted(k for k in d if k.endswith(f'_{frame}'))}")
