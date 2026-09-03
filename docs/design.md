@@ -147,6 +147,20 @@ Only 3-4 ADMM iterations are needed in practice. The output is `u_hat`
 | Precision | volumes float32 in memory, all kernel accumulations float64 | halves RAM, no accuracy loss (verified in tests) |
 | Pre-processing | normalisation statistics and the 7-point gradient in parallel Numba kernels (`voi_mean_std`, `_gradient_stencil7`), NumPy/SciPy references kept for tests | the SciPy `correlate1d` path took 30 s on a 1024x1024x306 scan, more than the whole local step for 80k nodes |
 
+### Coarse-lattice initial guess
+
+`coarse_init.py` (`init_coarse_factor = k > 1`) runs the NCC pyramid and the
+12-DOF IC-GN on every k-th node per axis (a `DVCMesh` of its own built with
+`mesh_setup` on the sub-sampled axes, `node_valid` taken from the fine mesh)
+and interpolates `U` and `F` trilinearly (`RegularGridInterpolator`, linear
+extrapolation for the boundary layers the stride drops, NaN coarse nodes
+filled from the nearest finite one) to every node as the start of the full
+pass, which then begins within ~0.1 voxel with the local gradient already in
+place. This is pyALDIC's seed-propagation idea (solve few nodes, propagate
+U and F) in a parallel-friendly form: no sequential wave, every node still
+runs the full IC-GN. The NCC cost drops by k^3; the fine pass needs fewer
+iterations. Frames that reuse a previous solution (`previous`) skip it.
+
 ### Noise-corrected Gauss-Newton steps
 
 IC-GN keeps the reference-subset Hessian `H = sum J J^T` fixed. With noisy
@@ -157,8 +171,13 @@ inflation and the iteration converges linearly (16 iterations per node at
 SNR ~ 5 instead of 6). Once a node's step is below `NOISE_CORR_STEP` (0.5
 voxel, so that `1 - ZNCC` measures noise rather than misalignment), the
 kernels solve with `H - c s^2 (n_valid / n_full) pattern` (re-factored per
-iteration, 12x12 Cholesky, negligible), keeping at least 10 % of the
-translation diagonal. The fixed point `b = 0` does not depend on the Hessian,
+iteration, 12x12 Cholesky, negligible), keeping at least half of the
+translation diagonal: real CT noise is neither white nor Gaussian, and the
+full correction over-shoots there (steps oscillate, the 3-DOF passes take more
+iterations and the ADMM stops early on a worse answer), while the half cap
+gives the same agreement with the MATLAB result as no correction and 6.8 /
+4.1 / 4.0 / 3.9 IC-GN iterations per ADMM pass instead of 8.1 / 7.3 / 6.9 /
+6.5 on the micro-CT example. The fixed point `b = 0` does not depend on the Hessian,
 so the solution is the same; `icgn_noise_hessian=False` restores the plain
 steps (the 3-DOF ADMM kernel corrects its translation block the same way).
 
@@ -380,9 +399,10 @@ Other findings from the same run:
 * MATLAB's finite-difference global step spreads an outlier node into a
   cross-shaped artefact along the grid axes; the pyALDVC field is smooth
   there.
-* Wall time on the 24-core workstation: 4.4 min for the 79,200 nodes (12.5 min
-  before the kernel optimisation of 0.3.2: initial guess 48 s, local IC-GN 67 s,
-  three 3-DOF passes 143 s)
+* Wall time on the 24-core workstation: 3.9 min for the 79,200 nodes (12.5 min
+  before the kernel optimisation of 0.3.2: initial guess 50 s, local IC-GN 75 s,
+  three 3-DOF passes 103 s with the noise-corrected Hessian, 4.8 / 4.6 / 4.5
+  iterations per pass instead of 7.3 / 6.9 / 6.5)
   (initial guess 58 s, 12-DOF pass 218 s, three 3-DOF passes 471 s, global
   steps < 1 s) plus 3.9 min for the equivalence check on 18,108 sampled
   nodes. Before the stall rule and the block-cyclic schedule the 12-DOF pass

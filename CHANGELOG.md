@@ -13,7 +13,7 @@ All notable changes to pyALDVC are documented here. The format follows
   accumulated in the gradient pass, and per-voxel divisions became
   multiplications. Results unchanged to 3e-14 with identical iteration counts;
   256^3 / subset 32 / step 8: local step 14.9 -> 4.6 s, ADMM local steps 5.6 ->
-  1.6 s; the 1024x1024x306 micro-CT example (79,200 nodes) runs in 4.4 min
+  1.6 s; the 1024x1024x306 micro-CT example (79,200 nodes) runs in 3.9 min
   instead of 12.5 min with unchanged agreement to the MATLAB code.
 - The NCC pyramid refines the finer levels with radius 2 instead of 4
   (`pyramid_fine_radius`, auto-expand still covers clipped peaks): initial
@@ -22,12 +22,19 @@ All notable changes to pyALDVC are documented here. The format follows
   holding a float32 copy of every frame of a sequence.
 
 ### Added
+- `init_coarse_factor` (`al_dvc.solver.coarse_init`): the NCC pyramid and a
+  12-DOF IC-GN run on every k-th node per axis; displacement and gradient are
+  interpolated trilinearly to all nodes as the initial guess of the full pass
+  (pyALDIC's seed-propagation idea without the sequential wave). Also a GUI
+  advanced parameter; `tests/test_coarse_init.py`.
 - `icgn_noise_hessian` (default on): the IC-GN kernels subtract the expected
   reference-gradient noise inflation `c s^2 (I3 (x) M)` from the stored Hessian
   once a node's step is below half a voxel (`s^2` from the current ZNCC, the
-  model of `uncertainty.py`). The fixed point is unchanged; noisy data converge
-  in 2-2.5x fewer iterations (SNR ~ 5: 16 -> 6.5 iterations per node), clean
-  data are untouched. `tests/test_noise_hessian.py`.
+  model of `uncertainty.py`), capped at half of the translation diagonal. The
+  fixed point is unchanged; noisy synthetic data converge in 2x fewer iterations
+  (SNR ~ 5: 16 -> 8 iterations per node), clean data are untouched, and the
+  ADMM local passes on the micro-CT example need 4 instead of 7 iterations per
+  node with the same agreement to MATLAB. `tests/test_noise_hessian.py`.
 - `subset_stride`: sample every k-th subset voxel per axis (k^3 fewer samples
   per IC-GN iteration; the Hessian, the statistics and the uncertainty model
   use the sampled set); 4.7x faster local steps at k = 2 with subset 32.

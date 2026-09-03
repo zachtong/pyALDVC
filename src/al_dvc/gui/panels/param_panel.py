@@ -127,6 +127,7 @@ class ParamPanel(QWidget):
         self.icgn_max_iter = self._spin(1, 1000, 1)
         self.icgn_patience = self._spin(0, 100, 1)
         self.subset_stride = self._spin(1, 8, 1)
+        self.init_coarse = self._spin(1, 8, 1)
         self.local_outlier = self._dspin(0.0, 20.0, 2)
         self.init_outlier = self._dspin(0.0, 20.0, 2)
         self.hessian_cond = self._dspin(1.0, 1e15, 0)
@@ -146,6 +147,7 @@ class ParamPanel(QWidget):
             ("icgn_max_iter", self.icgn_max_iter),
             ("icgn_patience", self.icgn_patience),
             ("subset_stride", self.subset_stride),
+            ("init_coarse", self.init_coarse),
             ("local_outlier", self.local_outlier),
             ("init_outlier", self.init_outlier),
             ("hessian_cond", self.hessian_cond),
@@ -230,6 +232,7 @@ class ParamPanel(QWidget):
         self.icgn_max_iter.valueChanged.connect(lambda v: self._set("icgn_max_iter", int(v)))
         self.icgn_patience.valueChanged.connect(lambda v: self._set("icgn_patience", int(v)))
         self.subset_stride.valueChanged.connect(lambda v: self._set("subset_stride", int(v)))
+        self.init_coarse.valueChanged.connect(lambda v: self._set("init_coarse_factor", int(v)))
         self.local_outlier.valueChanged.connect(lambda v: self._set("local_outlier_threshold", float(v)))
         self.init_outlier.valueChanged.connect(lambda v: self._set("init_outlier_threshold", float(v)))
         self.hessian_cond.valueChanged.connect(lambda v: self._set("hessian_cond_max", float(v)))
@@ -303,6 +306,7 @@ class ParamPanel(QWidget):
             self.icgn_max_iter.setValue(int(p.icgn_max_iter))
             self.icgn_patience.setValue(int(p.icgn_patience))
             self.subset_stride.setValue(int(p.subset_stride))
+            self.init_coarse.setValue(int(p.init_coarse_factor))
             self.local_outlier.setValue(float(p.local_outlier_threshold))
             self.init_outlier.setValue(float(p.init_outlier_threshold))
             self.hessian_cond.setValue(float(p.hessian_cond_max))
@@ -361,6 +365,7 @@ class ParamPanel(QWidget):
             "icgn_max_iter": self.tr("IC-GN max iterations"),
             "icgn_patience": self.tr("IC-GN patience"),
             "subset_stride": self.tr("Subset sampling stride"),
+            "init_coarse": self.tr("Coarse initial-guess lattice"),
             "local_outlier": self.tr("Local outlier threshold"),
             "init_outlier": self.tr("Initial-guess outlier threshold"),
             "hessian_cond": self.tr("Max Hessian condition"),

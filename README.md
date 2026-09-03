@@ -191,7 +191,8 @@ The most useful fields:
 | `strain_type` | `"infinitesimal"` | `green_lagrange`, `euler_almansi`, `hencky` |
 | `reference_mode` | `"accumulative"` | or `"incremental"`; `frame_schedule` for custom trees |
 | `subset_stride` | 1 | sample every k-th subset voxel per axis: k^3 fewer voxels per IC-GN iteration (local steps 5x faster at k = 2 with subset 32), the same result on clean data, about 3x the noise-induced error (a subset with k^3 fewer voxels), the smoothing bias of the full span; 2 is a good choice for subsets of 32 and more on data with a decent SNR |
-| `icgn_noise_hessian` | True | Gauss-Newton steps with the noise-corrected Hessian once a node is in its fine-convergence phase: the stored Hessian is inflated by the reference-gradient noise, which makes the plain steps too short (16 instead of 6 iterations per node at SNR ~ 5); same fixed point, 2-2.5x fewer iterations on noisy data, no change on clean data |
+| `init_coarse_factor` | 1 | > 1: the NCC search and a 12-DOF IC-GN run on every k-th node per axis only (k^3 fewer nodes) and the displacement *and* gradient are interpolated to all nodes as the initial guess of the full pass, which then starts within ~0.1 voxel with the local gradient in place (fewer iterations); 2 is a good choice for smooth fields on dense grids |
+| `icgn_noise_hessian` | True | Gauss-Newton steps with the noise-corrected Hessian once a node is in its fine-convergence phase (capped at half of the diagonal): the stored Hessian is inflated by the reference-gradient noise, which makes the plain steps too short; same fixed point, about 2x fewer iterations on noisy data (real micro-CT: 4 instead of 7 per ADMM pass), no change on clean data |
 | `n_threads` | 0 (all) | Numba thread count |
 | `gradient_mode` | `"stored"` | `on_the_fly` drops the three gradient volumes (21 -> 9 bytes per voxel) for scans that do not fit otherwise; about 15-20 % slower local step |
 
@@ -224,7 +225,7 @@ Throughput on a 24-core workstation (Intel Core Ultra 9 285K, Numba warm, ADMM w
 | 256^3 | 32 / 8 | 19 683 | 9.0 s (3.8 s with `subset_stride=2`) | 4.2 s (0.9 s) |
 | 256^3 | 48 / 16 | 2 197 | 3.1 s | 1.5 s |
 | 384^3 | 32 / 16 | 10 648 | 6.7 s | 2.8 s |
-| 1024 x 1024 x 306 micro-CT (MATLAB example) | 32 / 8 | 79 200 | 4.4 min (12.5 min before the 0.3.2 kernel work) | 1.1 min + 2.4 min for three 3-DOF passes; initial guess 0.8 min |
+| 1024 x 1024 x 306 micro-CT (MATLAB example) | 32 / 8 | 79 200 | 3.9 min (12.5 min before the 0.3.2 kernel work) | 1.2 min + 1.7 min for three 3-DOF passes; initial guess 0.8 min |
 
 See `reports/validation_synthetic.pdf` and `reports/performance.pdf` for the
 complete tables, noise sweep, spatial-resolution study and stage timings, and
@@ -249,7 +250,7 @@ The two IC-GN implementations minimise the same functional; the stored
 solutions differ along z because the scan has 7x less texture in that
 direction and both codes stop early there. The automatic `beta` equals the
 MATLAB value, and the ZNCC of the pyALDVC fields is never below MATLAB's.
-The run takes 4.4 min on a 24-core workstation. See `docs/design.md`,
+The run takes 3.9 min on a 24-core workstation. See `docs/design.md`,
 section 10.
 
 ## Tutorial

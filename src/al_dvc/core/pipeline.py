@@ -31,6 +31,7 @@ from ..io.volume_ops import (
 )
 from ..mesh.grid_mesh import apply_mask_to_mesh, build_grid_axes, mesh_setup
 from ..solver.beta_tuning import auto_tune_beta
+from ..solver.coarse_init import coarse_initial_guess
 from ..solver.global_operators import build_global_operators, nodal_gradient
 from ..solver.init_disp import compute_initial_guess
 from ..solver.local_icgn import local_icgn, precompute_local_context
@@ -221,14 +222,18 @@ def run_aldvc(
             # --- Section 3: initial guess ---
             t0 = time.perf_counter()
             previous = prev_U if (prev_ref == ref_idx and prev_U is not None) else None
-            U0, init_info = compute_initial_guess(bundle.f, g_norm, mesh, para, previous=previous)
+            F0 = None
+            if int(para.init_coarse_factor) > 1 and previous is None:
+                U0, F0, init_info = coarse_initial_guess(bundle, g_norm, g_prep, mesh, para)
+            else:
+                U0, init_info = compute_initial_guess(bundle.f, g_norm, mesh, para, previous=previous)
             timings["init_guess"] = timings.get("init_guess", 0.0) + time.perf_counter() - t0
             progress(base + 0.15 * span, f"Frame {k}: initial guess ({init_info.get('method')})")
             if should_stop():
                 raise RunCancelled("Computation cancelled by user.")
 
             # --- Section 4: local 12-DOF IC-GN ---
-            U1, F1, info_local, bad_local = local_icgn(ctx, bundle, g_prep, U0, para, mesh)
+            U1, F1, info_local, bad_local = local_icgn(ctx, bundle, g_prep, U0, para, mesh, F0=F0)
             timings["local_icgn"] = timings.get("local_icgn", 0.0) + info_local.solve_time
             U_local, F_local = U1.copy(), F1.copy()
             progress(base + 0.5 * span, f"Frame {k}: local IC-GN ({info_local.solve_time:.1f}s)")

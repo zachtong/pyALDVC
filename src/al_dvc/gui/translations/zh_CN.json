@@ -41,6 +41,7 @@
   "Cannot save session": "无法保存会话",
   "Clear": "清空",
   "Close": "关闭",
+  "Coarse initial-guess lattice": "粗节点格初值（每 k 个节点）",
   "Colormap": "色图",
   "Compute strain": "计算应变",
   "Converged": "收敛",

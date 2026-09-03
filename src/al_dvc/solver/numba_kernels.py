@@ -77,7 +77,9 @@ def _cholesky12(H, L):
     return True
 
 
-MIN_CORRECTED_FRACTION = 0.1  # never remove more than 90 % of the translation diagonal
+MIN_CORRECTED_FRACTION = (
+    0.5  # keep at least half of the translation diagonal: real CT noise is not white, a full correction over-shoots
+)
 NOISE_CORR_STEP = 0.5  # apply the noise correction once the previous step is below this many voxels
 
 

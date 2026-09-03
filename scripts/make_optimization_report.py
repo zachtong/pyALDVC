@@ -96,9 +96,24 @@ def _truth(mesh, fn):
     return np.stack(fn(c[:, 0], c[:, 1], c[:, 2]), axis=-1).reshape(-1, 3)
 
 
-def measure_pipeline(shape, ws, st, stride=1, noise=0.0):
+def _mean_iters(fr, ok, first_pass: int) -> float:
+    """Mean IC-GN iterations per node over the local passes from ``first_pass`` on (NaN without ADMM)."""
+    if fr.admm is None or not ok.any() or len(fr.admm.local_info) <= first_pass:
+        return float("nan")
+    return float(np.mean([li.n_iter[ok].mean() for li in fr.admm.local_info[first_pass:]]))
+
+
+def measure_pipeline(shape, ws, st, stride=1, noise=0.0, noise_hessian=True, coarse=1):
     ref, dfm, fn = _pair(shape, noise)
-    para = dvcpara_default(winsize=ws, winstepsize=st, search_radius=6, verbose=False, subset_stride=stride)
+    para = dvcpara_default(
+        winsize=ws,
+        winstepsize=st,
+        search_radius=6,
+        verbose=False,
+        subset_stride=stride,
+        icgn_noise_hessian=noise_hessian,
+        init_coarse_factor=coarse,
+    )
     t0 = time.perf_counter()
     res = run_aldvc(para, [ref, dfm])
     total = time.perf_counter() - t0
@@ -111,6 +126,8 @@ def measure_pipeline(shape, ws, st, stride=1, noise=0.0):
     out.update(
         total=total,
         n_nodes=res.dvc_mesh.n_nodes,
+        iters=_mean_iters(fr, ok, 0),
+        iters_sub1=_mean_iters(fr, ok, 1),
         converged=float(np.mean(fr.status == STATUS_CONVERGED)),
         rmse=float(np.sqrt(np.mean(err**2))),
         p95=float(np.percentile(err, 95)),
@@ -206,6 +223,14 @@ def main(argv=None) -> int:
     trade = {noise: [measure_pipeline(shape, ws, st, s, noise) for s in strides] for noise in (0.0, 0.03)}
     print("initial guess ...")
     init_rows = [(r, *measure_init(shape, ws, st, r)) for r in (4, 2)]
+    print("noise-corrected Hessian and coarse initial guess ...")
+    variants = {}
+    for noise in (0.0, 0.03):
+        variants[noise] = {
+            "plain": measure_pipeline(shape, ws, st, 1, noise, noise_hessian=False),
+            "noise_hessian": measure_pipeline(shape, ws, st, 1, noise, noise_hessian=True),
+            "coarse_x2": measure_pipeline(shape, ws, st, 1, noise, noise_hessian=True, coarse=2),
+        }
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -331,6 +356,39 @@ def main(argv=None) -> int:
         fig = plt.figure(figsize=(8.5, 11))
         fig.text(0.05, 0.96, "Stride trade-off table", fontsize=13, weight="bold", va="top")
         fig.text(0.05, 0.92, "\n".join(lines), fontsize=8, va="top", family="monospace")
+        pdf.savefig(fig)
+        plt.close(fig)
+        lines = [
+            "Noise-corrected Hessian (icgn_noise_hessian) and coarse-lattice initial guess (init_coarse_factor),",
+            f"{n}^3 / subset {ws} / step {st}:",
+            "",
+            f"  {'variant':<28s} {'noise':>6s} {'total [s]':>10s} {'init [s]':>9s} {'local [s]':>10s} "
+            f"{'subpb1 [s]':>11s} {'it/node':>8s} {'it/node sub1':>13s} {'RMSE [vox]':>11s}",
+        ]
+        for noise, rows in variants.items():
+            for name, r in rows.items():
+                lines.append(
+                    f"  {name:<28s} {noise:6.2f} {r['total']:10.2f} {r['init_guess']:9.2f} {r['local_icgn']:10.2f} "
+                    f"{r['subpb1']:11.2f} {r['iters']:8.2f} {r['iters_sub1']:13.2f} {r['rmse']:11.4f}"
+                )
+        lines += [
+            "",
+            "The noise-corrected Hessian subtracts the reference-gradient noise inflation c s^2 (I3 x M)",
+            "from the stored Hessian once a node's step is below 0.5 voxel (capped at half of the",
+            "translation diagonal): same fixed point, shorter path; on clean data 1 - ZNCC ~ 0 and",
+            "nothing changes. The coarse lattice solves NCC + IC-GN on every second node per axis and",
+            "interpolates U and F to all nodes: the NCC cost drops 8x and the full pass starts within",
+            "0.1 voxel with the gradient in place (fewer iterations); off by default because a",
+            "discontinuous field is not captured by the interpolated start.",
+            "",
+            "Real micro-CT example (79,200 nodes, MATLAB beta), IC-GN iterations per ADMM pass:",
+            "  plain Hessian 8.1 / 7.3 / 6.9 / 6.5, corrected (cap 0.5) 6.8 / 4.1 / 4.0 / 3.9; a full",
+            "  correction (cap 0.1) over-shot on the non-white CT noise: the ADMM stopped after 2 steps",
+            "  on an answer 0.024 / 0.028 / 0.077 voxel from MATLAB's instead of 0.005 / 0.006 / 0.020.",
+        ]
+        fig = plt.figure(figsize=(8.5, 11))
+        fig.text(0.05, 0.96, "Noise-corrected Hessian and coarse initial guess", fontsize=13, weight="bold", va="top")
+        fig.text(0.05, 0.92, "\n".join(lines), fontsize=7.4, va="top", family="monospace")
         pdf.savefig(fig)
         plt.close(fig)
     print(f"wrote {out}")

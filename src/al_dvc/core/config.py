@@ -64,6 +64,7 @@ class DVCPara:
     global_shift: bool = True  # rigid pre-shift by phase correlation
     pyramid_levels: int = 0  # 0 = automatic
     pyramid_fine_radius: int = 2  # NCC refinement radius at the finer pyramid levels (voxels of that level)
+    init_coarse_factor: int = 1  # > 1: NCC + IC-GN on every k-th node per axis, U and F interpolated to all nodes
     ncc_auto_expand: bool = True  # grow search radius when peaks are clipped
     ncc_max_expand: int = 3  # max number of doublings
     init_outlier_threshold: float = 2.0  # universal median test (0 disables)
@@ -219,6 +220,8 @@ def validate_dvcpara(p: DVCPara) -> None:
         raise ValueError("icgn_max_iter must be >= 1.")
     if int(p.pyramid_fine_radius) < 1:
         raise ValueError("pyramid_fine_radius must be >= 1.")
+    if not (1 <= int(p.init_coarse_factor) <= 8):
+        raise ValueError(f"init_coarse_factor must be between 1 and 8 (got {p.init_coarse_factor}).")
     if int(p.subset_stride) < 1:
         raise ValueError(f"subset_stride must be >= 1 (got {p.subset_stride}).")
     if int(p.subset_stride) > max(1, min(int(w) for w in p.winsize) // 4):
