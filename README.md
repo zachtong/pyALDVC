@@ -190,6 +190,7 @@ The most useful fields:
 | `strain_plane_fit_halfwidth` | 1 | plane-fit window half-width in nodes |
 | `strain_type` | `"infinitesimal"` | `green_lagrange`, `euler_almansi`, `hencky` |
 | `reference_mode` | `"accumulative"` | or `"incremental"`; `frame_schedule` for custom trees |
+| `subset_stride` | 1 | sample every k-th subset voxel per axis: k^3 fewer voxels per IC-GN iteration (local steps 5x faster at k = 2 with subset 32), the same result on clean data, about 3x the noise-induced error (a subset with k^3 fewer voxels), the smoothing bias of the full span; 2 is a good choice for subsets of 32 and more on data with a decent SNR |
 | `n_threads` | 0 (all) | Numba thread count |
 | `gradient_mode` | `"stored"` | `on_the_fly` drops the three gradient volumes (21 -> 9 bytes per voxel) for scans that do not fit otherwise; about 15-20 % slower local step |
 
@@ -217,15 +218,17 @@ Throughput on a 24-core workstation (Intel Core Ultra 9 285K, Numba warm, ADMM w
 
 | volume | subset / step | nodes | total | of which local IC-GN |
 |---|---|---|---|---|
-| 128^3 | 16 / 8 | 2 197 | 1.0 s | 0.2 s |
-| 256^3 | 32 / 16 | 2 744 | 4.1 s | 2.0 s |
-| 256^3 | 32 / 8 | 19 683 | 25 s | 14 s |
-| 256^3 | 48 / 16 | 2 197 | 8.4 s | 5.1 s |
-| 384^3 | 32 / 16 | 10 648 | 14 s | 7.4 s |
+| 128^3 | 16 / 8 | 2 197 | 0.6 s | 0.1 s |
+| 256^3 | 32 / 16 | 2 744 | 1.9 s | 0.6 s |
+| 256^3 | 32 / 8 | 19 683 | 9.0 s (3.8 s with `subset_stride=2`) | 4.2 s (0.9 s) |
+| 256^3 | 48 / 16 | 2 197 | 3.1 s | 1.5 s |
+| 384^3 | 32 / 16 | 10 648 | 6.7 s | 2.8 s |
 | 1024 x 1024 x 306 micro-CT (MATLAB example) | 32 / 8 | 79 200 | 12.5 min | 3.6 min + 7.9 min for three 3-DOF passes |
 
 See `reports/validation_synthetic.pdf` and `reports/performance.pdf` for the
-complete tables, noise sweep, spatial-resolution study and stage timings.
+complete tables, noise sweep, spatial-resolution study and stage timings, and
+`reports/optimization.pdf` for the optimisation study (before / after, thread
+scaling, the stride trade-off with and without noise, rejected experiments).
 
 ### Agreement with the MATLAB ALDVC code
 

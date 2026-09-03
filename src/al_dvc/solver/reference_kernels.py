@@ -124,12 +124,12 @@ def sample_volume_np(vol: NDArray, z: NDArray, y: NDArray, x: NDArray, mode: int
 # ---------------------------------------------------------------------------
 
 
-def subset_offsets(half: tuple[int, int, int]) -> tuple[NDArray, NDArray, NDArray]:
+def subset_offsets(half: tuple[int, int, int], stride: int = 1) -> tuple[NDArray, NDArray, NDArray]:
     hx, hy, hz = half
     dz, dy, dx = np.meshgrid(
-        np.arange(-hz, hz + 1),
-        np.arange(-hy, hy + 1),
-        np.arange(-hx, hx + 1),
+        np.arange(-hz, hz + 1, stride),
+        np.arange(-hy, hy + 1, stride),
+        np.arange(-hx, hx + 1, stride),
         indexing="ij",
     )
     return dx.ravel().astype(np.float64), dy.ravel().astype(np.float64), dz.ravel().astype(np.float64)
@@ -174,16 +174,16 @@ def compose_warp_np(P: NDArray, dP: NDArray) -> NDArray | None:
     return out
 
 
-def precompute_node_np(coord, half, f, gx, gy, gz, mask, min_valid_ratio=0.5, cond_max=1e12):
+def precompute_node_np(coord, half, f, gx, gy, gz, mask, min_valid_ratio=0.5, cond_max=1e12, stride=1):
     """Reference of ``_precompute_one``: returns ``(H, meanf, bottomf, n_valid, ok)``."""
     x0, y0, z0 = (int(c) for c in coord)
     hx, hy, hz = half
     nz, ny, nx = f.shape
     if x0 - hx < 0 or x0 + hx >= nx or y0 - hy < 0 or y0 + hy >= ny or z0 - hz < 0 or z0 + hz >= nz:
         return np.zeros((12, 12)), 0.0, 1.0, 0, False
-    sl = (slice(z0 - hz, z0 + hz + 1), slice(y0 - hy, y0 + hy + 1), slice(x0 - hx, x0 + hx + 1))
+    sl = (slice(z0 - hz, z0 + hz + 1, stride), slice(y0 - hy, y0 + hy + 1, stride), slice(x0 - hx, x0 + hx + 1, stride))
     m = np.asarray(mask[sl]).ravel() > 0
-    X, Y, Z = subset_offsets(half)
+    X, Y, Z = subset_offsets(half, stride)
     fv = np.asarray(f[sl], dtype=np.float64).ravel()[m]
     SD = steepest_descent(
         np.asarray(gx[sl], dtype=np.float64).ravel()[m],
@@ -212,13 +212,13 @@ def precompute_node_np(coord, half, f, gx, gy, gz, mask, min_valid_ratio=0.5, co
     return H, meanf, bottomf, n_valid, True
 
 
-def icgn_12dof_np(P0, coord, half, f, gx, gy, gz, mask, g, mode, H, meanf, bottomf, tol, dp_tol, max_iter, patience=0):
+def icgn_12dof_np(P0, coord, half, f, gx, gy, gz, mask, g, mode, H, meanf, bottomf, tol, dp_tol, max_iter, patience=0, stride=1):
     """Reference 12-DOF IC-GN for one node. Returns ``(P, n_iter, status, zncc)``."""
     x0, y0, z0 = (int(c) for c in coord)
     hx, hy, hz = half
-    sl = (slice(z0 - hz, z0 + hz + 1), slice(y0 - hy, y0 + hy + 1), slice(x0 - hx, x0 + hx + 1))
+    sl = (slice(z0 - hz, z0 + hz + 1, stride), slice(y0 - hy, y0 + hy + 1, stride), slice(x0 - hx, x0 + hx + 1, stride))
     m = np.asarray(mask[sl]).ravel() > 0
-    X, Y, Z = subset_offsets(half)
+    X, Y, Z = subset_offsets(half, stride)
     X, Y, Z = X[m], Y[m], Z[m]
     fv = np.asarray(f[sl], dtype=np.float64).ravel()[m]
     SD = steepest_descent(
@@ -288,14 +288,34 @@ def icgn_12dof_np(P0, coord, half, f, gx, gy, gz, mask, g, mode, H, meanf, botto
 
 
 def icgn_3dof_np(
-    U_old, F_fixed, vdual, coord, half, f, gx, gy, gz, mask, g, mode, H, meanf, bottomf, mu, tol, dp_tol, max_iter, patience=0
+    U_old,
+    F_fixed,
+    vdual,
+    coord,
+    half,
+    f,
+    gx,
+    gy,
+    gz,
+    mask,
+    g,
+    mode,
+    H,
+    meanf,
+    bottomf,
+    mu,
+    tol,
+    dp_tol,
+    max_iter,
+    patience=0,
+    stride=1,
 ):
     """Reference 3-DOF IC-GN (ADMM subpb1) for one node."""
     x0, y0, z0 = (int(c) for c in coord)
     hx, hy, hz = half
-    sl = (slice(z0 - hz, z0 + hz + 1), slice(y0 - hy, y0 + hy + 1), slice(x0 - hx, x0 + hx + 1))
+    sl = (slice(z0 - hz, z0 + hz + 1, stride), slice(y0 - hy, y0 + hy + 1, stride), slice(x0 - hx, x0 + hx + 1, stride))
     m = np.asarray(mask[sl]).ravel() > 0
-    X, Y, Z = subset_offsets(half)
+    X, Y, Z = subset_offsets(half, stride)
     X, Y, Z = X[m], Y[m], Z[m]
     fv = np.asarray(f[sl], dtype=np.float64).ravel()[m]
     G = np.column_stack(
@@ -359,7 +379,7 @@ def icgn_3dof_np(
 # ---------------------------------------------------------------------------
 
 
-def precompute_nodes_np(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, cond_max):
+def precompute_nodes_np(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, cond_max, stride=1):
     N = coords.shape[0]
     H_all = np.zeros((N, 12, 12))
     L_all = np.zeros((N, 12, 12))
@@ -368,7 +388,7 @@ def precompute_nodes_np(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio
     nvalid = np.zeros(N, dtype=np.int64)
     valid = np.zeros(N, dtype=bool)
     for n in range(N):
-        H, mf, bf, nv, ok = precompute_node_np(coords[n], (hx, hy, hz), f, gx, gy, gz, mask, min_valid_ratio, cond_max)
+        H, mf, bf, nv, ok = precompute_node_np(coords[n], (hx, hy, hz), f, gx, gy, gz, mask, min_valid_ratio, cond_max, stride)
         H_all[n] = H
         meanf[n] = mf
         bottomf[n] = bf
@@ -380,7 +400,27 @@ def precompute_nodes_np(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio
 
 
 def icgn_12dof_batch_np(
-    coords, P0, hx, hy, hz, f, gx, gy, gz, mask, g, mode, H_all, meanf_all, bottomf_all, valid, tol, dp_tol, max_iter, patience=0
+    coords,
+    P0,
+    hx,
+    hy,
+    hz,
+    f,
+    gx,
+    gy,
+    gz,
+    mask,
+    g,
+    mode,
+    H_all,
+    meanf_all,
+    bottomf_all,
+    valid,
+    tol,
+    dp_tol,
+    max_iter,
+    patience=0,
+    stride=1,
 ):
     N = coords.shape[0]
     P_out = np.array(P0, dtype=np.float64).copy()
@@ -411,6 +451,7 @@ def icgn_12dof_batch_np(
             dp_tol,
             max_iter,
             patience,
+            stride,
         )
         P_out[n] = P
         n_iter[n] = it
@@ -443,6 +484,7 @@ def icgn_3dof_batch_np(
     dp_tol,
     max_iter,
     patience=0,
+    stride=1,
 ):
     N = coords.shape[0]
     U_out = np.array(U_old, dtype=np.float64).copy()
@@ -476,6 +518,7 @@ def icgn_3dof_batch_np(
             dp_tol,
             max_iter,
             patience,
+            stride,
         )
         U_out[n] = U
         n_iter[n] = it

@@ -11,6 +11,8 @@ Conventions:
 
 from __future__ import annotations
 
+from collections import OrderedDict
+
 import numpy as np
 from numpy.typing import NDArray
 from scipy.ndimage import correlate1d, gaussian_filter, spline_filter
@@ -19,6 +21,7 @@ from .._numba_compat import HAS_NUMBA, JIT_CACHE, njit, prange
 from ..core.data_structures import ReferenceBundle, VOIRange
 
 # 7-point central finite-difference kernel (MATLAB funImgGradient3 'stencil7')
+LIST_PROVIDER_CACHE = 3  # normalised frames kept by ListVolumeProvider (reference + current + previous)
 STENCIL7 = np.array([-1 / 60, 3 / 20, -3 / 4, 0.0, 3 / 4, -3 / 20, 1 / 60], dtype=np.float64)
 GRADIENT_BORDER = 3  # voxels on each side where the stencil is unreliable
 
@@ -269,13 +272,23 @@ def build_reference_bundle(
 
 
 class ListVolumeProvider:
-    """Eager provider over in-memory volumes (normalised once, up front)."""
+    """Provider over in-memory volumes, normalised on demand.
+
+    Normalising every frame up front costs 4 bytes per voxel per frame for
+    the whole run; a sequence of ten 1024x1024x306 scans would hold 12.8 GB
+    of float32 copies next to the raw arrays. Frames are normalised when
+    first requested and kept in a small LRU cache (``cache_size``, default 3:
+    the reference, the current deformed frame and the previous one) --
+    normalisation is a 0.3 s Numba pass per 300 Mvoxel, negligible next to
+    the solve.
+    """
 
     def __init__(
         self,
         volumes: list[NDArray],
         voi: VOIRange | None = None,
         masks: list[NDArray[np.bool_] | None] | None = None,
+        cache_size: int = LIST_PROVIDER_CACHE,
     ) -> None:
         if len(volumes) == 0:
             raise ValueError("volumes list is empty")
@@ -287,7 +300,9 @@ class ListVolumeProvider:
                 raise ValueError(f"volume {i} has shape {np.asarray(v).shape}, expected {shape}")
         self._shape: tuple[int, int, int] = shape  # type: ignore[assignment]
         self._voi = (voi or VOIRange()).clamp(self._shape)
-        self._normalized = [normalize_volume(v, self._voi) for v in volumes]
+        self._volumes = list(volumes)
+        self._cache: OrderedDict[int, NDArray[np.float32]] = OrderedDict()
+        self._cache_size = max(1, int(cache_size))
         if masks is None:
             self._masks: list[NDArray[np.bool_] | None] = [None] * len(volumes)
         else:
@@ -304,7 +319,7 @@ class ListVolumeProvider:
                 self._masks.append(m.astype(bool))
 
     def __len__(self) -> int:
-        return len(self._normalized)
+        return len(self._volumes)
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -315,7 +330,18 @@ class ListVolumeProvider:
         return self._voi
 
     def get_normalized(self, idx: int) -> NDArray[np.float32]:
-        return self._normalized[idx]
+        if idx in self._cache:
+            self._cache.move_to_end(idx)
+            return self._cache[idx]
+        out = normalize_volume(self._volumes[idx], self._voi)
+        self._cache[idx] = out
+        while len(self._cache) > self._cache_size:
+            self._cache.popitem(last=False)
+        return out
+
+    @property
+    def n_cached(self) -> int:
+        return len(self._cache)
 
     def get_mask(self, idx: int) -> NDArray[np.bool_] | None:
         return self._masks[idx]

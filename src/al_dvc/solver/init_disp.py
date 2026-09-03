@@ -63,6 +63,7 @@ def compute_initial_guess(
             outlier_threshold=para.init_outlier_threshold,
             auto_expand=para.ncc_auto_expand,
             max_expand=para.ncc_max_expand,
+            fine_radius=int(getattr(para, "pyramid_fine_radius", 2)),
         )
         disp = info["disp"]
         ok = info.get("ok", np.ones(N, dtype=bool))

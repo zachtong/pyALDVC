@@ -161,6 +161,7 @@
   "Strain measure": "应变度量",
   "Strain method": "应变方法",
   "Stride": "步距",
+  "Subset sampling stride": "子集采样步长",
   "Subset size [voxel]": "子集尺寸 [体素]",
   "Summary": "摘要",
   "The 3-D view needs pyvista and pyvistaqt:\n{cmd}": "3-D 视图需要 pyvista 和 pyvistaqt：\n{cmd}",

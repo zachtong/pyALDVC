@@ -4,6 +4,33 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- Local IC-GN kernels are about 3x faster: the tricubic sampler allocated three
+  `np.empty(4)` weight arrays per sampled voxel (a heap allocation each in
+  Numba, 137 -> 52 ns per sample with scalar weights), the ZNCC numerator is
+  accumulated in the gradient pass, and per-voxel divisions became
+  multiplications. Results unchanged to 3e-14 with identical iteration counts;
+  256^3 / subset 32 / step 8: local step 14.9 -> 4.6 s, ADMM local steps 5.6 ->
+  1.6 s.
+- The NCC pyramid refines the finer levels with radius 2 instead of 4
+  (`pyramid_fine_radius`, auto-expand still covers clipped peaks): initial
+  guess 4.7 -> 2.2 s at 19,683 nodes with the same error.
+- `ListVolumeProvider` normalises frames on demand (LRU of three) instead of
+  holding a float32 copy of every frame of a sequence.
+
+### Added
+- `subset_stride`: sample every k-th subset voxel per axis (k^3 fewer samples
+  per IC-GN iteration; the Hessian, the statistics and the uncertainty model
+  use the sampled set); 4.7x faster local steps at k = 2 with subset 32.
+  Also in the GUI's advanced parameters.
+- `scripts/make_optimization_report.py` (`reports/optimization.pdf`): before /
+  after stage timings, thread scaling, stride trade-off, initial-guess variants
+  and the rejected experiments (fastmath on the search kernel, FFT correlation
+  at the fine pyramid level, a trilinear-start IC-GN, skipping the finest
+  pyramid level).
+
 ## [0.3.1] - 2026-09-03
 
 GUI follow-ups: a 3-D view, mask drawing on the slices, batch runs.

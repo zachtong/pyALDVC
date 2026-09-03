@@ -48,25 +48,28 @@ STENCIL_NOISE_GAIN = float(np.sum(STENCIL7**2))  # variance gain of the gradient
 MIN_CORRECTED_FRACTION = 0.1  # keep at least this fraction of the translation diagonal after correction
 
 
-def subset_moment_matrix(half: tuple[int, int, int]) -> NDArray[np.float64]:
-    """``M = sum [X, Y, Z, 1][X, Y, Z, 1]^T`` over a full ``(2hx+1)(2hy+1)(2hz+1)`` subset."""
+def subset_moment_matrix(half: tuple[int, int, int], stride: int = 1) -> NDArray[np.float64]:
+    """``M = sum [X, Y, Z, 1][X, Y, Z, 1]^T`` over the sampled subset (every ``stride``-th voxel per axis)."""
     hx, hy, hz = (int(h) for h in half)
-    nx, ny, nz = 2 * hx + 1, 2 * hy + 1, 2 * hz + 1
+    ax = np.arange(-hx, hx + 1, int(stride))
+    ay = np.arange(-hy, hy + 1, int(stride))
+    az = np.arange(-hz, hz + 1, int(stride))
+    nx, ny, nz = ax.size, ay.size, az.size
     n = nx * ny * nz
-    sx2 = float(np.sum(np.arange(-hx, hx + 1) ** 2)) * ny * nz
-    sy2 = float(np.sum(np.arange(-hy, hy + 1) ** 2)) * nx * nz
-    sz2 = float(np.sum(np.arange(-hz, hz + 1) ** 2)) * nx * ny
+    sx2 = float(np.sum(ax**2)) * ny * nz
+    sy2 = float(np.sum(ay**2)) * nx * nz
+    sz2 = float(np.sum(az**2)) * nx * ny
     return np.diag([sx2, sy2, sz2, float(n)])
 
 
-def noise_hessian_pattern(half: tuple[int, int, int]) -> NDArray[np.float64]:
+def noise_hessian_pattern(half: tuple[int, int, int], stride: int = 1) -> NDArray[np.float64]:
     """``(12, 12)`` expectation of ``sum J_i J_i^T`` for unit-variance white gradient noise.
 
     Parameter ``p`` of ``P = [F.ravel(), u, v, w]`` is gradient component
     ``a_p`` times coordinate ``b_p`` (``b = 3`` for the translations):
     ``E[J J^T]_{pq} = delta(a_p, a_q) * M[b_p, b_q]``.
     """
-    M = subset_moment_matrix(half)
+    M = subset_moment_matrix(half, stride)
     comp = np.array([p // 3 for p in range(9)] + [0, 1, 2])
     coord = np.array([p % 3 for p in range(9)] + [3, 3, 3])
     pattern = np.zeros((N_DOF, N_DOF))
@@ -108,7 +111,7 @@ def displacement_uncertainty(
     H = np.array(ctx.H_all[idx], dtype=np.float64)
     zncc = np.asarray(zncc, dtype=np.float64)
     s2 = np.clip(1.0 - zncc[idx], 0.0, None) * ctx.bottomf[idx] ** 2 / ctx.n_valid[idx]
-    pattern = noise_hessian_pattern(ctx.half)
+    pattern = noise_hessian_pattern(ctx.half, int(getattr(ctx, "stride", 1)))
     # scale the pattern to the node's actual voxel count (masked subsets have fewer voxels)
     scale = ctx.n_valid[idx] / pattern[9, 9]
     if noise_correction:

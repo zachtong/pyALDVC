@@ -81,6 +81,7 @@ def subpb1_solver(
             float(para.icgn_dp_tol),
             int(para.icgn_max_iter),
             int(para.icgn_patience),
+            ctx.stride,
         )
     else:
         from .reference_kernels import icgn_3dof_batch_np
@@ -109,6 +110,7 @@ def subpb1_solver(
             float(para.icgn_dp_tol),
             int(para.icgn_max_iter),
             int(para.icgn_patience),
+            ctx.stride,
         )
     solve_time = time.perf_counter() - t0
     U = np.asarray(U, dtype=np.float64)

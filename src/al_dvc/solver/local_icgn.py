@@ -45,6 +45,7 @@ class LocalContext:
     n_valid: NDArray[np.int64]
     valid: NDArray[np.bool_]  # solver-valid nodes
     precompute_time: float
+    stride: int = 1  # subset sampling stride used for H, meanf, bottomf and n_valid
 
     @property
     def n_nodes(self) -> int:
@@ -66,6 +67,7 @@ def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara)
     t0 = time.perf_counter()
     coords_int = np.round(mesh.coordinates).astype(np.int64)
     hx, hy, hz = (int(w) // 2 for w in para.winsize)
+    stride = int(getattr(para, "subset_stride", 1))
     if _use_numba(para):
         from .numba_kernels import precompute_nodes
 
@@ -81,6 +83,7 @@ def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara)
             ref.mask,
             float(para.min_valid_ratio),
             float(para.hessian_cond_max),
+            stride,
         )
     else:
         from .reference_kernels import precompute_nodes_np
@@ -97,6 +100,7 @@ def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara)
             ref.mask,
             float(para.min_valid_ratio),
             float(para.hessian_cond_max),
+            stride,
         )
     valid = np.asarray(valid, dtype=bool) & np.asarray(mesh.node_valid, dtype=bool)
     dt = time.perf_counter() - t0
@@ -117,6 +121,7 @@ def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara)
         n_valid=np.asarray(n_valid),
         valid=valid,
         precompute_time=dt,
+        stride=stride,
     )
 
 
@@ -173,6 +178,7 @@ def local_icgn(
             float(para.icgn_dp_tol),
             int(para.icgn_max_iter),
             int(para.icgn_patience),
+            ctx.stride,
         )
     else:
         from .reference_kernels import icgn_12dof_batch_np
@@ -198,6 +204,7 @@ def local_icgn(
             float(para.icgn_dp_tol),
             int(para.icgn_max_iter),
             int(para.icgn_patience),
+            ctx.stride,
         )
     solve_time = time.perf_counter() - t0
 

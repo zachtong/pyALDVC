@@ -30,7 +30,7 @@ from ..utils.outlier_detection import universal_median_test
 
 logger = logging.getLogger(__name__)
 
-PYRAMID_FINE_RADIUS = 4
+PYRAMID_FINE_RADIUS = 2  # refinement radius at the finer levels; auto-expand covers the clipped peaks
 MIN_PYRAMID_SUBSET = 8
 DEFAULT_INIT_SUBSET = 16  # NCC template size used when init_subset is None (capped at winsize)
 CLIPPED_EXPAND_FRACTION = 0.05  # expand the search radius when more than this fraction of peaks is clipped
@@ -573,6 +573,7 @@ def pyramid_search(
     outlier_threshold: float = 2.0,
     auto_expand: bool = True,
     max_expand: int = 3,
+    fine_radius: int = PYRAMID_FINE_RADIUS,
 ) -> dict:
     """Coarse-to-fine NCC search. Returns ``disp`` (N, 3) in full-resolution voxels + info.
 
@@ -597,7 +598,7 @@ def pyramid_search(
         fl = block_downsample(f, fac) if fac > 1 else f
         gl = block_downsample(g, fac) if fac > 1 else g
         subset_l = tuple(max(MIN_PYRAMID_SUBSET, (w // fac) // 2 * 2) for w in subset)
-        rad_l = tuple(int(r) for r in radius) if lv == levels else (PYRAMID_FINE_RADIUS,) * 3
+        rad_l = tuple(int(r) for r in radius) if lv == levels else (int(fine_radius),) * 3
         coords_l = np.round(coords / fac).astype(np.int64)
         shift_l = np.round(disp_full / fac).astype(np.int64)
         res = ncc_search_expanding(fl, gl, coords_l, subset_l, rad_l, shift_l, auto_expand, max_expand)

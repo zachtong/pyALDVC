@@ -222,13 +222,29 @@ Total 21 V bytes (9 V with `gradient_mode="on_the_fly"`, at 15-20 % more
 local-step time). A 512^3 volume pair costs 2.8 GB (1.2 GB); 1024^3 costs
 22.5 GB (9.7 GB); 1536^3 costs 76 GB (33 GB). `memory_model` computes these
 numbers and the pipeline logs them at start. Frames stream from disk through
-`VolumeProvider` so only one reference and one deformed volume are resident.
+`VolumeProvider` so only one reference and one deformed volume are resident;
+`ListVolumeProvider` (in-memory sequences, the GUI) normalises on demand and
+keeps three normalised frames, not one per frame.
 
-Kernel cost per IC-GN iteration: `N * S` samples, each a 64-tap tricubic
-read plus ~30 flops. Measured numbers are in `reports/performance.pdf`
-(regenerate with `scripts/benchmark_performance.py`). The global step is
-negligible (PCG on a well-conditioned scalar system); the NCC initial guess
-costs ~0.3-0.6 ms per node and level.
+Kernel cost per IC-GN iteration: `N * S / stride^3` samples, each a 64-tap
+tricubic read plus ~30 flops; about 2.1 ns per sampled voxel and iteration
+wall clock on 24 threads (15x over one thread). The sampler keeps its 4-tap
+weights in scalars: a `np.empty(4)` per axis and sample is a heap allocation
+in Numba and made the sampler 2.6x slower. The ZNCC numerator is accumulated
+in the gradient pass (one read of the reference and its gradients per voxel
+and iteration). `subset_stride = k` samples every k-th voxel per axis of the
+subset (k^3 fewer samples; the Hessian, the ZNSSD statistics and the
+uncertainty moment matrix use the sampled set): the noise sensitivity of a
+subset with k^3 fewer voxels, the smoothing bias of the full span. Measured
+numbers are in `reports/performance.pdf` (`scripts/benchmark_performance.py`)
+and the optimisation study in `reports/optimization.pdf`
+(`scripts/make_optimization_report.py`, which also records what was tried and
+rejected: fastmath on the search kernel, FFT correlation at the fine pyramid
+level, a trilinear-start IC-GN, skipping the finest pyramid level). The global
+step is negligible (PCG on a well-conditioned scalar system); the NCC initial
+guess costs ~0.1 ms per node and level with the direct kernel (fine levels
+search radius 2, `pyramid_fine_radius`, and expand automatically when a peak
+is clipped).
 
 Parallelism: numba `prange` over nodes (no GIL, no per-node allocation in the
 loop except one `S`-sized scratch buffer per node), `scipy.fft` with

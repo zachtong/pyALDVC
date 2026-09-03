@@ -63,6 +63,7 @@ class DVCPara:
     init_subset: Triple | None = None  # NCC template size; None -> winsize
     global_shift: bool = True  # rigid pre-shift by phase correlation
     pyramid_levels: int = 0  # 0 = automatic
+    pyramid_fine_radius: int = 2  # NCC refinement radius at the finer pyramid levels (voxels of that level)
     ncc_auto_expand: bool = True  # grow search radius when peaks are clipped
     ncc_max_expand: int = 3  # max number of doublings
     init_outlier_threshold: float = 2.0  # universal median test (0 disables)
@@ -75,6 +76,7 @@ class DVCPara:
     # ZNCC (12-DOF) or of the step norm (3-DOF); 0 disables
     icgn_max_iter: int = 100
     interp_method: Literal["cubic", "bspline", "linear"] = "cubic"
+    subset_stride: int = 1  # sample every k-th subset voxel along each axis (k^3 fewer voxels per iteration)
     min_valid_ratio: float = 0.5  # min fraction of mask-valid voxels per subset
     local_outlier_threshold: float = 2.0  # median test after the local pass (0 disables); MATLAB default.
     # Flags ~10-15 % of nodes on noisy anisotropic scans, which
@@ -214,6 +216,15 @@ def validate_dvcpara(p: DVCPara) -> None:
         raise ValueError("icgn_patience must be >= 0 (0 disables stall detection).")
     if p.icgn_max_iter < 1:
         raise ValueError("icgn_max_iter must be >= 1.")
+    if int(p.pyramid_fine_radius) < 1:
+        raise ValueError("pyramid_fine_radius must be >= 1.")
+    if int(p.subset_stride) < 1:
+        raise ValueError(f"subset_stride must be >= 1 (got {p.subset_stride}).")
+    if int(p.subset_stride) > max(1, min(int(w) for w in p.winsize) // 4):
+        raise ValueError(
+            f"subset_stride {p.subset_stride} leaves fewer than 5 samples per axis for winsize {p.winsize}; "
+            "use a larger subset or a smaller stride."
+        )
     if p.interp_method not in ("cubic", "bspline", "linear"):
         raise ValueError(f"interp_method must be cubic|bspline|linear (got {p.interp_method!r}).")
     if not (0 < p.min_valid_ratio <= 1):

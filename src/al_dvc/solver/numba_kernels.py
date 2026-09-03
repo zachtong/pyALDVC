@@ -48,6 +48,12 @@ LM_DAMPING_3DOF = 1e-3
 # ---------------------------------------------------------------------------
 
 
+@njit(cache=JIT_CACHE, inline="always")
+def _subset_count(hx, hy, hz, stride):
+    """Number of sampled subset voxels for half-widths ``h`` and sampling ``stride``."""
+    return ((2 * hx) // stride + 1) * ((2 * hy) // stride + 1) * ((2 * hz) // stride + 1)
+
+
 @njit(cache=JIT_CACHE)
 def _cholesky12(H, L):
     """Cholesky ``H = L L^T`` for a 12x12 SPD matrix. Returns False if not SPD."""
@@ -181,7 +187,7 @@ def _grad_at(f, gx, gy, gz, zz, yy, xx):
 
 
 @njit(cache=JIT_CACHE)
-def _precompute_one(x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, cond_max, H, L):
+def _precompute_one(x0, y0, z0, hx, hy, hz, stride, f, gx, gy, gz, mask, min_valid_ratio, cond_max, H, L):
     """Fill ``H`` (12x12) and ``L`` for one node.
 
     Returns ``(meanf, bottomf, n_valid, ok)``.
@@ -200,13 +206,13 @@ def _precompute_one(x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio
     n_valid = 0
     sum_f = 0.0
     sum_f2 = 0.0
-    for dz in range(-hz, hz + 1):
+    for dz in range(-hz, hz + 1, stride):
         zz = z0 + dz
         Z = float(dz)
-        for dy in range(-hy, hy + 1):
+        for dy in range(-hy, hy + 1, stride):
             yy = y0 + dy
             Y = float(dy)
-            for dx in range(-hx, hx + 1):
+            for dx in range(-hx, hx + 1, stride):
                 xx = x0 + dx
                 if mask[zz, yy, xx] == 0:
                     continue
@@ -236,7 +242,7 @@ def _precompute_one(x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio
         for b in range(a):
             H[a, b] = H[b, a]
 
-    total = (2 * hx + 1) * (2 * hy + 1) * (2 * hz + 1)
+    total = _subset_count(hx, hy, hz, stride)
     if n_valid < 27 or n_valid < min_valid_ratio * total:
         return 0.0, 1.0, n_valid, False
 
@@ -267,7 +273,7 @@ def _precompute_one(x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio
 
 
 @njit(parallel=True, cache=JIT_CACHE)
-def precompute_nodes(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, cond_max):
+def precompute_nodes(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, cond_max, stride=1):
     """Parallel per-node precomputation.
 
     Args:
@@ -293,6 +299,7 @@ def precompute_nodes(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, c
             hx,
             hy,
             hz,
+            stride,
             f,
             gx,
             gy,
@@ -316,7 +323,7 @@ def precompute_nodes(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, c
 
 
 @njit(cache=JIT_CACHE)
-def _warp_and_sample(P, x0, y0, z0, hx, hy, hz, mask, f, g, mode, gbuf):
+def _warp_and_sample(P, x0, y0, z0, hx, hy, hz, stride, mask, f, g, mode, gbuf):
     """Sample the deformed volume over the warped subset into ``gbuf``.
 
     Voxels masked out in the reference (``mask == 0``) or whose sample hits a
@@ -350,13 +357,13 @@ def _warp_and_sample(P, x0, y0, z0, hx, hy, hz, mask, f, g, mode, gbuf):
     s1f = 0.0
     s2f = 0.0
     idx = 0
-    for dz in range(-hz, hz + 1):
+    for dz in range(-hz, hz + 1, stride):
         Z = float(dz)
         zz = z0 + dz
-        for dy in range(-hy, hy + 1):
+        for dy in range(-hy, hy + 1, stride):
             Y = float(dy)
             yy = y0 + dy
-            for dx in range(-hx, hx + 1):
+            for dx in range(-hx, hx + 1, stride):
                 if mask[zz, yy, x0 + dx] == 0:
                     gbuf[idx] = np.nan
                     idx += 1
@@ -395,15 +402,15 @@ def _warp_and_sample(P, x0, y0, z0, hx, hy, hz, mask, f, g, mode, gbuf):
 
 
 @njit(cache=JIT_CACHE)
-def _zncc_from_buffer(x0, y0, z0, hx, hy, hz, f, mask, gbuf, meanf, bottomf, meang, bottomg):
+def _zncc_from_buffer(x0, y0, z0, hx, hy, hz, stride, f, mask, gbuf, meanf, bottomf, meang, bottomg):
     """Zero-normalised cross-correlation between the reference subset and ``gbuf``."""
     s = 0.0
     idx = 0
-    for dz in range(-hz, hz + 1):
+    for dz in range(-hz, hz + 1, stride):
         zz = z0 + dz
-        for dy in range(-hy, hy + 1):
+        for dy in range(-hy, hy + 1, stride):
             yy = y0 + dy
-            for dx in range(-hx, hx + 1):
+            for dx in range(-hx, hx + 1, stride):
                 xx = x0 + dx
                 gv = gbuf[idx]
                 if gv == gv:
@@ -419,7 +426,7 @@ def _zncc_from_buffer(x0, y0, z0, hx, hy, hz, f, mask, gbuf, meanf, bottomf, mea
 
 @njit(cache=JIT_CACHE)
 def _icgn_12dof_single(
-    P, x0, y0, z0, hx, hy, hz, f, gx, gy, gz, mask, g, mode, L, meanf, bottomf, tol, dp_tol, max_iter, patience, gbuf
+    P, x0, y0, z0, hx, hy, hz, stride, f, gx, gy, gz, mask, g, mode, L, meanf, bottomf, tol, dp_tol, max_iter, patience, gbuf
 ):
     """Iterate one node in place. Returns ``(n_iter, status, zncc)``."""
     b = np.empty(12)
@@ -434,7 +441,9 @@ def _icgn_12dof_single(
     P_best = np.empty(12)
 
     for it in range(1, max_iter + 1):
-        ok, n_valid, meanf_d, bottomf_d, meang, bottomg = _warp_and_sample(P, x0, y0, z0, hx, hy, hz, mask, f, g, mode, gbuf)
+        ok, n_valid, meanf_d, bottomf_d, meang, bottomg = _warp_and_sample(
+            P, x0, y0, z0, hx, hy, hz, stride, mask, f, g, mode, gbuf
+        )
         if not ok:
             return it, (STATUS_OUT_OF_BOUNDS if n_valid == 0 else STATUS_INVALID_SUBSET), np.nan
 
@@ -444,13 +453,13 @@ def _icgn_12dof_single(
         inv_bg = 1.0 / bottomg
         s_cc = 0.0  # ZNCC numerator, accumulated in the same pass as the gradient
         idx = 0
-        for dz in range(-hz, hz + 1):
+        for dz in range(-hz, hz + 1, stride):
             Z = float(dz)
             zz = z0 + dz
-            for dy in range(-hy, hy + 1):
+            for dy in range(-hy, hy + 1, stride):
                 Y = float(dy)
                 yy = y0 + dy
-                for dx in range(-hx, hx + 1):
+                for dx in range(-hx, hx + 1, stride):
                     xx = x0 + dx
                     gv = gbuf[idx]
                     if gv != gv:
@@ -534,7 +543,27 @@ def _icgn_12dof_single(
 
 @njit(parallel=True, cache=JIT_CACHE)
 def icgn_12dof_parallel(
-    coords, P0, hx, hy, hz, f, gx, gy, gz, mask, g, mode, L_all, meanf_all, bottomf_all, valid, tol, dp_tol, max_iter, patience
+    coords,
+    P0,
+    hx,
+    hy,
+    hz,
+    f,
+    gx,
+    gy,
+    gz,
+    mask,
+    g,
+    mode,
+    L_all,
+    meanf_all,
+    bottomf_all,
+    valid,
+    tol,
+    dp_tol,
+    max_iter,
+    patience,
+    stride=1,
 ):
     """Parallel 12-DOF IC-GN over all nodes.
 
@@ -545,7 +574,7 @@ def icgn_12dof_parallel(
     n_iter = np.zeros(N, dtype=np.int32)
     status = np.full(N, STATUS_SKIPPED, dtype=np.int8)
     zncc = np.full(N, np.nan)
-    S = (2 * hx + 1) * (2 * hy + 1) * (2 * hz + 1)
+    S = _subset_count(hx, hy, hz, stride)
     for n in range(N):
         if not valid[n]:
             status[n] = STATUS_INVALID_SUBSET
@@ -577,6 +606,7 @@ def icgn_12dof_parallel(
             hx,
             hy,
             hz,
+            stride,
             f,
             gx,
             gy,
@@ -614,6 +644,7 @@ def _icgn_3dof_single(
     hx,
     hy,
     hz,
+    stride,
     f,
     gx,
     gy,
@@ -672,7 +703,9 @@ def _icgn_3dof_single(
     a22 = 1.0 + P[8]
 
     for it in range(1, max_iter + 1):
-        ok, n_valid, meanf_d, bottomf_d, meang, bottomg = _warp_and_sample(P, x0, y0, z0, hx, hy, hz, mask, f, g, mode, gbuf)
+        ok, n_valid, meanf_d, bottomf_d, meang, bottomg = _warp_and_sample(
+            P, x0, y0, z0, hx, hy, hz, stride, mask, f, g, mode, gbuf
+        )
         if not ok:
             return it, (STATUS_OUT_OF_BOUNDS if n_valid == 0 else STATUS_INVALID_SUBSET), np.nan
         b[0] = 0.0
@@ -682,11 +715,11 @@ def _icgn_3dof_single(
         inv_bg = 1.0 / bottomg
         s_cc = 0.0
         idx = 0
-        for dz in range(-hz, hz + 1):
+        for dz in range(-hz, hz + 1, stride):
             zz = z0 + dz
-            for dy in range(-hy, hy + 1):
+            for dy in range(-hy, hy + 1, stride):
                 yy = y0 + dy
-                for dx in range(-hx, hx + 1):
+                for dx in range(-hx, hx + 1, stride):
                     xx = x0 + dx
                     gv = gbuf[idx]
                     if gv != gv:
@@ -767,6 +800,7 @@ def icgn_3dof_parallel(
     dp_tol,
     max_iter,
     patience,
+    stride=1,
 ):
     """Parallel 3-DOF IC-GN (ADMM subproblem 1) over all nodes.
 
@@ -782,7 +816,7 @@ def icgn_3dof_parallel(
     n_iter = np.zeros(N, dtype=np.int32)
     status = np.full(N, STATUS_SKIPPED, dtype=np.int8)
     zncc = np.full(N, np.nan)
-    S = (2 * hx + 1) * (2 * hy + 1) * (2 * hz + 1)
+    S = _subset_count(hx, hy, hz, stride)
     for n in range(N):
         if not valid[n]:
             status[n] = STATUS_INVALID_SUBSET
@@ -820,6 +854,7 @@ def icgn_3dof_parallel(
             hx,
             hy,
             hz,
+            stride,
             f,
             gx,
             gy,
@@ -853,11 +888,11 @@ def icgn_3dof_parallel(
 
 
 @njit(parallel=True, cache=JIT_CACHE)
-def evaluate_zncc_parallel(coords, P_all, hx, hy, hz, f, mask, g, mode, meanf_all, bottomf_all, valid):
+def evaluate_zncc_parallel(coords, P_all, hx, hy, hz, f, mask, g, mode, meanf_all, bottomf_all, valid, stride=1):
     """ZNCC of each node's subset under the warp ``P_all[n]`` (NaN if invalid)."""
     N = coords.shape[0]
     out = np.full(N, np.nan)
-    S = (2 * hx + 1) * (2 * hy + 1) * (2 * hz + 1)
+    S = _subset_count(hx, hy, hz, stride)
     for n in prange(N):
         if not valid[n]:
             continue
@@ -870,6 +905,7 @@ def evaluate_zncc_parallel(coords, P_all, hx, hy, hz, f, mask, g, mode, meanf_al
             hx,
             hy,
             hz,
+            stride,
             mask,
             f,
             g,
@@ -878,5 +914,7 @@ def evaluate_zncc_parallel(coords, P_all, hx, hy, hz, f, mask, g, mode, meanf_al
         )
         if not ok:
             continue
-        out[n] = _zncc_from_buffer(coords[n, 0], coords[n, 1], coords[n, 2], hx, hy, hz, f, mask, gbuf, mf, bf, meang, bottomg)
+        out[n] = _zncc_from_buffer(
+            coords[n, 0], coords[n, 1], coords[n, 2], hx, hy, hz, stride, f, mask, gbuf, mf, bf, meang, bottomg
+        )
     return out
