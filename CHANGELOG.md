@@ -4,7 +4,10 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] - 2026-09-03
+
+"Usable without code": a standalone graphical application and a portable
+Windows bundle that needs no Python installation.
 
 ### Added
 - Graphical application `al-dvc-gui` (`al-dvc gui`, `pip install al-dvc[gui]`):
