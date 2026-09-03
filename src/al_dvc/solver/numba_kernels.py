@@ -440,6 +440,9 @@ def _icgn_12dof_single(
 
         for k in range(12):
             b[k] = 0.0
+        inv_bf = 1.0 / bottomf_d
+        inv_bg = 1.0 / bottomg
+        s_cc = 0.0  # ZNCC numerator, accumulated in the same pass as the gradient
         idx = 0
         for dz in range(-hz, hz + 1):
             Z = float(dz)
@@ -454,7 +457,10 @@ def _icgn_12dof_single(
                         idx += 1
                         continue
                     X = float(dx)
-                    res = (float(f[zz, yy, xx]) - meanf_d) / bottomf_d - (gv - meang) / bottomg
+                    fd = float(f[zz, yy, xx]) - meanf_d
+                    gd = gv - meang
+                    s_cc += fd * gd
+                    res = fd * inv_bf - gd * inv_bg
                     idx += 1
                     dfx, dfy, dfz = _grad_at(f, gx, gy, gz, zz, yy, xx)
                     gxv = dfx * res
@@ -483,7 +489,7 @@ def _icgn_12dof_single(
             norm_init = norm_abs
         norm_rel = norm_abs / norm_init if norm_init > 1e-300 else 0.0
 
-        zncc = _zncc_from_buffer(x0, y0, z0, hx, hy, hz, f, mask, gbuf, meanf_d, bottomf_d, meang, bottomg)
+        zncc = s_cc * inv_bf * inv_bg
         if norm_rel < tol or norm_abs < ABS_TOL:
             return it, STATUS_CONVERGED, zncc
 
@@ -672,6 +678,9 @@ def _icgn_3dof_single(
         b[0] = 0.0
         b[1] = 0.0
         b[2] = 0.0
+        inv_bf = 1.0 / bottomf_d
+        inv_bg = 1.0 / bottomg
+        s_cc = 0.0
         idx = 0
         for dz in range(-hz, hz + 1):
             zz = z0 + dz
@@ -683,7 +692,10 @@ def _icgn_3dof_single(
                     if gv != gv:
                         idx += 1
                         continue
-                    res = (float(f[zz, yy, xx]) - meanf_d) / bottomf_d - (gv - meang) / bottomg
+                    fd = float(f[zz, yy, xx]) - meanf_d
+                    gd = gv - meang
+                    s_cc += fd * gd
+                    res = fd * inv_bf - gd * inv_bg
                     idx += 1
                     dfx, dfy, dfz = _grad_at(f, gx, gy, gz, zz, yy, xx)
                     b[0] += dfx * res
@@ -700,7 +712,7 @@ def _icgn_3dof_single(
         if norm_init < 0.0:
             norm_init = norm_abs
         norm_rel = norm_abs / norm_init if norm_init > 1e-300 else 0.0
-        zncc = _zncc_from_buffer(x0, y0, z0, hx, hy, hz, f, mask, gbuf, meanf_d, bottomf_d, meang, bottomg)
+        zncc = s_cc * inv_bf * inv_bg
         # MATLAB: break when normOfWNew < tol or normOfWNew*normOfWNewInit < mu*1e-4
         if norm_rel < tol or norm_abs < mu * 1e-4:
             return it, STATUS_CONVERGED, zncc

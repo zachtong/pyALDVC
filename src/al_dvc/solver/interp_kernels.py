@@ -32,23 +32,40 @@ SAMPLE_HI_MARGIN = 2.0
 
 
 @njit(cache=JIT_CACHE, inline="always")
-def _keys_weights(t, w):
-    """Catmull-Rom (Keys, a=-0.5) weights for taps -1, 0, 1, 2."""
-    w[0] = ((-0.5 * t + 1.0) * t - 0.5) * t
-    w[1] = (1.5 * t - 2.5) * t * t + 1.0
-    w[2] = ((-1.5 * t + 2.0) * t + 0.5) * t
-    w[3] = (0.5 * t - 0.5) * t * t
+def _keys_weights(t):
+    """Catmull-Rom (Keys, a=-0.5) weights for taps -1, 0, 1, 2 as four scalars."""
+    w0 = ((-0.5 * t + 1.0) * t - 0.5) * t
+    w1 = (1.5 * t - 2.5) * t * t + 1.0
+    w2 = ((-1.5 * t + 2.0) * t + 0.5) * t
+    w3 = (0.5 * t - 0.5) * t * t
+    return w0, w1, w2, w3
 
 
 @njit(cache=JIT_CACHE, inline="always")
-def _bspline_weights(t, w):
-    """Cubic B-spline basis weights for taps -1, 0, 1, 2."""
+def _bspline_weights(t):
+    """Cubic B-spline basis weights for taps -1, 0, 1, 2 as four scalars."""
     t2 = t * t
     t3 = t2 * t
-    w[0] = (1.0 - 3.0 * t + 3.0 * t2 - t3) / 6.0
-    w[1] = (4.0 - 6.0 * t2 + 3.0 * t3) / 6.0
-    w[2] = (1.0 + 3.0 * t + 3.0 * t2 - 3.0 * t3) / 6.0
-    w[3] = t3 / 6.0
+    w0 = (1.0 - 3.0 * t + 3.0 * t2 - t3) / 6.0
+    w1 = (4.0 - 6.0 * t2 + 3.0 * t3) / 6.0
+    w2 = (1.0 + 3.0 * t + 3.0 * t2 - 3.0 * t3) / 6.0
+    w3 = t3 / 6.0
+    return w0, w1, w2, w3
+
+
+@njit(cache=JIT_CACHE, inline="always")
+def _row4(vol, zz, yy, xb, wx0, wx1, wx2, wx3):
+    return vol[zz, yy, xb] * wx0 + vol[zz, yy, xb + 1] * wx1 + vol[zz, yy, xb + 2] * wx2 + vol[zz, yy, xb + 3] * wx3
+
+
+@njit(cache=JIT_CACHE, inline="always")
+def _plane4(vol, zz, yb, xb, wx0, wx1, wx2, wx3, wy0, wy1, wy2, wy3):
+    return (
+        _row4(vol, zz, yb, xb, wx0, wx1, wx2, wx3) * wy0
+        + _row4(vol, zz, yb + 1, xb, wx0, wx1, wx2, wx3) * wy1
+        + _row4(vol, zz, yb + 2, xb, wx0, wx1, wx2, wx3) * wy2
+        + _row4(vol, zz, yb + 3, xb, wx0, wx1, wx2, wx3) * wy3
+    )
 
 
 @njit(cache=JIT_CACHE, inline="always")
@@ -56,7 +73,9 @@ def sample_volume(vol, z, y, x, mode):
     """Interpolate ``vol`` at real coordinate ``(z, y, x)``.
 
     The caller guarantees ``1 <= c <= n-2`` on every axis (see
-    :func:`interp_margin_ok`); this function does not re-check.
+    :func:`interp_margin_ok`); this function does not re-check. The 4-tap
+    weights are scalars on purpose: a ``np.empty(4)`` per axis and sample
+    costs a heap allocation each, which made the sampler 2.6x slower.
     """
     nz = vol.shape[0]
     ny = vol.shape[1]
@@ -86,31 +105,23 @@ def sample_volume(vol, z, y, x, mode):
         c1 = c01 * (1.0 - fy) + c11 * fy
         return c0 * (1.0 - fz) + c1 * fz
 
-    wx = np.empty(4)
-    wy = np.empty(4)
-    wz = np.empty(4)
     if mode == INTERP_CUBIC:
-        _keys_weights(fx, wx)
-        _keys_weights(fy, wy)
-        _keys_weights(fz, wz)
+        wx0, wx1, wx2, wx3 = _keys_weights(fx)
+        wy0, wy1, wy2, wy3 = _keys_weights(fy)
+        wz0, wz1, wz2, wz3 = _keys_weights(fz)
     else:
-        _bspline_weights(fx, wx)
-        _bspline_weights(fy, wy)
-        _bspline_weights(fz, wz)
-
-    val = 0.0
-    for k in range(4):
-        zz = iz - 1 + k
-        wzk = wz[k]
-        for j in range(4):
-            yy = iy - 1 + j
-            wyj = wy[j] * wzk
-            xb = ix - 1
-            row = (
-                vol[zz, yy, xb] * wx[0] + vol[zz, yy, xb + 1] * wx[1] + vol[zz, yy, xb + 2] * wx[2] + vol[zz, yy, xb + 3] * wx[3]
-            )
-            val += wyj * row
-    return val
+        wx0, wx1, wx2, wx3 = _bspline_weights(fx)
+        wy0, wy1, wy2, wy3 = _bspline_weights(fy)
+        wz0, wz1, wz2, wz3 = _bspline_weights(fz)
+    xb = ix - 1
+    yb = iy - 1
+    zb = iz - 1
+    return (
+        _plane4(vol, zb, yb, xb, wx0, wx1, wx2, wx3, wy0, wy1, wy2, wy3) * wz0
+        + _plane4(vol, zb + 1, yb, xb, wx0, wx1, wx2, wx3, wy0, wy1, wy2, wy3) * wz1
+        + _plane4(vol, zb + 2, yb, xb, wx0, wx1, wx2, wx3, wy0, wy1, wy2, wy3) * wz2
+        + _plane4(vol, zb + 3, yb, xb, wx0, wx1, wx2, wx3, wy0, wy1, wy2, wy3) * wz3
+    )
 
 
 @njit(cache=JIT_CACHE, inline="always")
