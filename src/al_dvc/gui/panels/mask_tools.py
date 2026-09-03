@@ -1,0 +1,226 @@
+"""Toolbar for drawing masks on the slice viewer.
+
+The toolbar owns the drawing settings (tool, add/cut, depth rule, brush
+radius) and the edit buttons (undo, redo, invert, fill, clear, save); the
+viewer reads :meth:`MaskToolbar.settings` when the mouse touches a slice
+and turns the gesture into a :class:`~al_dvc.gui.mask_editor.MaskOp`.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ..app_state import AppState
+from ..mask_editor import MaskOp
+
+TOOLS = ("none", "rectangle", "ellipse", "polygon", "brush")
+DEPTHS = ("all", "current", "range")
+TARGETS = ("current", "all")
+MASK_FILTER = "Mask volumes (*.tif *.tiff *.npy);;All files (*)"
+
+
+@dataclass(frozen=True)
+class DrawSettings:
+    tool: str
+    mode: str
+    depth: str
+    depth_range: tuple[int, int]
+    radius: int
+
+
+class MaskToolbar(QWidget):
+    """Tool / mode / depth selection and the edit buttons."""
+
+    def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._state = state
+        self.tool = QComboBox()
+        for key in TOOLS:
+            self.tool.addItem(key, key)
+        self.mode = QComboBox()
+        for key in ("add", "cut"):
+            self.mode.addItem(key, key)
+        self.depth = QComboBox()
+        for key in DEPTHS:
+            self.depth.addItem(key, key)
+        self.depth_from = QSpinBox()
+        self.depth_to = QSpinBox()
+        for s in (self.depth_from, self.depth_to):
+            s.setRange(0, 100000)
+        self.radius = QSpinBox()
+        self.radius.setRange(1, 200)
+        self.radius.setValue(4)
+        self.target = QComboBox()
+        for key in TARGETS:
+            self.target.addItem(key, key)
+        self.show_mask = QCheckBox()
+        self.show_mask.setChecked(state.show_mask)
+        self._btn = {k: QPushButton() for k in ("undo", "redo", "invert", "fill", "clear", "remove", "save")}
+        self._labels = {k: QLabel() for k in ("tool", "mode", "depth", "to", "radius", "target")}
+        self._status = QLabel()
+        self._status.setObjectName("hint")
+
+        row1 = QHBoxLayout()
+        for key, w in [("tool", self.tool), ("mode", self.mode), ("depth", self.depth)]:
+            row1.addWidget(self._labels[key])
+            row1.addWidget(w)
+        row1.addWidget(self.depth_from)
+        row1.addWidget(self._labels["to"])
+        row1.addWidget(self.depth_to)
+        row1.addWidget(self._labels["radius"])
+        row1.addWidget(self.radius)
+        row1.addStretch(1)
+        row2 = QHBoxLayout()
+        for key in ("undo", "redo", "invert", "fill", "clear", "remove", "save"):
+            row2.addWidget(self._btn[key])
+        row2.addWidget(self._labels["target"])
+        row2.addWidget(self.target)
+        row2.addWidget(self.show_mask)
+        row2.addWidget(self._status, stretch=1)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addLayout(row1)
+        layout.addLayout(row2)
+
+        self._btn["undo"].clicked.connect(self._state.undo_mask)
+        self._btn["redo"].clicked.connect(self._state.redo_mask)
+        self._btn["invert"].clicked.connect(lambda: self._state.apply_mask_op(MaskOp("invert")))
+        self._btn["fill"].clicked.connect(lambda: self._state.apply_mask_op(MaskOp("fill")))
+        self._btn["clear"].clicked.connect(lambda: self._state.apply_mask_op(MaskOp("empty")))
+        self._btn["remove"].clicked.connect(lambda: self._state.remove_mask())
+        self._btn["save"].clicked.connect(self._on_save)
+        self.target.currentIndexChanged.connect(lambda i: self._state.set_mask_display(target=TARGETS[i]))
+        self.show_mask.toggled.connect(lambda v: self._state.set_mask_display(show=bool(v)))
+        self.depth.currentIndexChanged.connect(lambda _i: self._update_enabled())
+        self.tool.currentIndexChanged.connect(lambda _i: self._update_enabled())
+        self._state.mask_changed.connect(self.refresh)
+        self._state.volumes_changed.connect(self.refresh)
+        self._state.current_frame_changed.connect(lambda _i: self.refresh())
+        self.retranslate_ui()
+        self.refresh()
+
+    # ------------------------------------------------------------------ settings
+    def settings(self) -> DrawSettings:
+        return DrawSettings(
+            tool=str(self.tool.currentData()),
+            mode=str(self.mode.currentData()),
+            depth=str(self.depth.currentData()),
+            depth_range=(int(self.depth_from.value()), int(self.depth_to.value())),
+            radius=int(self.radius.value()),
+        )
+
+    def set_tool(self, tool: str) -> None:
+        if tool not in TOOLS:
+            raise ValueError(f"tool must be one of {TOOLS}, got {tool!r}")
+        self.tool.setCurrentIndex(TOOLS.index(tool))
+
+    def set_depth(self, kind: str, first: int | None = None, last: int | None = None) -> None:
+        if kind not in DEPTHS:
+            raise ValueError(f"depth must be one of {DEPTHS}, got {kind!r}")
+        self.depth.setCurrentIndex(DEPTHS.index(kind))
+        if first is not None:
+            self.depth_from.setValue(int(first))
+        if last is not None:
+            self.depth_to.setValue(int(last))
+
+    # ------------------------------------------------------------------ actions
+    def _on_save(self) -> None:
+        if self._state.current_mask() is None:
+            return
+        entry = self._state.volumes[self._state.current_frame] if self._state.volumes else None
+        default = (entry.path.rsplit(".", 1)[0] + "_mask.tif") if entry is not None and entry.path else "mask.tif"
+        path, _ = QFileDialog.getSaveFileName(self, self.tr("Save mask"), default, MASK_FILTER)
+        if path:
+            try:
+                out = self._state.save_mask(path)
+            except Exception as exc:
+                self._state.log(f"saving the mask failed: {exc}", "error")
+                return
+            self._state.log(self.tr("Mask saved: {path}").format(path=out))
+
+    # ------------------------------------------------------------------ view
+    def refresh(self) -> None:
+        ed = self._state.mask_editor
+        has_volume = bool(self._state.volumes)
+        self._btn["undo"].setEnabled(ed is not None and ed.can_undo)
+        self._btn["redo"].setEnabled(ed is not None and ed.can_redo)
+        for key in ("invert", "fill", "clear"):
+            self._btn[key].setEnabled(has_volume)
+        mask = self._state.current_mask() if has_volume else None
+        self._btn["save"].setEnabled(mask is not None)
+        self._btn["remove"].setEnabled(mask is not None)
+        if mask is None:
+            self._status.setText(self.tr("no mask") if has_volume else "")
+        else:
+            cov = 100.0 * float(mask.mean())
+            n_ops = len(ed.ops) if ed is not None else 0
+            self._status.setText(self.tr("material {cov:.1f} %, {n} operation(s)").format(cov=cov, n=n_ops))
+        self._update_enabled()
+
+    def _update_enabled(self) -> None:
+        has_volume = bool(self._state.volumes)
+        drawing = has_volume and self.tool.currentData() != "none"
+        for w in (self.tool, self.target, self.show_mask):
+            w.setEnabled(has_volume)
+        self.mode.setEnabled(drawing)
+        self.depth.setEnabled(drawing)
+        rng = drawing and self.depth.currentData() == "range"
+        self.depth_from.setEnabled(rng)
+        self.depth_to.setEnabled(rng)
+        self.radius.setEnabled(drawing and self.tool.currentData() == "brush")
+
+    def retranslate_ui(self) -> None:
+        self._labels["tool"].setText(self.tr("Draw"))
+        self._labels["mode"].setText(self.tr("Mode"))
+        self._labels["depth"].setText(self.tr("Depth"))
+        self._labels["to"].setText(self.tr("to"))
+        self._labels["radius"].setText(self.tr("Brush"))
+        self._labels["target"].setText(self.tr("Apply to"))
+        tools = {
+            "none": self.tr("(off)"),
+            "rectangle": self.tr("Rectangle"),
+            "ellipse": self.tr("Ellipse"),
+            "polygon": self.tr("Polygon"),
+            "brush": self.tr("Brush"),
+        }
+        for i, key in enumerate(TOOLS):
+            self.tool.setItemText(i, tools[key])
+        self.mode.setItemText(0, self.tr("Add"))
+        self.mode.setItemText(1, self.tr("Cut"))
+        depths = {"all": self.tr("All slices"), "current": self.tr("Current slice"), "range": self.tr("Range")}
+        for i, key in enumerate(DEPTHS):
+            self.depth.setItemText(i, depths[key])
+        self.target.setItemText(0, self.tr("Current frame"))
+        self.target.setItemText(1, self.tr("All frames"))
+        texts = {
+            "undo": self.tr("Undo"),
+            "redo": self.tr("Redo"),
+            "invert": self.tr("Invert"),
+            "fill": self.tr("Fill"),
+            "clear": self.tr("Clear"),
+            "remove": self.tr("Remove mask"),
+            "save": self.tr("Save mask..."),
+        }
+        for key, text in texts.items():
+            self._btn[key].setText(text)
+        self.show_mask.setText(self.tr("Show mask"))
+        self.tool.setToolTip(
+            self.tr(
+                "Draw on any of the three slices. Rectangle / ellipse: drag. Polygon: click the vertices, "
+                "right-click to close, Esc to cancel. Brush: drag. True (material) is kept; the excluded region is tinted red."
+            )
+        )
+        self.depth.setToolTip(self.tr("Slices along the normal of the plane you draw on that the shape is applied to"))
+        self.refresh()

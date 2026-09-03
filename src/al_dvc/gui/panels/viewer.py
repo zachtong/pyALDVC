@@ -1,17 +1,29 @@
-"""Three-plane slice viewer: the current volume with an optional result field overlay."""
+"""Three-plane slice viewer: the current volume, result overlays, and mask drawing."""
 
 from __future__ import annotations
 
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.colors import ListedColormap
 from matplotlib.figure import Figure
+from matplotlib.patches import Ellipse, Rectangle
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
 from al_dvc.export.export_utils import field_array
 
 from ..app_state import AppState
+from ..mask_editor import MaskOp
 from ..theme import COLORS
+from .mask_tools import MaskToolbar
+
+PLANE_OF_AXIS = ("xy", "xz", "yz")  # axes[0], axes[1], axes[2]
+NORMAL_OF_PLANE = {"xy": "z", "xz": "y", "yz": "x"}
+MASK_TINT = ListedColormap([[1.0, 0.25, 0.25, 1.0]])
+MASK_EDGE = "#ff5555"
+PREVIEW_COLOR = "#ffd166"
+BRUSH_MIN_MOVE = 0.5  # voxels between recorded stroke points
+LEFT, RIGHT = 1, 3
 
 
 class SliceViewer(QWidget):
@@ -30,8 +42,13 @@ class SliceViewer(QWidget):
         self._cbar = None
         self.sliders: dict[str, QSlider] = {}
         self._slider_labels: dict[str, QLabel] = {}
+        self.mask_tools = MaskToolbar(state)
+        # drawing gesture in progress: plane, shape, points (h, v), preview artists
+        self._gesture: dict | None = None
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.mask_tools)
         layout.addWidget(self.canvas, stretch=1)
         rows = QHBoxLayout()
         for axis in ("z", "y", "x"):
@@ -51,15 +68,23 @@ class SliceViewer(QWidget):
         self._empty.setObjectName("hint")
         layout.addWidget(self._empty)
 
+        self.canvas.mpl_connect("button_press_event", self._on_press)
+        self.canvas.mpl_connect("motion_notify_event", self._on_motion)
+        self.canvas.mpl_connect("button_release_event", self._on_release)
+        self.canvas.mpl_connect("key_press_event", self._on_key)
+        self.canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+
         self._state.volumes_changed.connect(self._on_volumes_changed)
         self._state.current_frame_changed.connect(lambda _i: self._on_volumes_changed())
         self._state.results_changed.connect(self.redraw)
         self._state.display_changed.connect(self.redraw)
+        self._state.mask_changed.connect(self.redraw)
         self.retranslate_ui()
         self._on_volumes_changed()
 
     # ------------------------------------------------------------------ data
     def _on_volumes_changed(self) -> None:
+        self._cancel_gesture()
         idx = self._state.current_frame
         if not self._state.volumes or idx >= len(self._state.volumes):
             self._volume = None
@@ -89,10 +114,21 @@ class SliceViewer(QWidget):
             s.setValue(min(cur, n - 1) if cur is not None else n // 2)
             s.blockSignals(False)
             self._state.slice_index[axis] = s.value()
+        self.mask_tools.depth_from.setMaximum(max(nz, ny, nx) - 1)
+        self.mask_tools.depth_to.setMaximum(max(nz, ny, nx) - 1)
         self.redraw()
 
     def _on_slider(self, axis: str, value: int) -> None:
         self._state.set_slice(axis, int(value))  # emits display_changed -> redraw here and in the 3-D view
+
+    def slice_indices(self) -> tuple[int, int, int]:
+        """``(iz, iy, ix)`` of the displayed slices (clipped to the volume)."""
+        nz, ny, nx = self._volume.shape if self._volume is not None else (1, 1, 1)
+        si = self._state.slice_index
+        iz = int(np.clip(si.get("z") if si.get("z") is not None else nz // 2, 0, nz - 1))
+        iy = int(np.clip(si.get("y") if si.get("y") is not None else ny // 2, 0, ny - 1))
+        ix = int(np.clip(si.get("x") if si.get("x") is not None else nx // 2, 0, nx - 1))
+        return iz, iy, ix
 
     # ------------------------------------------------------------------ drawing
     def _field_grid(self):
@@ -127,9 +163,7 @@ class SliceViewer(QWidget):
         self._empty.setVisible(False)
         vol = self._volume
         nz, ny, nx = vol.shape
-        iz = int(np.clip(self._state.slice_index.get("z") or nz // 2, 0, nz - 1))
-        iy = int(np.clip(self._state.slice_index.get("y") or ny // 2, 0, ny - 1))
-        ix = int(np.clip(self._state.slice_index.get("x") or nx // 2, 0, nx - 1))
+        iz, iy, ix = self.slice_indices()
         self._slider_labels["z"].setText(f"z = {iz}")
         self._slider_labels["y"].setText(f"y = {iy}")
         self._slider_labels["x"].setText(f"x = {ix}")
@@ -145,6 +179,7 @@ class SliceViewer(QWidget):
             ax.set_title(title, color=COLORS.TEXT_SECONDARY, fontsize=8)
             ax.set_xlabel(xl, color=COLORS.TEXT_SECONDARY, fontsize=7)
             ax.set_ylabel(yl, color=COLORS.TEXT_SECONDARY, fontsize=7)
+        self._draw_mask(iz, iy, ix)
         if overlay is not None:
             grid, mesh, label = overlay
             x0, y0, z0 = mesh.x0, mesh.y0, mesh.z0
@@ -187,5 +222,202 @@ class SliceViewer(QWidget):
         self.axes[2].axvline(iy, color=COLORS.ACCENT, lw=0.5, alpha=0.6)
         self.canvas.draw_idle()
 
+    def _draw_mask(self, iz: int, iy: int, ix: int) -> None:
+        """Tint the excluded (False) region of the mask on the three slices."""
+        if not self._state.show_mask:
+            return
+        mask = self._state.current_mask()
+        if mask is None or self._volume is None or mask.shape != self._volume.shape:
+            return
+        alpha = float(self._state.mask_alpha)
+        for ax, m2d in ((self.axes[0], mask[iz]), (self.axes[1], mask[:, iy, :]), (self.axes[2], mask[:, :, ix])):
+            h, w = m2d.shape
+            excluded = np.ma.masked_where(m2d, np.ones_like(m2d, dtype=np.float32))
+            ax.imshow(
+                excluded,
+                cmap=MASK_TINT,
+                origin="lower",
+                alpha=alpha,
+                extent=[-0.5, w - 0.5, -0.5, h - 0.5],
+                interpolation="nearest",
+            )
+            if m2d.any() and not m2d.all():
+                ax.contour(m2d.astype(np.float32), levels=[0.5], colors=[MASK_EDGE], linewidths=0.6)
+
+    # ------------------------------------------------------------------ mouse gestures
+    def _plane_at(self, event) -> str | None:
+        if event.inaxes is None or event.xdata is None or event.ydata is None:
+            return None
+        for ax, plane in zip(self.axes, PLANE_OF_AXIS):
+            if event.inaxes is ax:
+                return plane
+        return None
+
+    def _depth_for(self, plane: str) -> tuple[int, int] | None:
+        s = self.mask_tools.settings()
+        if s.depth == "all":
+            return None
+        if s.depth == "current":
+            iz, iy, ix = self.slice_indices()
+            i = {"z": iz, "y": iy, "x": ix}[NORMAL_OF_PLANE[plane]]
+            return (i, i)
+        first, last = sorted(s.depth_range)
+        return (first, last)
+
+    def _on_press(self, event) -> None:
+        if self._volume is None:
+            return
+        s = self.mask_tools.settings()
+        plane = self._plane_at(event)
+        if s.tool == "none" or plane is None:
+            return
+        try:
+            self._state.ensure_mask_editor()
+        except ValueError as exc:
+            self._state.log(str(exc), "warning")
+            return
+        p = (float(event.xdata), float(event.ydata))
+        if s.tool == "polygon":
+            if event.button == RIGHT or getattr(event, "dblclick", False):
+                self._finish_polygon(plane)
+                return
+            if event.button != LEFT:
+                return
+            if self._gesture is None or self._gesture["plane"] != plane:
+                self._cancel_gesture()
+                self._gesture = {"plane": plane, "shape": "polygon", "points": [p], "artists": []}
+            else:
+                self._gesture["points"].append(p)
+            self._update_preview()
+            return
+        if event.button != LEFT:
+            return
+        self._cancel_gesture()
+        self._gesture = {"plane": plane, "shape": s.tool, "points": [p], "artists": []}
+        self._update_preview()
+
+    def _on_motion(self, event) -> None:
+        g = self._gesture
+        if g is None or g["shape"] == "polygon":
+            return
+        if self._plane_at(event) != g["plane"]:
+            return
+        p = (float(event.xdata), float(event.ydata))
+        if g["shape"] == "brush":
+            last = g["points"][-1]
+            if abs(p[0] - last[0]) + abs(p[1] - last[1]) >= BRUSH_MIN_MOVE:
+                g["points"].append(p)
+        else:
+            g["points"] = [g["points"][0], p]
+        self._update_preview()
+
+    def _on_release(self, event) -> None:
+        g = self._gesture
+        if g is None or g["shape"] == "polygon" or event.button != LEFT:
+            return
+        if self._plane_at(event) == g["plane"]:
+            p = (float(event.xdata), float(event.ydata))
+            if g["shape"] == "brush":
+                g["points"].append(p)
+            else:
+                g["points"] = [g["points"][0], p]
+        self._commit_gesture()
+
+    def _on_key(self, event) -> None:
+        if event.key == "escape":
+            self._cancel_gesture()
+            self.canvas.draw_idle()
+        elif event.key == "enter" and self._gesture is not None and self._gesture["shape"] == "polygon":
+            self._finish_polygon(self._gesture["plane"])
+
+    def _finish_polygon(self, plane: str) -> None:
+        g = self._gesture
+        if g is None or g["shape"] != "polygon" or g["plane"] != plane:
+            return
+        if len(g["points"]) < 3:
+            self._cancel_gesture()
+            self.canvas.draw_idle()
+            return
+        self._commit_gesture()
+
+    def _commit_gesture(self) -> None:
+        g = self._gesture
+        self._gesture = None
+        if g is None:
+            return
+        self._remove_artists(g)
+        s = self.mask_tools.settings()
+        pts = g["points"]
+        if g["shape"] in ("rectangle", "ellipse") and len(pts) < 2:
+            self.canvas.draw_idle()
+            return
+        try:
+            op = MaskOp(
+                shape=g["shape"],
+                plane=g["plane"],
+                points=tuple(pts),
+                depth=self._depth_for(g["plane"]),
+                mode=s.mode,
+                radius=float(s.radius),
+            )
+        except ValueError as exc:
+            self._state.log(f"ignored shape: {exc}", "warning")
+            self.canvas.draw_idle()
+            return
+        self._state.apply_mask_op(op)  # emits mask_changed -> redraw
+
+    def _cancel_gesture(self) -> None:
+        if self._gesture is not None:
+            self._remove_artists(self._gesture)
+            self._gesture = None
+
+    @staticmethod
+    def _remove_artists(g: dict) -> None:
+        for a in g.get("artists", []):
+            try:
+                a.remove()
+            except Exception:
+                pass
+        g["artists"] = []
+
+    def _update_preview(self) -> None:
+        g = self._gesture
+        if g is None:
+            return
+        self._remove_artists(g)
+        ax = self.axes[PLANE_OF_AXIS.index(g["plane"])]
+        pts = np.asarray(g["points"], dtype=float)
+        if g["shape"] == "rectangle" and len(pts) == 2:
+            (h1, v1), (h2, v2) = pts
+            g["artists"].append(
+                ax.add_patch(
+                    Rectangle((min(h1, h2), min(v1, v2)), abs(h2 - h1), abs(v2 - v1), fill=False, ec=PREVIEW_COLOR, lw=1.0)
+                )
+            )
+        elif g["shape"] == "ellipse" and len(pts) == 2:
+            (h1, v1), (h2, v2) = pts
+            g["artists"].append(
+                ax.add_patch(
+                    Ellipse(((h1 + h2) / 2, (v1 + v2) / 2), abs(h2 - h1), abs(v2 - v1), fill=False, ec=PREVIEW_COLOR, lw=1.0)
+                )
+            )
+        elif g["shape"] == "polygon":
+            closed = np.vstack([pts, pts[:1]]) if len(pts) > 2 else pts
+            g["artists"].extend(ax.plot(closed[:, 0], closed[:, 1], "-o", color=PREVIEW_COLOR, lw=1.0, ms=3))
+        elif g["shape"] == "brush":
+            lw = max(1.0, 2.0 * self.mask_tools.settings().radius * self._points_per_voxel(ax))
+            g["artists"].extend(ax.plot(pts[:, 0], pts[:, 1], "-", color=PREVIEW_COLOR, lw=lw, alpha=0.5, solid_capstyle="round"))
+        self.canvas.draw_idle()
+
+    def _points_per_voxel(self, ax) -> float:
+        """Display points per data unit along x (line widths are in points)."""
+        try:
+            p0 = ax.transData.transform((0.0, 0.0))
+            p1 = ax.transData.transform((1.0, 0.0))
+            return float(abs(p1[0] - p0[0])) * 72.0 / float(self.figure.dpi)
+        except Exception:
+            return 1.0
+
     def retranslate_ui(self) -> None:
         self._empty.setText(self.tr("No volume loaded. Use 'Add volumes...' to start."))
+        self.mask_tools.retranslate_ui()

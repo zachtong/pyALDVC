@@ -108,7 +108,9 @@ al-dvc-gui                 # or: al-dvc gui [session.aldvc]
 
 A standalone PySide6 window (`al_dvc.gui`, architecture shared with pyALDIC):
 volume list with masks, parameter form with a memory estimate, run controls
-with progress and log, a three-plane slice viewer with result overlays, a
+with progress and log, a three-plane slice viewer with result overlays and
+mask drawing (rectangle / ellipse / polygon / brush on any slice, extruded
+through all slices, one slice or a range; add / cut; undo; `reports/mask_tools.pdf`), a
 3-D view (pyvista: field slices, node points, iso-surface, warped lattice,
 displacement arrows, volume slices; `reports/view3d.pdf`), summary and exports. Sessions (`.aldvc`) keep volumes, parameters, output
 folder and display state; `Help > Run self-test` (or `al-dvc-gui --self-test`)

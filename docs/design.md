@@ -281,7 +281,7 @@ CLI: `al-dvc run config.yaml`, `al-dvc synth ...`, `al-dvc info volume.tif`,
 | 0.1.x | real-data hardening: node-wise cross-validation against the MATLAB ALDVC results shipped with the reference code (`scripts/compare_matlab.py`, `reports/matlab_crossval.pdf`), memory / throughput profile on a full 1024x1024x306 micro-CT pair, robustness on the `eyes` data set (where the MATLAB IC-GN does not converge), GitHub repository + CI |
 | 0.2 (released 2026-09-03) | "real-scan ready": deformed-frame masks in the kernel, per-node displacement uncertainty from the stored Hessian factors, per-frame checkpoints and resume, large-volume mode with on-the-fly gradients, tutorial notebook, PyPI publishing workflow (trusted publishing; the first upload needs the one-time PyPI setup described in `.github/workflows/publish.yml`). A coarse-to-fine IC-GN was considered and deferred: the current pipeline already converges at 100 % of the nodes for 30 degree rotations and 20 % strains on synthetic speckle, so the remaining hard cases (`eyes`) need larger subsets and a deformation-aware initial guess rather than resolution levels |
 | 0.3 (released 2026-09-03) | standalone PySide6 GUI in `al_dvc.gui` (see section 11): `AppState` + panels + worker thread + sessions + JSON-dictionary i18n + kernel warm-up + self-test, three-plane slice viewer with node-grid overlays; portable Windows bundle (PyInstaller spec, build script, frozen-bundle tests, release workflow attaching `pyALDVC-<version>-win64.zip` to each tag) |
-| 0.3.x | GUI follow-ups: pyvista 3-D view of the displacement field, mask drawing on the slice viewer, batch runs over several sessions |
+| 0.3.x (in progress) | GUI follow-ups: pyvista 3-D view (done), mask drawing on the slice viewer (done), batch runs over several sessions |
 | 0.4 | GPU backend (numba.cuda: tricubic sampling + per-node IC-GN, one block per node; global step stays on the CPU). A 2-3 day prototype measures the real speed-up first; Blackwell (sm_120) support in numba-cuda must be confirmed |
 | later | adaptive octree mesh (3D analogue of pyALDIC's quadtree) with hanging-node hex elements; second-order (30-DOF) subset shape functions to remove the first-order curvature bias; subset splitting at discontinuities |
 
@@ -388,14 +388,33 @@ Differences from pyALDIC, all consequences of the data being 3-D:
 * the viewer draws the XY, XZ and YZ mid-planes of the current volume with
   sliders, and node-grid fields as blocks on the node layer nearest to each
   plane (`mesh.to_grid`, extent from the node axes), with a shared colorbar;
-* masks are loaded as volumes rather than drawn; ROI drawing on slices is a
-  later feature;
+* masks are loaded as volumes or drawn on the slices (see below);
 * translations are JSON dictionaries answered by a `QTranslator` subclass,
   which removes the Qt Linguist tool chain (pyALDIC ships `.qm` catalogs);
 * dialogs go through `MainWindow._message`, which logs instead of blocking
   under the offscreen platform, so the whole application is testable headless
   (`tests/test_gui.py`, `QT_QPA_PLATFORM=offscreen`; on Windows the offscreen
   platform needs `QT_QPA_FONTDIR=C:\Windows\Fonts` to render text).
+
+### Mask drawing
+
+`mask_editor.py` (no Qt) represents a drawn mask as a base volume plus a
+replayable list of `MaskOp`: a 2-D shape (rectangle, ellipse, polygon,
+brush) on the XY, XZ or YZ plane, extruded along the plane's normal through
+all slices, the current slice or a range, in `add` or `cut` mode, plus
+`invert` / `fill` / `empty`. Rasterisation is NumPy (polygons via
+`matplotlib.path`, boundary-inclusive); undo drops the last operation and
+replays, folding operations older than `MAX_UNDO_REPLAY_OPS` into the base.
+`AppState` owns one editor for the current frame (`ensure_mask_editor`,
+`apply_mask_op`, `undo_mask`, `save_mask`, `mask_target` = current or all
+frames) and pushes the mask into the `VolumeEntry` objects the pipeline reads,
+together with the operations (`mask_ops`), which sessions store so a drawing
+survives a reload (re-applied on top of the mask file when there is one).
+`panels/mask_tools.py` is the toolbar; the viewer turns mouse gestures on any
+of the three axes into operations (drag for rectangle / ellipse / brush,
+clicks + right-click for polygons, Esc cancels) with a live preview, and
+tints the excluded region red. Tests drive the gestures with synthetic
+matplotlib mouse events, so the whole path is covered headless.
 
 ### 3-D view
 

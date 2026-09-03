@@ -12,6 +12,12 @@ All notable changes to pyALDVC are documented here. The format follows
   warped lattice, displacement arrows, volume slices, camera presets and PNG
   screenshots; interactive pyvistaqt widget with an off-screen fallback;
   `scripts/make_view3d_report.py` (`reports/view3d.pdf`).
+- Mask drawing on the slice viewer (`al_dvc.gui.mask_editor`,
+  `panels/mask_tools.py`): rectangle, ellipse, polygon and brush on any of the
+  three slices, extruded through all slices / the current slice / a range, add
+  or cut, invert / fill / clear, undo / redo, apply to the current or all
+  frames, save as a mask volume; sessions store the drawing operations;
+  `scripts/make_mask_tools_report.py` (`reports/mask_tools.pdf`).
 
 ## [0.3.0] - 2026-09-03
 

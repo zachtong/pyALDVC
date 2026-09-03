@@ -27,7 +27,7 @@ class SessionError(Exception):
 
 @dataclass
 class SessionData:
-    volumes: list[dict[str, str | None]]
+    volumes: list[dict[str, Any]]
     para: DVCPara
     output_dir: str
     display: dict[str, Any] = field(default_factory=dict)
@@ -54,7 +54,7 @@ def _absolute(path: str | None, base: Path) -> str | None:
 
 def build_session(state: AppState, results_path: str | None = None) -> SessionData:
     return SessionData(
-        volumes=[{"path": v.path, "mask": v.mask_path, "label": v.label} for v in state.volumes],
+        volumes=[{"path": v.path, "mask": v.mask_path, "label": v.label, "mask_ops": v.mask_ops} for v in state.volumes],
         para=state.para,
         output_dir=str(state.output_dir),
         display={
@@ -83,7 +83,13 @@ def save_session(state: AppState, path: str | Path, results_path: str | None = N
         "format": FORMAT_VERSION,
         "pyaldvc": data.version,
         "volumes": [
-            {"path": _relative(v["path"], base), "mask": _relative(v["mask"], base), "label": v["label"]} for v in data.volumes
+            {
+                "path": _relative(v["path"], base),
+                "mask": _relative(v["mask"], base),
+                "label": v["label"],
+                "mask_ops": v.get("mask_ops"),
+            }
+            for v in data.volumes
         ],
         "para": para_to_dict(data.para),
         "output_dir": _relative(data.output_dir, base),
@@ -110,7 +116,12 @@ def load_session(path: str | Path) -> SessionData:
     except (TypeError, ValueError) as exc:
         raise SessionError(f"invalid parameters in {p}: {exc}") from exc
     volumes = [
-        {"path": _absolute(v.get("path"), base), "mask": _absolute(v.get("mask"), base), "label": v.get("label", "")}
+        {
+            "path": _absolute(v.get("path"), base),
+            "mask": _absolute(v.get("mask"), base),
+            "label": v.get("label", ""),
+            "mask_ops": v.get("mask_ops"),
+        }
         for v in doc["volumes"]
     ]
     return SessionData(
@@ -123,10 +134,30 @@ def load_session(path: str | Path) -> SessionData:
     )
 
 
+def _rebuild_drawn_masks(state: AppState) -> None:
+    """Re-apply stored drawing operations (on top of the mask file, when there is one)."""
+    from .mask_editor import MaskEditor
+
+    for entry in state.volumes:
+        if not entry.mask_ops:
+            continue
+        try:
+            base = entry.load_mask() if entry.mask_path else None
+            entry.mask = MaskEditor.from_dict(entry.mask_ops, base=base).mask
+        except Exception as exc:
+            state.log(f"{entry.name}: drawn mask could not be rebuilt ({exc})", "warning")
+            entry.mask_ops = None
+
+
 def apply_session(data: SessionData, state: AppState, path: str | Path | None = None) -> list[str]:
     """Load a session into ``state``; returns the paths that do not exist (volumes are kept)."""
     missing = [v["path"] for v in data.volumes if v["path"] and not Path(v["path"]).exists()]
-    state.volumes = [VolumeEntry(path=v["path"], mask_path=v["mask"], label=v.get("label") or "") for v in data.volumes]
+    state.volumes = [
+        VolumeEntry(path=v["path"], mask_path=v["mask"], label=v.get("label") or "", mask_ops=v.get("mask_ops"))
+        for v in data.volumes
+    ]
+    state.mask_editor = None
+    _rebuild_drawn_masks(state)
     state.current_frame = 0
     state.results = None
     state.para = data.para
@@ -145,6 +176,7 @@ def apply_session(data: SessionData, state: AppState, path: str | Path | None = 
     state.results_changed.emit()
     state.display_changed.emit()
     state.output_dir_changed.emit(str(state.output_dir))
+    state.mask_changed.emit()
     if data.results_path and Path(data.results_path).exists():
         try:
             from al_dvc.export.export_npz import load_npz_result
