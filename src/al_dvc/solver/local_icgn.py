@@ -199,6 +199,7 @@ def local_icgn(
             ctx.H_all,
             pattern,
             gain,
+            bool(para.icgn_predictive_stop),
         )
     else:
         from .reference_kernels import icgn_12dof_batch_np
@@ -227,6 +228,7 @@ def local_icgn(
             ctx.stride,
             pattern,
             gain,
+            bool(para.icgn_predictive_stop),
         )
     solve_time = time.perf_counter() - t0
 

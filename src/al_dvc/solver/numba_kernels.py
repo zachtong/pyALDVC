@@ -81,6 +81,7 @@ MIN_CORRECTED_FRACTION = (
     0.5  # keep at least half of the translation diagonal: real CT noise is not white, a full correction over-shoots
 )
 NOISE_CORR_STEP = 0.5  # apply the noise correction once the previous step is below this many voxels
+PREDICT_CONTRACTION = 0.5  # look-ahead stop only when the step shrank by at least this factor
 
 
 @njit(cache=JIT_CACHE)
@@ -476,6 +477,7 @@ def _icgn_12dof_single(
     H,
     pattern,
     noise_gain,
+    predictive,
 ):
     """Iterate one node in place. Returns ``(n_iter, status, zncc)``.
 
@@ -491,6 +493,7 @@ def _icgn_12dof_single(
     L0 = np.empty((12, 12))
     n_full = pattern[9, 9]
     last_dp = 1e300  # previous (raw) step norm: the residual variance is noise-only once the step is small
+    dp_prev = -1.0  # previous applied step (look-ahead stop)
     norm_init = -1.0
     half_scale = max(hx, max(hy, hz))
     zncc = np.nan
@@ -586,6 +589,12 @@ def _icgn_12dof_single(
         last_dp = dp_norm
         if dp_norm < dp_tol:
             return it, STATUS_CONVERGED, zncc
+        if predictive and dp_prev > 0.0 and dp_norm < PREDICT_CONTRACTION * dp_prev and dp_norm * dp_norm < dp_tol * dp_prev:
+            # the next step would already be below dp_tol: apply this one and stop
+            if not compose_warp_inplace(P, dP):
+                return it, STATUS_SINGULAR, zncc
+            return it, STATUS_CONVERGED, zncc
+        dp_prev = dp_norm
         improved = zncc > best_zncc + STALL_ZNCC_EPS
         if improved:
             best_zncc = zncc
@@ -635,6 +644,7 @@ def _icgn_12dof_parallel_jit(
     H_all,
     pattern,
     noise_gain,
+    predictive,
 ):
     """Parallel 12-DOF IC-GN over all nodes.
 
@@ -699,6 +709,7 @@ def _icgn_12dof_parallel_jit(
             H_all[n],
             pattern,
             noise_gain,
+            predictive,
         )
         n_iter[n] = it
         status[n] = st
@@ -763,6 +774,7 @@ def _icgn_3dof_single(
     gbuf,
     n_full,
     noise_gain,
+    predictive,
 ):
     """Translation-only IC-GN at one node. Returns ``(n_iter, status, zncc)``.
 
@@ -783,6 +795,7 @@ def _icgn_3dof_single(
     if not def_ok:
         return 0, STATUS_SINGULAR, np.nan
     last_dn = 1e300
+    dn_prev = -1.0
 
     b = np.empty(3)
     tb = np.empty(3)
@@ -862,6 +875,12 @@ def _icgn_3dof_single(
         last_dn = dn
         if dn < dp_tol:
             return it, STATUS_CONVERGED, zncc
+        if predictive and dn_prev > 0.0 and dn < PREDICT_CONTRACTION * dn_prev and dn * dn < dp_tol * dn_prev:
+            P[9] -= a00 * dt[0] + a01 * dt[1] + a02 * dt[2]
+            P[10] -= a10 * dt[0] + a11 * dt[1] + a12 * dt[2]
+            P[11] -= a20 * dt[0] + a21 * dt[1] + a22 * dt[2]
+            return it, STATUS_CONVERGED, zncc
+        dn_prev = dn
         if dn < best_dn * STALL_STEP_DECAY:
             best_dn = dn
             stall = 0
@@ -905,6 +924,7 @@ def _icgn_3dof_parallel_jit(
     stride,
     n_full,
     noise_gain,
+    predictive,
 ):
     """Parallel 3-DOF IC-GN (ADMM subproblem 1) over all nodes.
 
@@ -982,6 +1002,7 @@ def _icgn_3dof_parallel_jit(
             gbuf,
             n_full,
             noise_gain,
+            predictive,
         )
         for k in range(3):
             U_out[n, k] = P[9 + k]
@@ -1016,6 +1037,7 @@ def icgn_12dof_parallel(
     H_all=None,
     pattern=None,
     noise_gain=0.0,
+    predictive=True,
 ):
     """Parallel 12-DOF IC-GN over all nodes; returns ``(P_out, n_iter, status, zncc)``.
 
@@ -1053,6 +1075,7 @@ def icgn_12dof_parallel(
         np.ascontiguousarray(H_all, dtype=np.float64),
         np.ascontiguousarray(pattern, dtype=np.float64),
         float(noise_gain),
+        bool(predictive),
     )
 
 
@@ -1083,6 +1106,7 @@ def icgn_3dof_parallel(
     stride=1,
     n_full=0.0,
     noise_gain=0.0,
+    predictive=True,
 ):
     """Parallel 3-DOF IC-GN (ADMM subproblem 1); returns ``(U_out, n_iter, status, zncc)``.
 
@@ -1116,6 +1140,7 @@ def icgn_3dof_parallel(
         int(stride),
         float(n_full),
         float(noise_gain),
+        bool(predictive),
     )
 
 

@@ -30,6 +30,7 @@ ABS_TOL = 1e-5
 LM_DAMPING_3DOF = 1e-3
 MIN_CORRECTED_FRACTION = 0.5
 NOISE_CORR_STEP = 0.5
+PREDICT_CONTRACTION = 0.5
 
 
 def corrected_hessian_np(H, pattern, corr):
@@ -247,6 +248,7 @@ def icgn_12dof_np(
     stride=1,
     pattern=None,
     noise_gain=0.0,
+    predictive=True,
 ):
     """Reference 12-DOF IC-GN for one node. Returns ``(P, n_iter, status, zncc)``."""
     x0, y0, z0 = (int(c) for c in coord)
@@ -273,6 +275,7 @@ def icgn_12dof_np(
     stall = 0
     P_best = P.copy()
     last_dp = np.inf
+    dp_prev = -1.0
     for it in range(1, max_iter + 1):
         xw, yw, zw = warp_points(P, x0, y0, z0, X, Y, Z)
         if not inside_domain_np(zw, yw, xw, g.shape).all():
@@ -315,6 +318,12 @@ def icgn_12dof_np(
         last_dp = dpn
         if dpn < dp_tol:
             return P, it, STATUS_CONVERGED, zncc
+        if predictive and dp_prev > 0.0 and dpn < PREDICT_CONTRACTION * dp_prev and dpn * dpn < dp_tol * dp_prev:
+            Pn = compose_warp_np(P, dP)
+            if Pn is None:
+                return P, it, STATUS_SINGULAR, zncc
+            return Pn, it, STATUS_CONVERGED, zncc
+        dp_prev = dpn
         improved = zncc > best_zncc + STALL_ZNCC_EPS
         if improved:
             best_zncc = zncc
@@ -359,6 +368,7 @@ def icgn_3dof_np(
     stride=1,
     n_full=0.0,
     noise_gain=0.0,
+    predictive=True,
 ):
     """Reference 3-DOF IC-GN (ADMM subpb1) for one node."""
     x0, y0, z0 = (int(c) for c in coord)
@@ -390,6 +400,7 @@ def icgn_3dof_np(
 
     Hd = build_hd(0.0)
     last_dn = np.inf
+    dn_prev = -1.0
     norm_init = None
     zncc = np.nan
     best_dn = np.inf
@@ -426,6 +437,10 @@ def icgn_3dof_np(
         last_dn = dn
         if dn < dp_tol:
             return P[9:].copy(), it, STATUS_CONVERGED, zncc
+        if predictive and dn_prev > 0.0 and dn < PREDICT_CONTRACTION * dn_prev and dn * dn < dp_tol * dn_prev:
+            P[9:] -= A @ dt
+            return P[9:].copy(), it, STATUS_CONVERGED, zncc
+        dn_prev = dn
         if dn < best_dn * STALL_STEP_DECAY:
             best_dn = dn
             stall = 0
@@ -486,6 +501,7 @@ def icgn_12dof_batch_np(
     stride=1,
     pattern=None,
     noise_gain=0.0,
+    predictive=True,
 ):
     N = coords.shape[0]
     P_out = np.array(P0, dtype=np.float64).copy()
@@ -519,6 +535,7 @@ def icgn_12dof_batch_np(
             stride,
             pattern,
             noise_gain,
+            predictive,
         )
         P_out[n] = P
         n_iter[n] = it
@@ -554,6 +571,7 @@ def icgn_3dof_batch_np(
     stride=1,
     n_full=0.0,
     noise_gain=0.0,
+    predictive=True,
 ):
     N = coords.shape[0]
     U_out = np.array(U_old, dtype=np.float64).copy()
@@ -590,6 +608,7 @@ def icgn_3dof_batch_np(
             stride,
             n_full,
             noise_gain,
+            predictive,
         )
         U_out[n] = U
         n_iter[n] = it

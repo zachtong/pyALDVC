@@ -163,6 +163,19 @@ guess 50 -> 17 s, run 233 -> 206 s with the same result); on clean synthetic
 data the fine pass also needs fewer iterations (2.9 -> 1.8), on the noisy
 scan it does not. Frames that reuse a previous solution (`previous`) skip it.
 
+### Look-ahead stopping
+
+The increment criterion (`icgn_dp_tol`) discards the step that is already
+below the tolerance, so a node's last iteration is a full sampling pass spent
+on confirming convergence. With `icgn_predictive_stop` the kernels apply the
+current step and stop when the steps contract by at least
+`PREDICT_CONTRACTION` (2x) and the predicted next step `dp_k^2 / dp_{k-1}` is
+below `icgn_dp_tol`; the result is at most that predicted step from the
+discarded-step solution and in practice closer to the fixed point. Smooth
+fields converge in one iteration less (12-DOF 13 %, 3-DOF 31 % fewer
+iterations); noisy data, whose steps do not contract regularly, are hardly
+affected.
+
 ### Noise-corrected Gauss-Newton steps
 
 IC-GN keeps the reference-subset Hessian `H = sum J J^T` fixed. With noisy

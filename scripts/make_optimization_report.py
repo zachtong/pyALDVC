@@ -70,6 +70,10 @@ BEFORE = {
             "8251 -> 11267 iterations, 0.61 -> 0.83 s: the cubic phase still needs two iterations to remove the trilinear bias",
         ),
         (
+            "Intel TBB threading layer (work stealing) instead of OpenMP on the 8P+16E-core CPU",
+            "12-DOF kernel 0.700 -> 0.668 s (5 %): not worth an extra runtime dependency",
+        ),
+        (
             "skipping the full-resolution pyramid level of the initial guess",
             "2.2 s but median initial error 0.03 -> 0.12 voxel and 106 nodes rejected",
         ),

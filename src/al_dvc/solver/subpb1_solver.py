@@ -86,6 +86,7 @@ def subpb1_solver(
             ctx.stride,
             n_full,
             gain,
+            bool(para.icgn_predictive_stop),
         )
     else:
         from .reference_kernels import icgn_3dof_batch_np
@@ -117,6 +118,7 @@ def subpb1_solver(
             ctx.stride,
             n_full,
             gain,
+            bool(para.icgn_predictive_stop),
         )
     solve_time = time.perf_counter() - t0
     U = np.asarray(U, dtype=np.float64)

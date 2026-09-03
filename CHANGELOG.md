@@ -22,6 +22,13 @@ All notable changes to pyALDVC are documented here. The format follows
   holding a float32 copy of every frame of a sequence.
 
 ### Added
+- `icgn_predictive_stop` (default on): the IC-GN kernels apply the current step
+  and stop when the steps contract by at least 2x and the predicted next step
+  `dp_k^2 / dp_{k-1}` is below `icgn_dp_tol`, instead of spending one more
+  sampling pass to confirm convergence: 13 % (12-DOF) and 31 % (3-DOF) fewer
+  iterations on smooth synthetic fields, 3-DOF ADMM passes on the micro-CT
+  example 4.1 / 4.0 / 3.9 -> 3.6 / 3.4 / 3.3 iterations, same solution within
+  `icgn_dp_tol`. `tests/test_predictive_stop.py`.
 - `init_coarse_factor` (`al_dvc.solver.coarse_init`): the NCC pyramid and a
   12-DOF IC-GN run on every k-th node per axis; displacement and gradient are
   interpolated trilinearly to all nodes as the initial guess of the full pass

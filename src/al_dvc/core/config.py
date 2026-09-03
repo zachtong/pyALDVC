@@ -79,6 +79,9 @@ class DVCPara:
     interp_method: Literal["cubic", "bspline", "linear"] = "cubic"
     subset_stride: int = 1  # sample every k-th subset voxel along each axis (k^3 fewer voxels per iteration)
     icgn_noise_hessian: bool = True  # Gauss-Newton steps with the noise-corrected Hessian (fewer iterations on noisy data)
+    icgn_predictive_stop: bool = (
+        True  # stop one iteration early when the contracting steps predict the next one below icgn_dp_tol
+    )
     min_valid_ratio: float = 0.5  # min fraction of mask-valid voxels per subset
     local_outlier_threshold: float = 2.0  # median test after the local pass (0 disables); MATLAB default.
     # Flags ~10-15 % of nodes on noisy anisotropic scans, which
