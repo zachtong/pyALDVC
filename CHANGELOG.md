@@ -4,7 +4,9 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.1] - 2026-09-03
+
+GUI follow-ups: a 3-D view, mask drawing on the slices, batch runs.
 
 ### Added
 - 3-D view tab in the GUI (`al_dvc.gui.view3d_scene`, `panels/view3d.py`,
