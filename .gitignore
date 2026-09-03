@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+*.egg
+.eggs/
+.coverage
+.hypothesis/
+
+# Numba JIT cache
+*.nbi
+*.nbc
+
+# Generated reports (benchmarks, PDFs, plots) -- regenerate with scripts/
+reports/*.pdf
+reports/*.csv
+reports/*.png
+
+# Local scratch / datasets (large binary volumes)
+datasets/
+data/
+examples/data/
+*.tif
+*.tiff
+*.mat
+*.npy
+*.npz
+*.vti
+*.vtu
+!tests/fixtures/**
+
+# IDE / editor settings
+.vscode/
+.idea/
+
+# Claude Code
+CLAUDE.md
+.claude/
+
+# OS files
+Thumbs.db
+.DS_Store
+desktop.ini

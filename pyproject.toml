@@ -1,0 +1,104 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "al-dvc"
+version = "0.1.0"
+description = "AL-DVC: Augmented Lagrangian Digital Volume Correlation (3D) in Python"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "BSD-3-Clause"
+authors = [
+    { name = "Zixiang (Zach) Tong", email = "zachtong@utexas.edu" },
+]
+keywords = [
+    "digital-volume-correlation",
+    "DVC",
+    "experimental-mechanics",
+    "strain-measurement",
+    "augmented-lagrangian",
+    "ADMM",
+    "inverse-compositional-gauss-newton",
+    "micro-CT",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "numba>=0.57",
+    "tifffile>=2023.1",
+    "h5py>=3.8",
+    "matplotlib>=3.6",
+    "pyyaml>=6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/zachtong/pyALDVC"
+Repository = "https://github.com/zachtong/pyALDVC"
+Issues = "https://github.com/zachtong/pyALDVC/issues"
+
+[project.scripts]
+al-dvc = "al_dvc.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-xdist>=3.0",
+    "psutil>=5.9",
+]
+viz = [
+    "pyvista>=0.43",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/al_dvc"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/pyproject.toml",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/docs/design.md",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "perf: performance/throughput tests -- excluded from CI (runner CPU varies)",
+]
+
+[tool.coverage.run]
+source = ["al_dvc"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.",
+]
+omit = [
+    # Numba JIT kernels: coverage.py cannot trace LLVM-compiled code
+    "src/al_dvc/solver/numba_kernels.py",
+    "src/al_dvc/solver/interp_kernels.py",
+]

@@ -1,0 +1,47 @@
+# Batch configuration for `al-dvc run <config>` (single sample) or
+# `python examples/scripting/batch_process.py <config>` (list of samples).
+#
+# Paths are resolved against the working directory.
+
+# ---- single-sample form (al-dvc run) ----
+volumes: "data/sample_A/*.tif"     # glob, folder (one volume file per frame or one
+                                   # slice folder per frame), or a list of files
+masks: null                        # optional: one mask volume (reused) or one per frame
+output: "results/sample_A"
+basename: "sampleA"
+export: [npz, mat, vtk, report, summary]   # any of npz, mat, csv, vtk, report, summary
+load_kwargs: {}                    # e.g. {mat_key: "vol", matlab_order: true}
+
+para:
+  winsize: 32                      # scalar or [wx, wy, wz]
+  winstepsize: 16
+  voi: {x: [0, -1], y: [0, -1], z: [0, -1]}   # inclusive voxel ranges, -1 = end
+  voxel_size: [5.0, 5.0, 5.0]
+  units: um
+  prefilter_sigma: 0.0             # Gaussian pre-smoothing for noisy scans (voxels)
+  init_guess_method: pyramid       # pyramid | ncc | zero | previous
+  search_radius: 8
+  interp_method: cubic             # cubic | bspline | linear
+  icgn_tol: 0.01
+  use_global_step: true
+  mu: 0.001
+  beta: null                       # null = auto (L-curve)
+  admm_max_iter: 4
+  admm_tol: 0.01
+  subpb2_method: fem               # fem | fd
+  strain_method: plane_fit         # plane_fit | fem | fd | direct
+  strain_plane_fit_halfwidth: 1
+  strain_type: infinitesimal       # infinitesimal | green_lagrange | euler_almansi | hencky
+  reference_mode: accumulative     # accumulative | incremental
+  n_threads: 0
+
+# ---- multi-sample form (batch_process.py) ----
+samples:
+  - name: sample_A
+    volumes: "data/sample_A/*.tif"
+    output: "results/sample_A"
+  - name: sample_B
+    volumes: "data/sample_B"
+    masks: "data/sample_B_mask.tif"
+    output: "results/sample_B"
+    para: {winsize: 40, winstepsize: 20}    # per-sample overrides of the shared `para`

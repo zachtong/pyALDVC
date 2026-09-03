@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+message: "If you use pyALDVC, please cite the software and the AL-DVC method paper."
+title: "pyALDVC: Augmented Lagrangian Digital Volume Correlation in Python"
+version: 0.1.0
+date-released: 2026-09-02
+license: BSD-3-Clause
+repository-code: "https://github.com/zachtong/pyALDVC"
+authors:
+  - family-names: Tong
+    given-names: Zixiang
+    email: zachtong@utexas.edu
+    affiliation: "The University of Texas at Austin"
+  - family-names: Yang
+    given-names: Jin
+    affiliation: "The University of Texas at Austin"
+keywords:
+  - digital volume correlation
+  - DVC
+  - augmented Lagrangian
+  - ADMM
+  - micro-CT
+  - experimental mechanics
+references:
+  - type: article
+    title: "Augmented Lagrangian Digital Volume Correlation (ALDVC)"
+    authors:
+      - family-names: Yang
+        given-names: Jin
+      - family-names: Hazlett
+        given-names: Lauren
+      - family-names: Landauer
+        given-names: Alexander K.
+      - family-names: Franck
+        given-names: Christian
+    journal: Experimental Mechanics
+    volume: 60
+    year: 2020
+    doi: 10.1007/s11340-020-00607-3
