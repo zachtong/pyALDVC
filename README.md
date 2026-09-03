@@ -24,7 +24,7 @@ ParaView export, tests against analytic ground truth and a command line.
 |---|---|
 | **Algorithm** | 12-DOF local IC-GN (ZNSSD, tricubic / B-spline / trilinear sampling) + hex8 FEM or finite-difference global step + ADMM with automatic L-curve tuning of the penalty `beta` |
 | **Initial guess** | global phase-correlation pre-shift, coarse-to-fine pyramid NCC with automatic search-radius expansion, universal-median outlier test, harmonic inpainting |
-| **Robustness** | boolean VOI masks (masked subsets, trimmed elements), per-node status codes, stall detection, low-texture rejection, Gaussian pre-smoothing for low-SNR data, partial results on cancel |
+| **Robustness** | boolean masks on the reference and on the deformed frame (masked subsets, trimmed elements), per-node status codes, stall detection, low-texture rejection, Gaussian pre-smoothing for low-SNR data, partial results on cancel |
 | **Uncertainty** | per-node standard deviation of u, v, w from the IC-GN normal equations (`U_std`, exported as `disp_std_*`), calibrated on synthetic noise (`reports/uncertainty.pdf`) |
 | **Performance** | Numba `prange` kernels that read subsets in place (no per-node subset cache, so memory stays ~22 bytes/voxel); scalar global operator assembled once, solved by PCG for all three components |
 | **Tracking** | accumulative, incremental or any reference-frame schedule; cumulative displacement composition |
@@ -72,7 +72,11 @@ export_vtk(result, "out/vtk")           # open out/vtk/aldvc.pvd in ParaView
 export_report(result, "out/report.pdf")
 ```
 
-Masks (boolean volumes, `True` = material) and multi-frame sequences:
+Masks (boolean volumes, `True` = material, one per frame) and multi-frame
+sequences. A frame's mask trims the reference subsets when the frame is the
+reference and, when it is the deformed frame, removes the voxels that the
+warped subsets would sample from it (a void that opens, a region that
+leaves the field of view):
 
 ```python
 result = run_aldvc(para, [ref, f1, f2, f3], masks=[mask0, mask1, mask2, mask3])

@@ -24,7 +24,7 @@ from .interp_kernels import (
     SAMPLE_HI_MARGIN,
     SAMPLE_LO,
 )
-from .numba_kernels import STALL_STEP_DECAY, STALL_ZNCC_EPS, STATUS_STALLED
+from .numba_kernels import MIN_SUBSET_VOXELS, MIN_VALID_FRACTION, STALL_STEP_DECAY, STALL_ZNCC_EPS, STATUS_STALLED
 
 ABS_TOL = 1e-5
 LM_DAMPING_3DOF = 1e-3
@@ -59,6 +59,22 @@ def bspline_weights(t: NDArray) -> NDArray:
             t3 / 6,
         ],
         axis=-1,
+    )
+
+
+def inside_domain_np(z: NDArray, y: NDArray, x: NDArray, shape) -> NDArray:
+    """True where a sample position lies in the admissible interpolation domain."""
+    nz, ny, nx = shape
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    z = np.asarray(z, dtype=np.float64)
+    return (
+        (x >= SAMPLE_LO)
+        & (x <= nx - 1 - SAMPLE_HI_MARGIN)
+        & (y >= SAMPLE_LO)
+        & (y <= ny - 1 - SAMPLE_HI_MARGIN)
+        & (z >= SAMPLE_LO)
+        & (z <= nz - 1 - SAMPLE_HI_MARGIN)
     )
 
 
@@ -221,23 +237,28 @@ def icgn_12dof_np(P0, coord, half, f, gx, gy, gz, mask, g, mode, H, meanf, botto
     best_dp = np.inf
     stall = 0
     P_best = P.copy()
-    fn = (fv - meanf) / bottomf
     for it in range(1, max_iter + 1):
         xw, yw, zw = warp_points(P, x0, y0, z0, X, Y, Z)
-        gv = sample_volume_np(g, zw, yw, xw, mode)
-        if np.isnan(gv).any():
+        if not inside_domain_np(zw, yw, xw, g.shape).all():
             return P, it, STATUS_OUT_OF_BOUNDS, np.nan
-        meang = gv.mean()
-        bottomg = np.sqrt(max(np.sum((gv - meang) ** 2), 1e-30))
-        res = fn - (gv - meang) / bottomg
-        b = bottomf * (SD.T @ res)
+        gv = sample_volume_np(g, zw, yw, xw, mode)
+        ok_v = ~np.isnan(gv)  # NaN inside the domain: masked out in the deformed volume
+        if ok_v.sum() < MIN_SUBSET_VOXELS or ok_v.sum() < MIN_VALID_FRACTION * ok_v.size:
+            return P, it, STATUS_INVALID_SUBSET, np.nan
+        fv_d, gv_d, SD_d = fv[ok_v], gv[ok_v], SD[ok_v]
+        meanf_d = fv_d.mean()
+        bottomf_d = np.sqrt(max(np.sum((fv_d - meanf_d) ** 2), 1e-30))
+        meang = gv_d.mean()
+        bottomg = np.sqrt(max(np.sum((gv_d - meang) ** 2), 1e-30))
+        res = (fv_d - meanf_d) / bottomf_d - (gv_d - meang) / bottomg
+        b = bottomf_d * (SD_d.T @ res)
         norm_abs = float(np.linalg.norm(b))
         if not np.isfinite(norm_abs):
             return P, it, STATUS_NAN, np.nan
         if norm_init is None:
             norm_init = norm_abs
         norm_rel = norm_abs / norm_init if norm_init > 1e-300 else 0.0
-        zncc = float(np.sum((fv - meanf) * (gv - meang)) / (bottomf * bottomg))
+        zncc = float(np.sum((fv_d - meanf_d) * (gv_d - meang)) / (bottomf_d * bottomg))
         if norm_rel < tol or norm_abs < ABS_TOL:
             return P, it, STATUS_CONVERGED, zncc
         dP = -np.linalg.solve(H, b)
@@ -288,29 +309,34 @@ def icgn_3dof_np(
     P[:9] = np.asarray(F_fixed).ravel()
     P[9:] = U_old
     A = np.eye(3) + P[:9].reshape(3, 3)
-    bf2 = max(bottomf**2, 1e-30)
+    bf2 = max(bottomf**2, 1e-30)  # proximal Hessian keeps the precomputed reference scale
     H3 = H[9:, 9:] * 2.0 / bf2 + mu * np.eye(3)
     Hd = H3 + LM_DAMPING_3DOF * np.max(np.diag(H3)) * np.eye(3)
     norm_init = None
     zncc = np.nan
     best_dn = np.inf
     stall = 0
-    fn = (fv - meanf) / bottomf
     for it in range(1, max_iter + 1):
         xw, yw, zw = warp_points(P, x0, y0, z0, X, Y, Z)
-        gv = sample_volume_np(g, zw, yw, xw, mode)
-        if np.isnan(gv).any():
+        if not inside_domain_np(zw, yw, xw, g.shape).all():
             return P[9:].copy(), it, STATUS_OUT_OF_BOUNDS, np.nan
-        meang = gv.mean()
-        bottomg = np.sqrt(max(np.sum((gv - meang) ** 2), 1e-30))
-        res = fn - (gv - meang) / bottomg
-        b = bottomf * (G.T @ res)
+        gv = sample_volume_np(g, zw, yw, xw, mode)
+        ok_v = ~np.isnan(gv)
+        if ok_v.sum() < MIN_SUBSET_VOXELS or ok_v.sum() < MIN_VALID_FRACTION * ok_v.size:
+            return P[9:].copy(), it, STATUS_INVALID_SUBSET, np.nan
+        fv_d, gv_d, G_d = fv[ok_v], gv[ok_v], G[ok_v]
+        meanf_d = fv_d.mean()
+        bottomf_d = np.sqrt(max(np.sum((fv_d - meanf_d) ** 2), 1e-30))
+        meang = gv_d.mean()
+        bottomg = np.sqrt(max(np.sum((gv_d - meang) ** 2), 1e-30))
+        res = (fv_d - meanf_d) / bottomf_d - (gv_d - meang) / bottomg
+        b = bottomf_d * (G_d.T @ res)
         tb = b * 2.0 / bf2 + mu * (P[9:] - U_old - vdual)
         norm_abs = float(np.linalg.norm(tb))
         if norm_init is None:
             norm_init = norm_abs
         norm_rel = norm_abs / norm_init if norm_init > 1e-300 else 0.0
-        zncc = float(np.sum((fv - meanf) * (gv - meang)) / (bottomf * bottomg))
+        zncc = float(np.sum((fv_d - meanf_d) * (gv_d - meang)) / (bottomf_d * bottomg))
         if norm_rel < tol or norm_abs < mu * 1e-4:
             return P[9:].copy(), it, STATUS_CONVERGED, zncc
         dt = -np.linalg.solve(Hd, tb)

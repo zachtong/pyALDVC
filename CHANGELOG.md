@@ -7,6 +7,13 @@ All notable changes to pyALDVC are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Deformed-frame masks: a frame's mask now also applies when the frame is the
+  deformed one. Masked voxels are NaN in the sampled volume, subset voxels whose
+  interpolation stencil touches them drop out of the node's correlation (the
+  subset statistics are recomputed on the remaining voxels), nodes that keep less
+  than half their voxels are reported `invalid_subset`, and the NCC search treats
+  masked voxels as featureless. `scripts/make_mask_report.py` shows the effect
+  (`reports/deformed_mask.pdf`).
 - `FrameResult.U_std`: per-node standard deviation of u, v, w from the IC-GN
   normal equations (noise-corrected Hessian, see `al_dvc.solver.uncertainty`),
   exported as `disp_std_u/v/w`, `disp_std` (npz `U_std`, vti `displacement_std`,

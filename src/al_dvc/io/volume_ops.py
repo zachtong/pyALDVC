@@ -219,11 +219,26 @@ def prefilter_bspline(vol: NDArray[np.float32]) -> NDArray[np.float32]:
     return np.ascontiguousarray(coeffs, dtype=np.float32)
 
 
-def prepare_deformed(vol: NDArray[np.float32], interp_method: str) -> NDArray[np.float32]:
-    """Return the array the interpolation kernel samples for ``interp_method``."""
+def prepare_deformed(vol: NDArray[np.float32], interp_method: str, mask: NDArray[np.bool_] | None = None) -> NDArray[np.float32]:
+    """Return the array the interpolation kernel samples for ``interp_method``.
+
+    With a deformed-frame ``mask`` (True = material) the masked voxels are set
+    to NaN in a copy: any subset voxel whose interpolation stencil touches
+    them is excluded from the correlation of that node (the kernels recompute
+    the subset statistics on the remaining voxels). For ``bspline`` the
+    coefficients are computed first, then masked.
+    """
     if interp_method == "bspline":
-        return prefilter_bspline(vol)
-    return np.ascontiguousarray(vol, dtype=np.float32)
+        out = prefilter_bspline(vol)
+    else:
+        out = np.ascontiguousarray(vol, dtype=np.float32)
+    if mask is not None:
+        m = np.asarray(mask, dtype=bool)
+        if m.shape != out.shape:
+            raise ValueError(f"deformed-frame mask shape {m.shape} != volume shape {out.shape}")
+        out = np.array(out, dtype=np.float32, copy=True)
+        out[~m] = np.nan
+    return out
 
 
 def build_reference_bundle(

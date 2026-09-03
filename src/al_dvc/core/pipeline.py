@@ -184,7 +184,10 @@ def run_aldvc(
             ref = get_reference(ref_idx)
             bundle, mesh, ctx, ops = ref["bundle"], ref["mesh"], ref["ctx"], ref["ops"]
             g_norm = presmooth_volume(provider.get_normalized(k), para.prefilter_sigma)
-            g_prep = prepare_deformed(g_norm, para.interp_method)
+            g_mask = provider.get_mask(k)
+            g_prep = prepare_deformed(g_norm, para.interp_method, mask=g_mask)
+            if g_mask is not None:  # the NCC search sees the masked voxels as featureless (0 = mean after normalisation)
+                g_norm = np.where(g_mask, g_norm, np.float32(0.0)).astype(np.float32)
 
             # --- Section 3: initial guess ---
             t0 = time.perf_counter()

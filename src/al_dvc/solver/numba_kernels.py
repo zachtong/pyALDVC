@@ -38,6 +38,8 @@ ABS_TOL = 1e-5  # MATLAB: normOfWNew*normOfWNewInit < 1e-5
 STALL_ZNCC_EPS = 1e-4  # a 12-DOF iteration must raise the ZNCC by this much to count as progress
 STALL_STEP_DECAY = 0.999  # a 3-DOF iteration must shrink the step norm by this factor to count as progress
 SCHEDULE_LANES = 64  # stripes of the block-cyclic node schedule in the parallel IC-GN wrappers
+MIN_SUBSET_VOXELS = 27  # fewer valid voxels than this and a subset is not correlated
+MIN_VALID_FRACTION = 0.5  # a subset must keep this fraction of its reference-valid voxels under the deformed mask
 LM_DAMPING_3DOF = 1e-3
 
 
@@ -289,11 +291,16 @@ def precompute_nodes(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, c
 
 
 @njit(cache=JIT_CACHE)
-def _warp_and_sample(P, x0, y0, z0, hx, hy, hz, mask, g, mode, gbuf):
+def _warp_and_sample(P, x0, y0, z0, hx, hy, hz, mask, f, g, mode, gbuf):
     """Sample the deformed volume over the warped subset into ``gbuf``.
 
-    Returns ``(ok, n_valid, meang, bottomg)``; ``ok`` is False when a warped
-    voxel leaves the admissible sampling domain.
+    Voxels masked out in the reference (``mask == 0``) or whose sample hits a
+    NaN voxel of ``g`` (deformed-frame mask) are stored as NaN in ``gbuf`` and
+    excluded from the statistics; the reference statistics are recomputed on
+    the same dynamic set. Returns
+    ``(ok, n_valid, meanf, bottomf, meang, bottomg)``; ``ok`` is False when a
+    warped voxel leaves the admissible sampling domain (``n_valid == 0``) or
+    fewer than ``MIN_SUBSET_VOXELS`` voxels remain.
     """
     nz = g.shape[0]
     ny = g.shape[1]
@@ -312,8 +319,11 @@ def _warp_and_sample(P, x0, y0, z0, hx, hy, hz, mask, g, mode, gbuf):
     tz = z0 + P[11]
 
     n_valid = 0
+    n_ref = 0
     s1 = 0.0
     s2 = 0.0
+    s1f = 0.0
+    s2f = 0.0
     idx = 0
     for dz in range(-hz, hz + 1):
         Z = float(dz)
@@ -323,29 +333,40 @@ def _warp_and_sample(P, x0, y0, z0, hx, hy, hz, mask, g, mode, gbuf):
             yy = y0 + dy
             for dx in range(-hx, hx + 1):
                 if mask[zz, yy, x0 + dx] == 0:
-                    gbuf[idx] = 0.0
+                    gbuf[idx] = np.nan
                     idx += 1
                     continue
+                n_ref += 1
                 X = float(dx)
                 xw = a00 * X + a01 * Y + a02 * Z + tx
                 yw = a10 * X + a11 * Y + a12 * Z + ty
                 zw = a20 * X + a21 * Y + a22 * Z + tz
                 if not interp_margin_ok(zw, yw, xw, nz, ny, nx):
-                    return False, 0, 0.0, 1.0
+                    return False, 0, 0.0, 1.0, 0.0, 1.0
                 val = sample_volume(g, zw, yw, xw, mode)
                 gbuf[idx] = val
                 idx += 1
+                if val != val:  # NaN: masked out in the deformed volume
+                    continue
+                fv = float(f[zz, yy, x0 + dx])
                 n_valid += 1
                 s1 += val
                 s2 += val * val
-    if n_valid < 27:
-        return False, n_valid, 0.0, 1.0
+                s1f += fv
+                s2f += fv * fv
+    if n_valid < MIN_SUBSET_VOXELS or n_valid < MIN_VALID_FRACTION * n_ref:
+        return False, n_valid, 0.0, 1.0, 0.0, 1.0
     meang = s1 / n_valid
     ssg = s2 - n_valid * meang * meang
     if ssg < 0.0:
         ssg = 0.0
     bottomg = np.sqrt(max(ssg, 1e-30))
-    return True, n_valid, meang, bottomg
+    meanf = s1f / n_valid
+    ssf = s2f - n_valid * meanf * meanf
+    if ssf < 0.0:
+        ssf = 0.0
+    bottomf = np.sqrt(max(ssf, 1e-30))
+    return True, n_valid, meanf, bottomf, meang, bottomg
 
 
 @njit(cache=JIT_CACHE)
@@ -359,8 +380,9 @@ def _zncc_from_buffer(x0, y0, z0, hx, hy, hz, f, mask, gbuf, meanf, bottomf, mea
             yy = y0 + dy
             for dx in range(-hx, hx + 1):
                 xx = x0 + dx
-                if mask[zz, yy, xx] != 0:
-                    s += (float(f[zz, yy, xx]) - meanf) * (gbuf[idx] - meang)
+                gv = gbuf[idx]
+                if gv == gv:
+                    s += (float(f[zz, yy, xx]) - meanf) * (gv - meang)
                 idx += 1
     return s / (bottomf * bottomg)
 
@@ -387,9 +409,9 @@ def _icgn_12dof_single(
     P_best = np.empty(12)
 
     for it in range(1, max_iter + 1):
-        ok, n_valid, meang, bottomg = _warp_and_sample(P, x0, y0, z0, hx, hy, hz, mask, g, mode, gbuf)
+        ok, n_valid, meanf_d, bottomf_d, meang, bottomg = _warp_and_sample(P, x0, y0, z0, hx, hy, hz, mask, f, g, mode, gbuf)
         if not ok:
-            return it, STATUS_OUT_OF_BOUNDS, np.nan
+            return it, (STATUS_OUT_OF_BOUNDS if n_valid == 0 else STATUS_INVALID_SUBSET), np.nan
 
         for k in range(12):
             b[k] = 0.0
@@ -402,11 +424,12 @@ def _icgn_12dof_single(
                 yy = y0 + dy
                 for dx in range(-hx, hx + 1):
                     xx = x0 + dx
-                    if mask[zz, yy, xx] == 0:
+                    gv = gbuf[idx]
+                    if gv != gv:
                         idx += 1
                         continue
                     X = float(dx)
-                    res = (float(f[zz, yy, xx]) - meanf) / bottomf - (gbuf[idx] - meang) / bottomg
+                    res = (float(f[zz, yy, xx]) - meanf_d) / bottomf_d - (gv - meang) / bottomg
                     idx += 1
                     gxv = float(gx[zz, yy, xx]) * res
                     gyv = float(gy[zz, yy, xx]) * res
@@ -425,7 +448,7 @@ def _icgn_12dof_single(
                     b[11] += gzv
         norm_abs = 0.0
         for k in range(12):
-            b[k] *= bottomf
+            b[k] *= bottomf_d
             norm_abs += b[k] * b[k]
         norm_abs = np.sqrt(norm_abs)
         if not np.isfinite(norm_abs):
@@ -434,7 +457,7 @@ def _icgn_12dof_single(
             norm_init = norm_abs
         norm_rel = norm_abs / norm_init if norm_init > 1e-300 else 0.0
 
-        zncc = _zncc_from_buffer(x0, y0, z0, hx, hy, hz, f, mask, gbuf, meanf, bottomf, meang, bottomg)
+        zncc = _zncc_from_buffer(x0, y0, z0, hx, hy, hz, f, mask, gbuf, meanf_d, bottomf_d, meang, bottomg)
         if norm_rel < tol or norm_abs < ABS_TOL:
             return it, STATUS_CONVERGED, zncc
 
@@ -617,9 +640,9 @@ def _icgn_3dof_single(
     a22 = 1.0 + P[8]
 
     for it in range(1, max_iter + 1):
-        ok, n_valid, meang, bottomg = _warp_and_sample(P, x0, y0, z0, hx, hy, hz, mask, g, mode, gbuf)
+        ok, n_valid, meanf_d, bottomf_d, meang, bottomg = _warp_and_sample(P, x0, y0, z0, hx, hy, hz, mask, f, g, mode, gbuf)
         if not ok:
-            return it, STATUS_OUT_OF_BOUNDS, np.nan
+            return it, (STATUS_OUT_OF_BOUNDS if n_valid == 0 else STATUS_INVALID_SUBSET), np.nan
         b[0] = 0.0
         b[1] = 0.0
         b[2] = 0.0
@@ -630,17 +653,18 @@ def _icgn_3dof_single(
                 yy = y0 + dy
                 for dx in range(-hx, hx + 1):
                     xx = x0 + dx
-                    if mask[zz, yy, xx] == 0:
+                    gv = gbuf[idx]
+                    if gv != gv:
                         idx += 1
                         continue
-                    res = (float(f[zz, yy, xx]) - meanf) / bottomf - (gbuf[idx] - meang) / bottomg
+                    res = (float(f[zz, yy, xx]) - meanf_d) / bottomf_d - (gv - meang) / bottomg
                     idx += 1
                     b[0] += float(gx[zz, yy, xx]) * res
                     b[1] += float(gy[zz, yy, xx]) * res
                     b[2] += float(gz[zz, yy, xx]) * res
         norm_abs = 0.0
         for k in range(3):
-            b[k] *= bottomf
+            b[k] *= bottomf_d
             tb[k] = b[k] * 2.0 / bf2 + mu * (P[9 + k] - u_old[k] - vdual[k])
             norm_abs += tb[k] * tb[k]
         norm_abs = np.sqrt(norm_abs)
@@ -649,7 +673,7 @@ def _icgn_3dof_single(
         if norm_init < 0.0:
             norm_init = norm_abs
         norm_rel = norm_abs / norm_init if norm_init > 1e-300 else 0.0
-        zncc = _zncc_from_buffer(x0, y0, z0, hx, hy, hz, f, mask, gbuf, meanf, bottomf, meang, bottomg)
+        zncc = _zncc_from_buffer(x0, y0, z0, hx, hy, hz, f, mask, gbuf, meanf_d, bottomf_d, meang, bottomg)
         # MATLAB: break when normOfWNew < tol or normOfWNew*normOfWNewInit < mu*1e-4
         if norm_rel < tol or norm_abs < mu * 1e-4:
             return it, STATUS_CONVERGED, zncc
@@ -799,7 +823,7 @@ def evaluate_zncc_parallel(coords, P_all, hx, hy, hz, f, mask, g, mode, meanf_al
         if not valid[n]:
             continue
         gbuf = np.empty(S)
-        ok, nv, meang, bottomg = _warp_and_sample(
+        ok, nv, mf, bf, meang, bottomg = _warp_and_sample(
             P_all[n],
             coords[n, 0],
             coords[n, 1],
@@ -808,13 +832,12 @@ def evaluate_zncc_parallel(coords, P_all, hx, hy, hz, f, mask, g, mode, meanf_al
             hy,
             hz,
             mask,
+            f,
             g,
             mode,
             gbuf,
         )
         if not ok:
             continue
-        out[n] = _zncc_from_buffer(
-            coords[n, 0], coords[n, 1], coords[n, 2], hx, hy, hz, f, mask, gbuf, meanf_all[n], bottomf_all[n], meang, bottomg
-        )
+        out[n] = _zncc_from_buffer(coords[n, 0], coords[n, 1], coords[n, 2], hx, hy, hz, f, mask, gbuf, mf, bf, meang, bottomg)
     return out
