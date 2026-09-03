@@ -91,6 +91,7 @@ addopts = "-v --tb=short"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "perf: performance/throughput tests -- excluded from CI (runner CPU varies)",
+    "frozen: drives a built Windows bundle (skipped unless PYALDVC_FROZEN_EXE is set)",
 ]
 
 [tool.coverage.run]

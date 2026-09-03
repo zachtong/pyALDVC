@@ -45,3 +45,6 @@ CLAUDE.md
 Thumbs.db
 .DS_Store
 desktop.ini
+dist-exe/
+build-exe/
+packaging/version_info.txt

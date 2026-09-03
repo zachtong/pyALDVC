@@ -323,7 +323,8 @@ def user_data_dir() -> Path:
 
 def _configure_logging() -> None:
     log_path = user_data_dir() / "pyaldvc.log"
-    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    # A windowed (console-less) frozen executable has no standard streams.
+    handlers: list[logging.Handler] = [logging.StreamHandler()] if sys.stderr is not None else []
     try:
         handlers.append(logging.FileHandler(log_path, encoding="utf-8"))
     except OSError:
@@ -369,7 +370,9 @@ def main(argv: list[str] | None = None) -> int:
     if "--self-test" in argv:
         from .self_test import run_self_test
 
-        return run_self_test(Path("pyaldvc_self_test.txt"))
+        i = argv.index("--self-test")
+        report = argv[i + 1] if i + 1 < len(argv) and not argv[i + 1].startswith("-") else "pyaldvc_self_test.txt"
+        return run_self_test(Path(report))
     _configure_logging()
     sys.excepthook = _global_exception_hook
     app = create_application(argv)

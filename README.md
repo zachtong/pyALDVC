@@ -114,6 +114,14 @@ folder and display state; `Help > Run self-test` (or `al-dvc-gui --self-test`)
 checks an installation. English and Simplified Chinese; the kernels compile in
 the background after the window opens. `reports/gui.pdf` shows the screens.
 
+**Without Python (Windows):** every release also ships a portable bundle
+`pyALDVC-<version>-win64.zip` on the
+[releases page](https://github.com/zachtong/pyALDVC/releases). Unzip it
+anywhere and double-click `pyALDVC.exe`; `pyALDVC-console.exe --self-test`
+writes an installation report. The bundle is built by `tools/build_exe.py`
+(PyInstaller, `packaging/pyaldvc.spec`) and checked by
+`tests/test_frozen_bundle.py` before it is attached to the release.
+
 ### Command line
 
 ```bash
@@ -266,6 +274,7 @@ docs/       design document
 ```bash
 pytest                 # ~30 s, 100+ tests
 pytest -m "not slow"   # skip the heaviest synthetic cases
+PYALDVC_FROZEN_EXE=dist-exe/pyALDVC/pyALDVC-console.exe pytest tests/test_frozen_bundle.py   # after tools/build_exe.py
 ```
 
 ## Citation

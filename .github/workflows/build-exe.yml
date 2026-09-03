@@ -1,0 +1,97 @@
+name: Build Windows Bundle
+
+# Builds the portable Windows bundle a user unzips and double-clicks, proves
+# it works with the bundled self-test, and attaches it to the release of the
+# tag. Kept out of publish.yml on purpose: a bundle failure must never block
+# the PyPI release.
+#
+#   * push a v* tag        -> build, test, attach to that tag's release
+#   * dispatch with a tag  -> same, for re-attaching after a failed run
+#   * dispatch with no tag -> build and test only, no upload
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag whose release should receive the bundle (empty: build and test only)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-exe-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-exe:
+    name: Build the onedir bundle
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install the pinned build environment
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r packaging/requirements-build.txt
+          pip install -e . --no-deps
+
+      - name: Verify the tag matches the package version
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+        shell: bash
+        run: |
+          REF="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="${REF#v}"
+          PKG=$(python -c "import al_dvc; print(al_dvc.__version__)")
+          echo "tag=$TAG  al_dvc.__version__=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag v$TAG does not match al_dvc.__version__ $PKG"
+            exit 1
+          fi
+
+      - name: Build
+        run: python tools/build_exe.py
+
+      - name: Self-test the bundle
+        env:
+          PYALDVC_FROZEN_EXE: dist-exe/pyALDVC/pyALDVC-console.exe
+        run: python -m pytest tests/test_frozen_bundle.py -v
+
+      - name: Upload the bundle as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyALDVC-win64
+          path: dist-exe/*.zip
+          retention-days: 14
+
+  attach-exe:
+    name: Attach the bundle to the GitHub Release
+    needs: build-exe
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pyALDVC-win64
+          path: dist-exe/
+      - name: Upload to the release for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "pyALDVC $TAG" --generate-notes
+          fi
+          gh release upload "$TAG" dist-exe/*.zip --repo "$GITHUB_REPOSITORY" --clobber

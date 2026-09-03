@@ -1,0 +1,19 @@
+# Pinned build environment for the frozen Windows bundle (Python 3.11 on the
+# release runner). Pinned, not floating: PyInstaller's behaviour depends on the
+# exact library versions its hooks were written against. Install into a clean
+# venv, never a conda environment (conda's Library\bin leaks DLLs into the
+# bundle that exist nowhere else).
+PySide6==6.11.2
+numpy==2.4.2
+scipy==1.17.0
+numba==0.67.0
+llvmlite==0.49.0
+matplotlib==3.10.8
+tifffile==2026.2.20
+h5py==3.16.0
+pyyaml==6.0.3
+pyinstaller==6.22.2
+
+# The bundle is driven and checked after the build.
+pytest>=7.0
+psutil>=5.9

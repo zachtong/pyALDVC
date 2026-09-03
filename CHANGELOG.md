@@ -14,6 +14,11 @@ All notable changes to pyALDVC are documented here. The format follows
   strain overlays, result summary, exports (npz, mat, csv, vti, PDF), session
   files (`.aldvc`), English / Simplified Chinese, background kernel warm-up,
   self-test; offscreen tests and `scripts/make_gui_report.py` (`reports/gui.pdf`).
+- Portable Windows bundle: `packaging/pyaldvc.spec` + `tools/build_exe.py`
+  (PyInstaller onedir, `pyALDVC.exe` and `pyALDVC-console.exe --self-test`),
+  `tests/test_frozen_bundle.py` driving the built executable, and
+  `.github/workflows/build-exe.yml` attaching `pyALDVC-<version>-win64.zip`
+  to every `v*` release.
 
 ## [0.2.0] - 2026-09-03
 

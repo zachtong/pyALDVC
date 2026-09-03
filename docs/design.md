@@ -280,7 +280,7 @@ CLI: `al-dvc run config.yaml`, `al-dvc synth ...`, `al-dvc info volume.tif`,
 | **0.1 (this)** | core library, numba CPU backend, FEM/FD global step, pyramid NCC, masks, strain, exports (npz/mat/csv/vtk/pdf), CLI, synthetic validation reports |
 | 0.1.x | real-data hardening: node-wise cross-validation against the MATLAB ALDVC results shipped with the reference code (`scripts/compare_matlab.py`, `reports/matlab_crossval.pdf`), memory / throughput profile on a full 1024x1024x306 micro-CT pair, robustness on the `eyes` data set (where the MATLAB IC-GN does not converge), GitHub repository + CI |
 | 0.2 (released 2026-09-03) | "real-scan ready": deformed-frame masks in the kernel, per-node displacement uncertainty from the stored Hessian factors, per-frame checkpoints and resume, large-volume mode with on-the-fly gradients, tutorial notebook, PyPI publishing workflow (trusted publishing; the first upload needs the one-time PyPI setup described in `.github/workflows/publish.yml`). A coarse-to-fine IC-GN was considered and deferred: the current pipeline already converges at 100 % of the nodes for 30 degree rotations and 20 % strains on synthetic speckle, so the remaining hard cases (`eyes`) need larger subsets and a deformation-aware initial guess rather than resolution levels |
-| 0.3 (in progress) | standalone PySide6 GUI in `al_dvc.gui` (see section 11): `AppState` + panels + worker thread + sessions + JSON-dictionary i18n + kernel warm-up + self-test, three-plane slice viewer with node-grid overlays. Still open: portable Windows build (PyInstaller, copied from pyALDIC), pyvista 3-D view, mask drawing |
+| 0.3 (in progress) | standalone PySide6 GUI in `al_dvc.gui` (see section 11): `AppState` + panels + worker thread + sessions + JSON-dictionary i18n + kernel warm-up + self-test, three-plane slice viewer with node-grid overlays. Portable Windows bundle (PyInstaller spec, build script, frozen-bundle tests, release workflow). Still open: pyvista 3-D view, mask drawing |
 | 0.4 | GPU backend (numba.cuda: tricubic sampling + per-node IC-GN, one block per node; global step stays on the CPU). A 2-3 day prototype measures the real speed-up first; Blackwell (sm_120) support in numba-cuda must be confirmed |
 | later | adaptive octree mesh (3D analogue of pyALDIC's quadtree) with hanging-node hex elements; second-order (30-DOF) subset shape functions to remove the first-order curvature bias; subset splitting at discontinuities |
 
@@ -395,3 +395,24 @@ Differences from pyALDIC, all consequences of the data being 3-D:
   under the offscreen platform, so the whole application is testable headless
   (`tests/test_gui.py`, `QT_QPA_PLATFORM=offscreen`; on Windows the offscreen
   platform needs `QT_QPA_FONTDIR=C:\Windows\Fonts` to render text).
+
+### Portable Windows bundle
+
+`packaging/pyaldvc.spec` freezes the application with PyInstaller into a
+onedir tree (`pyALDVC.exe` windowed, `pyALDVC-console.exe` with a console for
+`--self-test [report]` and tracebacks). The spec mirrors pyALDIC's: data
+files are collected under their package path (`al_dvc/gui/arrows`,
+`al_dvc/gui/translations`) so `Path(__file__).parent` resolves inside the
+bundle; numba's threading-layer modules, the Qt SVG plugin and the matplotlib
+`qtagg`/`agg`/`pdf` backends are hidden imports; `vcomp140.dll` is bundled so
+numba keeps the OpenMP layer; unused Qt modules, rival bindings and the TLS
+stack are excluded. `packaging/rthook_pyaldvc.py` gives matplotlib a writable
+configuration directory, and `packaging/pyaldvc_launcher.py` is the entry
+script (kept out of the package so `al_dvc/__main__.py` is never collected as
+a second entry point). `tools/build_exe.py` runs PyInstaller with the pinned
+`packaging/requirements-build.txt`, lists the unresolved-import warnings,
+and zips `dist-exe/pyALDVC/` as `pyALDVC-<version>-win64.zip`;
+`tests/test_frozen_bundle.py` drives the built executable from a separate
+process (self-test, non-ASCII working directory) when `PYALDVC_FROZEN_EXE`
+is set. `.github/workflows/build-exe.yml` builds, tests and attaches the zip
+to the release of every `v*` tag, independently of the PyPI workflow.
