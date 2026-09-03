@@ -238,6 +238,16 @@ def cmd_plot(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+def cmd_gui(args: argparse.Namespace) -> int:
+    """Launch the graphical application (needs the ``gui`` extra: ``pip install al-dvc[gui]``)."""
+    try:
+        from .gui.app import main as gui_main
+    except ImportError as exc:  # PySide6 missing
+        raise SystemExit(f"the GUI needs PySide6: pip install al-dvc[gui] ({exc})") from exc
+    argv = [sys.argv[0]] + ([args.session] if args.session else [])
+    return int(gui_main(argv) or 0)
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="al-dvc", description="Augmented Lagrangian Digital Volume Correlation")
     ap.add_argument("-q", "--quiet", action="store_true", help="only warnings")
@@ -280,6 +290,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--frame", type=int, default=1)
     p.add_argument("-o", "--output")
     p.set_defaults(func=cmd_plot)
+    g = sub.add_parser("gui", help="launch the graphical application")
+    g.add_argument("session", nargs="?", help="session file (.aldvc) to open")
+    g.set_defaults(func=cmd_gui)
     return ap
 
 

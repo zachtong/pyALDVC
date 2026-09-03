@@ -1,0 +1,160 @@
+"""Volume list: add / remove frames and masks, show what is loaded."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ..app_state import AppState
+
+VOLUME_FILTER = "Volumes (*.tif *.tiff *.mat *.npy *.npz);;All files (*)"
+
+
+class VolumePanel(QWidget):
+    """Frames of the sequence (files or arrays) with their optional masks."""
+
+    def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._state = state
+        self._list = QListWidget()
+        self._list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self._list.setMinimumHeight(110)
+        self._btn_add = QPushButton()
+        self._btn_folder = QPushButton()
+        self._btn_mask = QPushButton()
+        self._btn_remove = QPushButton()
+        self._btn_clear = QPushButton()
+        self._info = QLabel()
+        self._info.setWordWrap(True)
+        self._info.setObjectName("hint")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        row1 = QHBoxLayout()
+        row1.addWidget(self._btn_add)
+        row1.addWidget(self._btn_folder)
+        layout.addLayout(row1)
+        layout.addWidget(self._list)
+        row2 = QHBoxLayout()
+        row2.addWidget(self._btn_mask)
+        row2.addWidget(self._btn_remove)
+        row2.addWidget(self._btn_clear)
+        layout.addLayout(row2)
+        layout.addWidget(self._info)
+
+        self._btn_add.clicked.connect(self._on_add_files)
+        self._btn_folder.clicked.connect(self._on_add_folder)
+        self._btn_mask.clicked.connect(self._on_set_mask)
+        self._btn_remove.clicked.connect(self._on_remove)
+        self._btn_clear.clicked.connect(self._state.clear_volumes)
+        self._list.currentRowChanged.connect(self._on_row_changed)
+        self._state.volumes_changed.connect(self.refresh)
+        self._state.current_frame_changed.connect(self._select_row)
+        self.retranslate_ui()
+        self.refresh()
+
+    # ------------------------------------------------------------------ actions
+    def _on_add_files(self) -> None:
+        files, _ = QFileDialog.getOpenFileNames(self, self.tr("Add volumes"), "", VOLUME_FILTER)
+        if files:
+            self._state.add_volume_paths(sorted(files))
+
+    def _on_add_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, self.tr("Add a folder of volumes"))
+        if not folder:
+            return
+        from al_dvc.io.volume_io import resolve_volume_paths
+
+        try:
+            paths = resolve_volume_paths(folder)
+        except Exception as exc:
+            self._state.log(f"{folder}: {exc}", "error")
+            return
+        if paths:
+            self._state.add_volume_paths([str(p) for p in paths])
+        else:
+            self._state.log(self.tr("No volume files found in {folder}").format(folder=folder), "warning")
+
+    def _on_set_mask(self) -> None:
+        row = self._list.currentRow()
+        if row < 0:
+            return
+        path, _ = QFileDialog.getOpenFileName(self, self.tr("Mask volume (True = material)"), "", VOLUME_FILTER)
+        if path:
+            self._state.set_mask(row, path=path)
+
+    def _on_remove(self) -> None:
+        row = self._list.currentRow()
+        if row >= 0:
+            self._state.remove_volume(row)
+
+    def _on_row_changed(self, row: int) -> None:
+        if row >= 0:
+            self._state.set_current_frame(row)
+            self._update_info(row)
+
+    def _select_row(self, index: int) -> None:
+        if 0 <= index < self._list.count() and self._list.currentRow() != index:
+            self._list.setCurrentRow(index)
+
+    # ------------------------------------------------------------------ view
+    def refresh(self) -> None:
+        self._list.blockSignals(True)
+        self._list.clear()
+        for i, entry in enumerate(self._state.volumes):
+            text = f"{i}: {entry.name}"
+            if entry.mask_path or entry.mask is not None:
+                text += "  [mask]"
+            if entry.array is not None:
+                text += f"  {tuple(entry.array.shape)}"
+            item = QListWidgetItem(text)
+            item.setToolTip(entry.path or self.tr("in-memory array"))
+            self._list.addItem(item)
+        self._list.blockSignals(False)
+        if self._state.volumes:
+            self._list.setCurrentRow(min(self._state.current_frame, len(self._state.volumes) - 1))
+        self._update_info(self._list.currentRow())
+        has = bool(self._state.volumes)
+        self._btn_mask.setEnabled(has)
+        self._btn_remove.setEnabled(has)
+        self._btn_clear.setEnabled(has)
+
+    def _update_info(self, row: int) -> None:
+        n = len(self._state.volumes)
+        if n == 0:
+            self._info.setText(self.tr("Add at least two volumes (the first one is the reference)."))
+            return
+        parts = [self.tr("{n} frames").format(n=n)]
+        if 0 <= row < n:
+            entry = self._state.volumes[row]
+            if entry.array is not None:
+                a = entry.array
+                parts.append(f"{Path(entry.path).name if entry.path else entry.name}: {tuple(a.shape)} {a.dtype}")
+            elif entry.path:
+                parts.append(Path(entry.path).name)
+        self._info.setText("   ".join(parts))
+
+    def retranslate_ui(self) -> None:
+        self._btn_add.setText(self.tr("Add volumes..."))
+        self._btn_folder.setText(self.tr("Add folder..."))
+        self._btn_mask.setText(self.tr("Set mask..."))
+        self._btn_remove.setText(self.tr("Remove"))
+        self._btn_clear.setText(self.tr("Clear"))
+        self._update_info(self._list.currentRow())
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.key() == Qt.Key.Key_Delete:
+            self._on_remove()
+        else:
+            super().keyPressEvent(event)

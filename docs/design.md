@@ -280,7 +280,7 @@ CLI: `al-dvc run config.yaml`, `al-dvc synth ...`, `al-dvc info volume.tif`,
 | **0.1 (this)** | core library, numba CPU backend, FEM/FD global step, pyramid NCC, masks, strain, exports (npz/mat/csv/vtk/pdf), CLI, synthetic validation reports |
 | 0.1.x | real-data hardening: node-wise cross-validation against the MATLAB ALDVC results shipped with the reference code (`scripts/compare_matlab.py`, `reports/matlab_crossval.pdf`), memory / throughput profile on a full 1024x1024x306 micro-CT pair, robustness on the `eyes` data set (where the MATLAB IC-GN does not converge), GitHub repository + CI |
 | 0.2 (released 2026-09-03) | "real-scan ready": deformed-frame masks in the kernel, per-node displacement uncertainty from the stored Hessian factors, per-frame checkpoints and resume, large-volume mode with on-the-fly gradients, tutorial notebook, PyPI publishing workflow (trusted publishing; the first upload needs the one-time PyPI setup described in `.github/workflows/publish.yml`). A coarse-to-fine IC-GN was considered and deferred: the current pipeline already converges at 100 % of the nodes for 30 degree rotations and 20 % strains on synthetic speckle, so the remaining hard cases (`eyes`) need larger subsets and a deformation-aware initial guess rather than resolution levels |
-| 0.3 | standalone PySide6 GUI (own repository and application, architecture copied from pyALDIC's `gui` package: sessions, worker threads, panels, i18n, background kernel warm-up, portable Windows build); 3D-specific parts are the three-plane slice viewer and an optional pyvista view |
+| 0.3 (in progress) | standalone PySide6 GUI in `al_dvc.gui` (see section 11): `AppState` + panels + worker thread + sessions + JSON-dictionary i18n + kernel warm-up + self-test, three-plane slice viewer with node-grid overlays. Still open: portable Windows build (PyInstaller, copied from pyALDIC), pyvista 3-D view, mask drawing |
 | 0.4 | GPU backend (numba.cuda: tricubic sampling + per-node IC-GN, one block per node; global step stays on the CPU). A 2-3 day prototype measures the real speed-up first; Blackwell (sm_120) support in numba-cuda must be confirmed |
 | later | adaptive octree mesh (3D analogue of pyALDIC's quadtree) with hanging-node hex elements; second-order (30-DOF) subset shape functions to remove the first-order curvature bias; subset splitting at discontinuities |
 
@@ -368,3 +368,30 @@ one. The ZNCC of the pyALDVC fields is 0.30 against 0.09-0.12 for the MATLAB
 fields. Solving this case would need a coarse-to-fine strategy for the
 whole IC-GN (not only the initial guess) and larger subsets; it is on the
 roadmap as a real-scan feature.
+
+## 11. Graphical application
+
+`al_dvc.gui` follows the pyALDIC architecture: one observable `AppState`
+(volumes and masks, `DVCPara`, run state, results, display settings) with Qt
+signals; panels that only read and write the state (`VolumePanel`,
+`ParamPanel`, `RunPanel`, `SliceViewer`, `ResultsPanel`); a `PipelineWorker`
+`QThread` that calls `run_aldvc` with `progress_fn` / `stop_fn` and returns the
+`PipelineResult` (partial on stop); `session.py` for `.aldvc` JSON sessions with
+paths relative to the file; `KernelWarmup` compiling the kernels on a daemon
+thread shortly after the window opens; `self_test.py` for installation checks
+(`al-dvc-gui --self-test`); the pyALDIC dark theme (`theme.py`, copied) and
+Windows title-bar helpers.
+
+Differences from pyALDIC, all consequences of the data being 3-D:
+
+* the viewer draws the XY, XZ and YZ mid-planes of the current volume with
+  sliders, and node-grid fields as blocks on the node layer nearest to each
+  plane (`mesh.to_grid`, extent from the node axes), with a shared colorbar;
+* masks are loaded as volumes rather than drawn; ROI drawing on slices is a
+  later feature;
+* translations are JSON dictionaries answered by a `QTranslator` subclass,
+  which removes the Qt Linguist tool chain (pyALDIC ships `.qm` catalogs);
+* dialogs go through `MainWindow._message`, which logs instead of blocking
+  under the offscreen platform, so the whole application is testable headless
+  (`tests/test_gui.py`, `QT_QPA_PLATFORM=offscreen`; on Windows the offscreen
+  platform needs `QT_QPA_FONTDIR=C:\Windows\Fonts` to render text).

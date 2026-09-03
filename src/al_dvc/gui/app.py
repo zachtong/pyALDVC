@@ -1,0 +1,388 @@
+"""pyALDVC main window and application entry point (``al-dvc-gui``).
+
+Layout: a left column with the volume list, the parameters and the run
+controls; the three-plane slice viewer in the centre; result display and
+export controls on the right. Every panel talks to one :class:`AppState` and
+reacts to its signals, so the panels are independent of each other.
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+import traceback
+from pathlib import Path
+
+from PySide6.QtCore import QEvent, QTimer
+from PySide6.QtGui import QAction, QActionGroup
+from PySide6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QScrollArea,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
+
+from al_dvc import __version__
+
+from .app_state import AppState, RunState
+from .i18n import SUPPORTED_LANGUAGES, LanguageManager
+from .kernel_warmup import START_DELAY_MS, KernelWarmup
+from .panels.param_panel import ParamPanel
+from .panels.results_panel import ResultsPanel
+from .panels.run_panel import RunPanel
+from .panels.viewer import SliceViewer
+from .panels.volume_panel import VolumePanel
+from .session import SESSION_SUFFIX, SessionError, apply_session, load_session, save_session
+from .theme import build_stylesheet
+from .window_chrome import enable_dark_title_bar
+
+logger = logging.getLogger(__name__)
+
+SESSION_FILTER = f"pyALDVC session (*{SESSION_SUFFIX})"
+
+
+class _Section(QWidget):
+    """A titled block of the left column."""
+
+    def __init__(self, title: str, body: QWidget) -> None:
+        super().__init__()
+        self.label = QLabel(title)
+        self.label.setObjectName("sectionHeader")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.addWidget(self.label)
+        layout.addWidget(body)
+
+
+class MainWindow(QMainWindow):
+    """The application window."""
+
+    def __init__(self, state: AppState | None = None) -> None:
+        super().__init__()
+        self.state = state or AppState()
+        enable_dark_title_bar(self)
+        self.resize(1440, 900)
+
+        self.volume_panel = VolumePanel(self.state)
+        self.param_panel = ParamPanel(self.state)
+        self.run_panel = RunPanel(self.state)
+        self.viewer = SliceViewer(self.state)
+        self.results_panel = ResultsPanel(self.state)
+
+        self._sections = {
+            "volumes": _Section("", self.volume_panel),
+            "parameters": _Section("", self.param_panel),
+            "run": _Section("", self.run_panel),
+        }
+        left_body = QWidget()
+        left_layout = QVBoxLayout(left_body)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        for sec in self._sections.values():
+            left_layout.addWidget(sec)
+        left_layout.addStretch(1)
+        left = QScrollArea()
+        left.setWidgetResizable(True)
+        left.setWidget(left_body)
+        left.setMinimumWidth(360)
+        right = QScrollArea()
+        right.setWidgetResizable(True)
+        right.setWidget(self.results_panel)
+        right.setMinimumWidth(300)
+        splitter = QSplitter()
+        splitter.addWidget(left)
+        splitter.addWidget(self.viewer)
+        splitter.addWidget(right)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
+        splitter.setSizes([400, 800, 340])
+        self.setCentralWidget(splitter)
+
+        self._actions: dict[str, QAction] = {}
+        self._menus = {}
+        self._build_menu_bar()
+        self.state.progress_updated.connect(lambda _f, msg: self.statusBar().showMessage(msg))
+        self.state.run_state_changed.connect(self._on_run_state_changed)
+        self.state.log_message.connect(self._on_log_message)
+        self.retranslate_ui()
+
+    # ------------------------------------------------------------------ messages
+    @property
+    def headless(self) -> bool:
+        """True under the offscreen platform (tests, self-test): dialogs would block forever."""
+        app = QApplication.instance()
+        return app is not None and app.platformName() == "offscreen"
+
+    def _message(self, kind: str, title: str, text: str) -> bool:
+        """Show a dialog, or log it when headless. ``question`` returns the answer (headless: True)."""
+        if self.headless:
+            self.state.log(f"{title}: {text}", "warning" if kind in ("warning", "critical") else "info")
+            return True
+        if kind == "question":
+            return QMessageBox.question(self, title, text) == QMessageBox.StandardButton.Yes
+        getattr(QMessageBox, kind)(self, title, text)
+        return True
+
+    # ------------------------------------------------------------------ menus
+    def _build_menu_bar(self) -> None:
+        bar = self.menuBar()
+        self._menus["file"] = bar.addMenu("")
+        for key, slot in [
+            ("new", self._on_new_session),
+            ("open", self._on_open_session),
+            ("save", self._on_save_session),
+            ("save_as", self._on_save_session_as),
+            ("add_volumes", self.volume_panel._on_add_files),
+            ("exit", self.close),
+        ]:
+            act = QAction(self)
+            act.triggered.connect(slot)
+            self._actions[key] = act
+            self._menus["file"].addAction(act)
+            if key in ("save_as", "add_volumes"):
+                self._menus["file"].addSeparator()
+        self._menus["view"] = bar.addMenu("")
+        self._menus["language"] = self._menus["view"].addMenu("")
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        for code, name in SUPPORTED_LANGUAGES.items():
+            act = QAction(name, self)
+            act.setCheckable(True)
+            act.setData(code)
+            act.triggered.connect(lambda _c=False, c=code: self._on_language_selected(c))
+            group.addAction(act)
+            self._menus["language"].addAction(act)
+            self._actions[f"lang_{code}"] = act
+        self._menus["help"] = bar.addMenu("")
+        for key, slot in [("self_test", self._on_self_test), ("about", self._on_about)]:
+            act = QAction(self)
+            act.triggered.connect(slot)
+            self._actions[key] = act
+            self._menus["help"].addAction(act)
+        self._sync_language_check()
+
+    def _sync_language_check(self) -> None:
+        mgr = _language_manager()
+        code = mgr.code if mgr is not None else "en"
+        for key, act in self._actions.items():
+            if key.startswith("lang_"):
+                act.setChecked(key == f"lang_{code}")
+
+    def _on_language_selected(self, code: str) -> None:
+        mgr = _language_manager()
+        if mgr is not None:
+            mgr.load(code)
+
+    # ------------------------------------------------------------------ sessions
+    def _on_new_session(self) -> None:
+        if self.state.run_state in (RunState.RUNNING, RunState.STOPPING):
+            return
+        self.state.reset()
+        self.setWindowTitle(f"pyALDVC {__version__}")
+
+    def _on_open_session(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, self.tr("Open session"), "", SESSION_FILTER)
+        if path:
+            self.open_session_path(path)
+
+    def open_session_path(self, path: str) -> list[str]:
+        try:
+            data = load_session(path)
+            missing = apply_session(data, self.state, path)
+        except SessionError as exc:
+            self._message("critical", self.tr("Cannot open session"), str(exc))
+            return []
+        self.setWindowTitle(f"pyALDVC {__version__} - {Path(path).name}")
+        if missing:
+            self._message(
+                "warning",
+                self.tr("Missing volumes"),
+                self.tr("{n} volume file(s) of the session were not found:\n{files}").format(
+                    n=len(missing), files="\n".join(missing[:8])
+                ),
+            )
+        self.state.log(self.tr("Session loaded: {path}").format(path=path))
+        return missing
+
+    def _on_save_session(self) -> None:
+        if self.state.session_path is None:
+            self._on_save_session_as()
+        else:
+            self.save_session_path(self.state.session_path)
+
+    def _on_save_session_as(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, self.tr("Save session"), "", SESSION_FILTER)
+        if path:
+            self.save_session_path(path)
+
+    def save_session_path(self, path: str | Path) -> Path | None:
+        results_path = None
+        if self.state.results is not None:
+            candidate = Path(self.state.output_dir) / "aldvc.npz"
+            if candidate.exists():
+                results_path = str(candidate)
+        try:
+            p = save_session(self.state, path, results_path)
+        except SessionError as exc:
+            self._message("critical", self.tr("Cannot save session"), str(exc))
+            return None
+        self.setWindowTitle(f"pyALDVC {__version__} - {p.name}")
+        self.state.log(self.tr("Session saved: {path}").format(path=p))
+        return p
+
+    # ------------------------------------------------------------------ help
+    def _on_self_test(self) -> None:
+        from .self_test import run_self_test
+
+        report = Path(self.state.output_dir) / "self_test.txt"
+        ok = run_self_test(report) == 0
+        self._message(
+            "information",
+            self.tr("Self-test"),
+            (self.tr("All checks passed.") if ok else self.tr("Some checks failed.")) + f"\n{report}",
+        )
+
+    def _on_about(self) -> None:
+        self._message(
+            "about",
+            self.tr("About pyALDVC"),
+            self.tr(
+                "pyALDVC {version}\nAugmented Lagrangian Digital Volume Correlation.\n"
+                "https://github.com/zachtong/pyALDVC\nBSD 3-Clause license."
+            ).format(version=__version__),
+        )
+
+    # ------------------------------------------------------------------ events
+    def _on_run_state_changed(self, state: RunState) -> None:
+        suffix = {RunState.RUNNING: self.tr(" [running]"), RunState.STOPPING: self.tr(" [stopping]")}.get(state, "")
+        base = f"pyALDVC {__version__}"
+        if self.state.session_path is not None:
+            base += f" - {self.state.session_path.name}"
+        self.setWindowTitle(base + suffix)
+
+    def _on_log_message(self, message: str, level: str) -> None:
+        if level == "error":
+            self.statusBar().showMessage(message, 10000)
+
+    def changeEvent(self, event) -> None:  # noqa: N802
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslate_ui()
+            for panel in (self.volume_panel, self.param_panel, self.run_panel, self.viewer, self.results_panel):
+                panel.retranslate_ui()
+        super().changeEvent(event)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if self.state.run_state in (RunState.RUNNING, RunState.STOPPING):
+            if not self._message("question", self.tr("Analysis running"), self.tr("A run is in progress. Stop it and close?")):
+                event.ignore()
+                return
+            self.run_panel.stop()
+            self.run_panel.wait(60_000)
+        event.accept()
+
+    def retranslate_ui(self) -> None:
+        self._sections["volumes"].label.setText(self.tr("Volumes"))
+        self._sections["parameters"].label.setText(self.tr("Parameters"))
+        self._sections["run"].label.setText(self.tr("Run"))
+        self._menus["file"].setTitle(self.tr("&File"))
+        self._menus["view"].setTitle(self.tr("&View"))
+        self._menus["language"].setTitle(self.tr("Language"))
+        self._menus["help"].setTitle(self.tr("&Help"))
+        texts = {
+            "new": self.tr("New session"),
+            "open": self.tr("Open session..."),
+            "save": self.tr("Save session"),
+            "save_as": self.tr("Save session as..."),
+            "add_volumes": self.tr("Add volumes..."),
+            "exit": self.tr("Exit"),
+            "self_test": self.tr("Run self-test"),
+            "about": self.tr("About pyALDVC"),
+        }
+        for key, text in texts.items():
+            self._actions[key].setText(text)
+        self._on_run_state_changed(self.state.run_state)
+        self._sync_language_check()
+
+
+# ---------------------------------------------------------------------- application
+def _language_manager() -> LanguageManager | None:
+    app = QApplication.instance()
+    return getattr(app, "_pyaldvc_lang_mgr", None) if app is not None else None
+
+
+def user_data_dir() -> Path:
+    base = Path.home() / (".pyaldvc" if sys.platform != "win32" else "AppData/Local/pyALDVC")
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def _configure_logging() -> None:
+    log_path = user_data_dir() / "pyaldvc.log"
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    try:
+        handlers.append(logging.FileHandler(log_path, encoding="utf-8"))
+    except OSError:
+        pass
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", handlers=handlers)
+
+
+def _global_exception_hook(exc_type, exc_value, exc_tb) -> None:
+    text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    logger.error("Unhandled exception:\n%s", text)
+    app = QApplication.instance()
+    if app is not None:
+        QMessageBox.critical(None, "pyALDVC", f"{exc_type.__name__}: {exc_value}\n\n{text[-1500:]}")
+
+
+def create_application(argv: list[str] | None = None) -> QApplication:
+    """A configured ``QApplication`` (style, stylesheet, language)."""
+    app = QApplication.instance() or QApplication(argv if argv is not None else sys.argv)
+    app.setOrganizationName("pyALDVC")
+    app.setApplicationName("pyALDVC")
+    app.setStyle("Fusion")
+    app.setStyleSheet(build_stylesheet())
+    if getattr(app, "_pyaldvc_lang_mgr", None) is None:
+        mgr = LanguageManager(app)
+        mgr.load(LanguageManager.resolve_language())
+        app._pyaldvc_lang_mgr = mgr  # type: ignore[attr-defined]
+    return app
+
+
+def _session_path_from_argv(argv: list[str]) -> str | None:
+    for arg in argv[1:]:
+        if arg.endswith(SESSION_SUFFIX) and Path(arg).is_file():
+            return arg
+    return None
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Launch the GUI (``al-dvc-gui [session.aldvc] [--self-test]``)."""
+    import multiprocessing
+
+    multiprocessing.freeze_support()
+    argv = list(sys.argv if argv is None else argv)
+    if "--self-test" in argv:
+        from .self_test import run_self_test
+
+        return run_self_test(Path("pyaldvc_self_test.txt"))
+    _configure_logging()
+    sys.excepthook = _global_exception_hook
+    app = create_application(argv)
+    window = MainWindow()
+    window.show()
+    warmup = KernelWarmup(window)
+    warmup.compiled.connect(lambda s: window.state.log(window.tr("Kernels compiled in {s:.0f} s").format(s=s)))
+    QTimer.singleShot(START_DELAY_MS, warmup.start)
+    session = _session_path_from_argv(argv)
+    if session:
+        QTimer.singleShot(0, lambda: window.open_session_path(session))
+    return app.exec()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

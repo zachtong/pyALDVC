@@ -4,6 +4,17 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Graphical application `al-dvc-gui` (`al-dvc gui`, `pip install al-dvc[gui]`):
+  PySide6 window with volume/mask list, parameter form (memory estimate,
+  VOI, advanced ADMM/IC-GN settings), background pipeline worker with progress,
+  stop and log, three-plane slice viewer with displacement / uncertainty /
+  strain overlays, result summary, exports (npz, mat, csv, vti, PDF), session
+  files (`.aldvc`), English / Simplified Chinese, background kernel warm-up,
+  self-test; offscreen tests and `scripts/make_gui_report.py` (`reports/gui.pdf`).
+
 ## [0.2.0] - 2026-09-03
 
 "Real-scan ready": validated against the MATLAB code on a micro-CT scan,
