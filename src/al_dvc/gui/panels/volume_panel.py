@@ -1,4 +1,10 @@
-"""Volume list: add / remove frames and masks, show what is loaded."""
+"""Volume list: the frames of the sequence with their region-of-interest status.
+
+A table (frame, name, shape, region) like pyALDIC's image list: the reference frame's mask is
+the region of interest of the analysis, a mask on a deformed frame only excludes its own voxels.
+Files and folders can be dropped on the panel; rows can be reordered; a context menu offers the
+per-frame actions.
+"""
 
 from __future__ import annotations
 
@@ -6,12 +12,15 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QFileDialog,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
+    QMenu,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -19,6 +28,14 @@ from PySide6.QtWidgets import (
 from ..app_state import AppState
 
 VOLUME_FILTER = "Volumes (*.tif *.tiff *.mat *.npy *.npz);;All files (*)"
+COLUMNS = ("index", "name", "shape", "region")
+
+
+class _VolumeTable(QTableWidget):
+    """Read-only single-selection table; ``count()`` keeps the old list API."""
+
+    def count(self) -> int:
+        return self.rowCount()
 
 
 class VolumePanel(QWidget):
@@ -27,35 +44,31 @@ class VolumePanel(QWidget):
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._state = state
-        self._list = QListWidget()
-        self._list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self._list = _VolumeTable(0, len(COLUMNS))
+        self._list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._list.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._list.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._list.verticalHeader().setVisible(False)
+        self._list.setShowGrid(False)
         self._list.setMinimumHeight(110)
+        self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        header = self._list.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setHighlightSections(False)
         self._btn_add = QPushButton()
         self._btn_folder = QPushButton()
         self._btn_mask = QPushButton()
         self._btn_remove = QPushButton()
-        self._btn_clear = QPushButton()
+        self._btn_up = QPushButton()
+        self._btn_down = QPushButton()
+        for b in (self._btn_up, self._btn_down):
+            b.setFixedWidth(40)
         self._info = QLabel()
         self._info.setWordWrap(True)
         self._info.setObjectName("hint")
-        self._roi_hint = QLabel()
-        self._roi_hint.setWordWrap(True)
-        self._roi_hint.setObjectName("hint")
-        self._placeholder = QLabel(self._list)
-        self._placeholder.setObjectName("placeholder")
-        self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._placeholder.setWordWrap(True)
-        self.setAcceptDrops(True)
-        self._list.setAcceptDrops(False)
-        self._roi_hint = QLabel()
-        self._roi_hint.setWordWrap(True)
-        self._roi_hint.setObjectName("hint")
-        self._placeholder = QLabel(self._list)
-        self._placeholder.setObjectName("placeholder")
-        self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._placeholder.setWordWrap(True)
-        self.setAcceptDrops(True)
-        self._list.setAcceptDrops(False)
         self._roi_hint = QLabel()
         self._roi_hint.setWordWrap(True)
         self._roi_hint.setObjectName("hint")
@@ -76,19 +89,22 @@ class VolumePanel(QWidget):
         row2 = QHBoxLayout()
         row2.addWidget(self._btn_mask)
         row2.addWidget(self._btn_remove)
-        row2.addWidget(self._btn_clear)
+        row2.addWidget(self._btn_up)
+        row2.addWidget(self._btn_down)
         layout.addLayout(row2)
         layout.addWidget(self._info)
         layout.addWidget(self._roi_hint)
 
         self._btn_add.clicked.connect(self._on_add_files)
-        self._state.mask_changed.connect(self._update_roi_hint)
         self._btn_folder.clicked.connect(self._on_add_folder)
         self._btn_mask.clicked.connect(self._on_set_mask)
         self._btn_remove.clicked.connect(self._on_remove)
-        self._btn_clear.clicked.connect(self._state.clear_volumes)
-        self._list.currentRowChanged.connect(self._on_row_changed)
+        self._btn_up.clicked.connect(lambda: self._move(-1))
+        self._btn_down.clicked.connect(lambda: self._move(+1))
+        self._list.currentCellChanged.connect(lambda row, _c, _pr, _pc: self._on_row_changed(row))
+        self._list.customContextMenuRequested.connect(self._on_context_menu)
         self._state.volumes_changed.connect(self.refresh)
+        self._state.mask_changed.connect(self.refresh)
         self._state.current_frame_changed.connect(self._select_row)
         self.retranslate_ui()
         self.refresh()
@@ -163,38 +179,84 @@ class VolumePanel(QWidget):
         if row >= 0:
             self._state.remove_volume(row)
 
+    def _move(self, delta: int) -> None:
+        row = self._list.currentRow()
+        if row >= 0:
+            self._state.move_volume(row, row + delta)
+
+    def _on_context_menu(self, pos) -> None:
+        row = self._list.rowAt(pos.y())
+        if row < 0 or row >= len(self._state.volumes):
+            return
+        self._list.setCurrentCell(row, 0)
+        menu = QMenu(self)
+        entry = self._state.volumes[row]
+        has_mask = entry.mask_path is not None or entry.mask is not None
+        act_mask = menu.addAction(self.tr("Set mask from file..."))
+        act_clear = menu.addAction(self.tr("Remove mask"))
+        act_clear.setEnabled(has_mask)
+        menu.addSeparator()
+        act_up = menu.addAction(self.tr("Move up"))
+        act_up.setEnabled(row > 0)
+        act_down = menu.addAction(self.tr("Move down"))
+        act_down.setEnabled(row < len(self._state.volumes) - 1)
+        menu.addSeparator()
+        act_remove = menu.addAction(self.tr("Remove frame"))
+        chosen = menu.exec(self._list.viewport().mapToGlobal(pos))
+        if chosen is act_mask:
+            self._on_set_mask()
+        elif chosen is act_clear:
+            self._state.remove_mask(row)
+        elif chosen is act_up:
+            self._move(-1)
+        elif chosen is act_down:
+            self._move(+1)
+        elif chosen is act_remove:
+            self._state.remove_volume(row)
+
     def _on_row_changed(self, row: int) -> None:
         if row >= 0:
             self._state.set_current_frame(row)
             self._update_info(row)
 
     def _select_row(self, index: int) -> None:
-        if 0 <= index < self._list.count() and self._list.currentRow() != index:
-            self._list.setCurrentRow(index)
+        if 0 <= index < self._list.rowCount() and self._list.currentRow() != index:
+            self._list.setCurrentCell(index, 0)
 
     # ------------------------------------------------------------------ view
+    def _region_text(self, index: int, entry) -> str:
+        has_mask = entry.mask_path is not None or entry.mask is not None
+        if index == 0:
+            if not has_mask:
+                return self.tr("whole volume")
+            mask = self._state.reference_mask()
+            return self.tr("ROI {pct:.0f}%").format(pct=100.0 * float(mask.mean())) if mask is not None else self.tr("ROI")
+        return self.tr("own mask") if has_mask else "-"
+
     def refresh(self) -> None:
         self._list.blockSignals(True)
-        self._list.clear()
+        self._list.setRowCount(len(self._state.volumes))
         for i, entry in enumerate(self._state.volumes):
-            text = f"{i}: {entry.name}"
-            if entry.mask_path or entry.mask is not None:
-                text += "  [mask]"
-            if entry.array is not None:
-                text += f"  {tuple(entry.array.shape)}"
-            item = QListWidgetItem(text)
-            item.setToolTip(entry.path or self.tr("in-memory array"))
-            self._list.addItem(item)
+            name = Path(entry.path).name if entry.path else entry.name
+            shape = f"{tuple(entry.array.shape)}" if entry.array is not None else ""
+            cells = [str(i), name, shape, self._region_text(i, entry)]
+            for c, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                item.setToolTip(entry.path or self.tr("in-memory array"))
+                if c in (0, 2, 3):
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self._list.setItem(i, c, item)
         self._list.blockSignals(False)
         if self._state.volumes:
-            self._list.setCurrentRow(min(self._state.current_frame, len(self._state.volumes) - 1))
+            row = min(self._state.current_frame, len(self._state.volumes) - 1)
+            if self._list.currentRow() != row:
+                self._list.setCurrentCell(row, 0)
         self._update_info(self._list.currentRow())
         has = bool(self._state.volumes)
         self._placeholder.setVisible(not has)
         self._update_roi_hint()
-        self._btn_mask.setEnabled(has)
-        self._btn_remove.setEnabled(has)
-        self._btn_clear.setEnabled(has)
+        for b in (self._btn_mask, self._btn_remove, self._btn_up, self._btn_down):
+            b.setEnabled(has)
 
     def _update_info(self, row: int) -> None:
         n = len(self._state.volumes)
@@ -230,13 +292,17 @@ class VolumePanel(QWidget):
 
     def retranslate_ui(self) -> None:
         self._btn_add.setText(self.tr("Add volumes..."))
-        self._placeholder.setText(self.tr("Drop volume files or a folder here\n(TIFF, npy, npz, mat)"))
-        self._update_roi_hint()
         self._btn_folder.setText(self.tr("Add folder..."))
         self._btn_mask.setText(self.tr("Set mask..."))
         self._btn_remove.setText(self.tr("Remove"))
-        self._btn_clear.setText(self.tr("Clear"))
-        self._update_info(self._list.currentRow())
+        self._btn_up.setText(self.tr("Up"))
+        self._btn_down.setText(self.tr("Down"))
+        self._btn_up.setToolTip(self.tr("Move the frame up (frame 0 is the reference)"))
+        self._btn_down.setToolTip(self.tr("Move the frame down"))
+        self._list.setHorizontalHeaderLabels([self.tr("#"), self.tr("Volume"), self.tr("Shape"), self.tr("Region")])
+        self._placeholder.setText(self.tr("Drop volume files or a folder here\n(TIFF, npy, npz, mat)"))
+        self._update_roi_hint()
+        self.refresh()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         if event.key() == Qt.Key.Key_Delete:

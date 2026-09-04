@@ -46,8 +46,13 @@ All notable changes to pyALDVC are documented here. The format follows
   canvases and the PNG export alike.
 - Menu shortcuts: F5 run, Esc stop, Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S
   sessions.
-- Volumes panel: drag and drop of files or folders, a placeholder in the empty
+- Volumes panel: a table (frame, name, shape, region) showing which frame
+  carries the region of interest or its own mask, frame reordering (Up / Down,
+  context menu), drag and drop of files or folders, a placeholder in the empty
   list, a hint line telling whether a region of interest crops the analysis.
+- The mask tools moved from the canvas toolbar into a "Region of interest"
+  section of the left column (pyALDIC's sidebar layout); the window fits
+  1200 x 700.
 - Window layout is remembered between sessions (geometry and column widths,
   QSettings); `View` menu toggles the data and results columns (Ctrl+1 / Ctrl+2)
   and resets the layout; minimum window size 1100 x 680. Canvas fonts follow

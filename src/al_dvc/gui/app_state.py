@@ -132,6 +132,19 @@ class AppState(QObject):
             self.current_frame = min(self.current_frame, max(0, len(self.volumes) - 1))
             self.volumes_changed.emit()
 
+    def move_volume(self, index: int, new_index: int) -> None:
+        """Reorder the sequence (frame 0 stays the reference of the run); the moved frame stays current."""
+        n = len(self.volumes)
+        if not (0 <= index < n) or not (0 <= new_index < n) or index == new_index:
+            return
+        entry = self.volumes.pop(index)
+        self.volumes.insert(new_index, entry)
+        self.current_frame = new_index
+        self.mask_editor = None
+        self.volumes_changed.emit()
+        self.current_frame_changed.emit(new_index)
+        self.mask_changed.emit()
+
     def clear_volumes(self) -> None:
         self.volumes = []
         self.current_frame = 0
