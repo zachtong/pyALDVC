@@ -61,6 +61,20 @@ class LocalContext:
         return int(self.coords_int.shape[0])
 
 
+def describe_backend(para) -> str:
+    """Human-readable backend line for the log: ``cuda (NVIDIA ...)`` or ``numba (CPU, 24 threads)``."""
+    backend = resolve_backend(para)
+    if backend == "cuda":
+        from .cuda_kernels import device_name
+
+        return f"cuda ({device_name()})"
+    if backend == "numba":
+        from al_dvc._numba_compat import get_num_threads
+
+        return f"numba (CPU, {get_num_threads()} threads)"
+    return "numpy (CPU reference kernels)"
+
+
 def resolve_backend(para: DVCPara) -> str:
     """``"cuda"``, ``"numba"`` or ``"numpy"`` for this parameter set on this machine."""
     backend = getattr(para, "backend", "auto")

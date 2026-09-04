@@ -49,6 +49,40 @@ STATUS_NAMES: dict[int, str] = {
 # ---------------------------------------------------------------------------
 
 
+VOI_EXTRA_MARGIN = 6  # voxels beyond the subset half-width and search range around a mask's bounding box
+
+
+def voi_from_mask(mask, winsize, search_radius, shape=None) -> "VOIRange | None":
+    """Bounding box of the valid voxels of ``mask`` grown by the subset half-width, the search range and
+    :data:`VOI_EXTRA_MARGIN`, clamped to the volume; ``None`` when the mask is empty or the box is the whole volume.
+
+    This is how the GUI turns the region of interest drawn on the slices into the analysed box: subsets near
+    the region's edge keep their full support and the search window, and everything else is cropped away
+    (memory and time scale with the box, not with the scan).
+    """
+    m = np.asarray(mask, dtype=bool)
+    if m.ndim != 3:
+        raise ValueError(f"mask must be 3-D (got shape {m.shape})")
+    shape = tuple(int(s) for s in (shape if shape is not None else m.shape))
+    if not m.any():
+        return None
+    zs = np.flatnonzero(m.any(axis=(1, 2)))
+    ys = np.flatnonzero(m.any(axis=(0, 2)))
+    xs = np.flatnonzero(m.any(axis=(0, 1)))
+    ws = np.broadcast_to(np.asarray(winsize, dtype=np.int64), (3,))
+    sr = np.broadcast_to(np.asarray(search_radius, dtype=np.int64), (3,))
+    margins = [int(ws[i] // 2 + sr[i] + VOI_EXTRA_MARGIN) for i in range(3)]  # (x, y, z)
+    nz, ny, nx = shape
+    box = VOIRange(
+        x=(max(0, int(xs[0]) - margins[0]), min(nx - 1, int(xs[-1]) + margins[0])),
+        y=(max(0, int(ys[0]) - margins[1]), min(ny - 1, int(ys[-1]) + margins[1])),
+        z=(max(0, int(zs[0]) - margins[2]), min(nz - 1, int(zs[-1]) + margins[2])),
+    )
+    if box.x == (0, nx - 1) and box.y == (0, ny - 1) and box.z == (0, nz - 1):
+        return None
+    return box
+
+
 @dataclass(frozen=True)
 class VOIRange:
     """Volume of interest as inclusive voxel index ranges.
@@ -65,6 +99,11 @@ class VOIRange:
     x: tuple[int, int] = (0, -1)
     y: tuple[int, int] = (0, -1)
     z: tuple[int, int] = (0, -1)
+
+    @property
+    def is_whole(self) -> bool:
+        """True for the default ``(0, -1)`` ranges, i.e. no cropping requested."""
+        return self.x == (0, -1) and self.y == (0, -1) and self.z == (0, -1)
 
     def clamp(self, shape: tuple[int, int, int]) -> "VOIRange":
         """Resolve sentinels and clamp every range to ``shape``."""

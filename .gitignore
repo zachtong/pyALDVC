@@ -49,3 +49,4 @@ dist-exe/
 build-exe/
 packaging/version_info.txt
 pyaldvc_self_test.txt
+aldvc_results/

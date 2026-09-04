@@ -19,7 +19,7 @@ from numpy.typing import NDArray
 from PySide6.QtCore import QObject, Signal
 
 from al_dvc.core.config import DVCPara, dvcpara_default
-from al_dvc.core.data_structures import PipelineResult
+from al_dvc.core.data_structures import PipelineResult, VOIRange, voi_from_mask
 
 from .mask_editor import MaskEditor, MaskOp
 
@@ -91,7 +91,7 @@ class AppState(QObject):
         self.results: PipelineResult | None = None
         self.output_dir: Path = Path("aldvc_results")
         self.session_path: Path | None = None
-        self.write_checkpoints: bool = True
+        self.write_checkpoints: bool = False  # advanced option; results live in memory and are exported afterwards
         # display
         self.display_field: str = "disp_magnitude"
         self.display_frame: int = 0
@@ -160,6 +160,28 @@ class AppState(QObject):
         except Exception as exc:
             self.log(f"cannot load the mask of frame {self.current_frame}: {exc}", "error")
             return None
+
+    def reference_mask(self) -> NDArray[np.bool_] | None:
+        """The mask of the reference frame (frame 0): the live editor's when it applies to frame 0, else its own."""
+        if not self.volumes:
+            return None
+        if self.mask_editor is not None and (self.current_frame == 0 or self.mask_target == "all"):
+            return self.mask_editor.mask
+        try:
+            return self.volumes[0].load_mask()
+        except Exception as exc:
+            self.log(f"cannot load the mask of the reference frame: {exc}", "error")
+            return None
+
+    def effective_voi(self) -> VOIRange | None:
+        """The analysed box: ``para.voi`` when set, else the region of interest's bounding box grown by the
+        subset half-width and the search range (``None`` = whole volume)."""
+        if self.para.voi is not None and not self.para.voi.is_whole:
+            return self.para.voi
+        mask = self.reference_mask()
+        if mask is None:
+            return None
+        return voi_from_mask(mask, self.para.winsize, self.para.search_radius)
 
     def ensure_mask_editor(self, base: str = "current") -> MaskEditor:
         """The editor for the current frame, created on first use.

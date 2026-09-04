@@ -6,6 +6,15 @@ All notable changes to pyALDVC are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Starting a second GUI run with checkpoints enabled failed with
+  `CheckpointMismatch`; the GUI now uses `resume="auto"`.
+- Unchecking "Whole volume" left a 0..0 VOI and the run failed inside the
+  worker; parameters are validated before a run starts (readable message).
+- numba-cuda driver messages (`cuMemFree` at INFO) and occupancy warnings no
+  longer flood the log; the CUDA probe is serialised across threads and the
+  run log names the compute backend (`Compute backend: cuda (...)`).
+
 ### Changed
 - Local IC-GN kernels are about 3x faster: the tricubic sampler allocated three
   `np.empty(4)` weight arrays per sampled voxel (a heap allocation each in
@@ -23,6 +32,14 @@ All notable changes to pyALDVC are documented here. The format follows
   holding a float32 copy of every frame of a sequence.
 
 ### Changed
+- GUI layout after pyALDIC: run controls, results, exports and the console on
+  the right, folding parameter sections with fixed-width inputs on the left
+  (`Subset & search`, `Solver`, `Strain & units`, `Performance`, `Advanced`),
+  inputs that react to the mouse wheel only when focused, the subset size shown
+  as the odd voxel span. Results stay in memory and exports ask for their
+  destination; the output folder and the VOI spin boxes are gone from the
+  panel: the analysed box follows the region of interest drawn on the slices
+  (`voi_from_mask`). Checkpoints are an advanced option, off by default.
 - Two install flavours only: `pip install al-dvc` is the complete CPU
   application (PySide6, pyvista and pyvistaqt are regular dependencies now),
   `pip install al-dvc[gpu]` adds the CUDA backend. The `gui`, `gui3d`, `viz`

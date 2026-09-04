@@ -478,6 +478,21 @@ thread shortly after the window opens; `self_test.py` for installation checks
 (`al-dvc-gui --self-test`); the pyALDIC dark theme (`theme.py`, copied) and
 Windows title-bar helpers.
 
+The window follows pyALDIC's three columns: volumes and parameters on the
+left (`CollapsibleSection`s with fixed-width labels and inputs; a `WheelGuard`
+event filter lets the mouse wheel change a spin box or combo only while it has
+focus, so scrolling the panel never edits a value), the slice viewer and the
+3-D view in the middle, and on the right the run controls, the results panel
+and the `ConsoleLog` at the bottom. Results stay in memory; every export asks
+for a file or folder (headless: `state.output_dir`). The analysed box is not a
+parameter: `AppState.effective_voi` turns the region of interest drawn on the
+slices into `voi_from_mask` (bounding box grown by the subset half-width, the
+search range and `VOI_EXTRA_MARGIN`), which is what pyALDIC does with its ROI
+rectangle; an explicit `DVCPara.voi` (scripts, sessions) still wins. Checkpoints
+are an advanced option (`write_checkpoints`, off by default) and the GUI runs
+with `resume="auto"`: compatible checkpoints are reused, a directory written by
+a different run is replaced instead of raising `CheckpointMismatch`.
+
 Differences from pyALDIC, all consequences of the data being 3-D:
 
 * the viewer draws the XY, XZ and YZ mid-planes of the current volume with

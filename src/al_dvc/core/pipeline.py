@@ -34,7 +34,7 @@ from ..solver.beta_tuning import auto_tune_beta
 from ..solver.coarse_init import coarse_initial_guess
 from ..solver.global_operators import build_global_operators, nodal_gradient
 from ..solver.init_disp import compute_initial_guess
-from ..solver.local_icgn import local_icgn, precompute_local_context
+from ..solver.local_icgn import describe_backend, local_icgn, precompute_local_context
 from ..solver.subpb1_solver import subpb1_solver
 from ..solver.subpb2_solver import build_global_system, solve_subpb2
 from ..solver.uncertainty import displacement_uncertainty
@@ -85,7 +85,7 @@ def run_aldvc(
     stop_fn: Callable[[], bool] | None = None,
     compute_strain: bool = True,
     checkpoint_dir: str | Path | None = None,
-    resume: bool = True,
+    resume: bool | str = True,
 ) -> PipelineResult:
     """Execute the AL-DVC pipeline on a sequence of volumes.
 
@@ -99,6 +99,11 @@ def run_aldvc(
         progress_fn: ``(fraction, message)`` callback.
         stop_fn: returns True to cancel; completed frames are returned.
         compute_strain: run Section 8.
+        checkpoint_dir: per-frame checkpoints are written here when given.
+        resume: ``True`` reuses compatible checkpoints and raises
+            :class:`CheckpointMismatch` for incompatible ones, ``False``
+            starts over, ``"auto"`` reuses compatible checkpoints and
+            silently replaces incompatible ones (the GUI's choice).
 
     Returns:
         :class:`PipelineResult`.
@@ -117,6 +122,7 @@ def run_aldvc(
     para = replace(para, voi=provider.clamped_voi, volume_shape=shape)
     if para.n_threads > 0:
         set_num_threads(para.n_threads)
+    logger.info("Compute backend: %s", describe_backend(para))
 
     schedule = para.frame_schedule
     if schedule is None:
@@ -140,7 +146,14 @@ def run_aldvc(
     ckpt: Checkpoint | None = None
     if checkpoint_dir is not None:
         ckpt = Checkpoint(checkpoint_dir)
-        ckpt.prepare(para, shape, schedule, base_mesh, n_frames, resume)
+        if resume == "auto":
+            try:
+                ckpt.prepare(para, shape, schedule, base_mesh, n_frames, True)
+            except CheckpointMismatch as exc:
+                logger.warning("%s; starting over", exc)
+                ckpt.prepare(para, shape, schedule, base_mesh, n_frames, False)
+        else:
+            ckpt.prepare(para, shape, schedule, base_mesh, n_frames, bool(resume))
         done_frames = ckpt.completed_frames()
         if done_frames:
             logger.info("Checkpoint %s: reusing %d completed frame(s)", ckpt.dir, len(done_frames))

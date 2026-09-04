@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
+import warnings
 from collections import OrderedDict
 from typing import Any
 
@@ -70,6 +72,22 @@ _STENCIL = (-1.0 / 60, 3.0 / 20, -3.0 / 4, 0.0, 3.0 / 4, -3.0 / 20, 1.0 / 60)
 
 _available: bool | None = None
 _unavailable_reason = ""
+_probe_lock = threading.Lock()
+# numba's driver logs every cuMemFree at INFO; that is noise in an application log
+logging.getLogger("numba.cuda.cudadrv.driver").setLevel(logging.WARNING)
+
+
+def _quiet_performance_warnings() -> None:
+    """Small last chunks and the probe launch few blocks; numba-cuda warns about occupancy on every such launch."""
+    try:
+        from numba.core.errors import NumbaPerformanceWarning
+
+        warnings.filterwarnings("ignore", category=NumbaPerformanceWarning)
+    except Exception:  # numba without CUDA support: nothing to silence
+        pass
+
+
+_quiet_performance_warnings()
 
 
 # --------------------------------------------------------------------------- availability
@@ -78,6 +96,14 @@ def cuda_available() -> bool:
     global _available, _unavailable_reason
     if _available is not None:
         return _available
+    with _probe_lock:  # the GUI warm-up thread, the status label and the worker may all ask at once
+        if _available is not None:
+            return _available
+        return _probe_once()
+
+
+def _probe_once() -> bool:
+    global _available, _unavailable_reason
     try:
         from numba import cuda
 
@@ -90,7 +116,7 @@ def cuda_available() -> bool:
         _available = True
     except Exception as exc:  # missing package, no driver, unsupported device, compile failure
         _unavailable_reason = f"{type(exc).__name__}: {exc}"
-        logger.info("CUDA backend unavailable (%s)", _unavailable_reason)
+        logger.warning("CUDA backend unavailable, using the CPU kernels (%s)", _unavailable_reason)
         _available = False
     return _available
 

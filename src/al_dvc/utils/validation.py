@@ -6,6 +6,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ..core.config import DVCPara
+from ..core.data_structures import VOIRange
 
 
 def validate_volume_list(volumes: list[NDArray]) -> tuple[int, int, int]:
@@ -29,8 +30,8 @@ def validate_volume_list(volumes: list[NDArray]) -> tuple[int, int, int]:
 
 
 def validate_para_against_volume(para: DVCPara, shape: tuple[int, int, int]) -> None:
-    """Raise when subset/step cannot fit inside the (clamped) VOI of ``shape``."""
-    voi = para.voi.clamp(shape)
+    """Raise when subset/step cannot fit inside the (clamped) VOI of ``shape`` (``voi=None``: the whole volume)."""
+    voi = (para.voi if para.voi is not None else VOIRange()).clamp(shape)
     ext = voi.extent  # (nz, ny, nx)
     for name, w, e in zip("xyz", para.winsize, ext[::-1]):
         if w + 2 * 5 + 1 > e:

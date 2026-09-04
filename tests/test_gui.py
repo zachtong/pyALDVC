@@ -170,27 +170,75 @@ def test_self_test_passes(qapp, tmp_path):
     assert "all checks passed" in report.read_text(encoding="utf-8")
 
 
-def test_voi_and_odd_subset_size(qapp, small_pair, tmp_path):
+def test_odd_subset_size_display(qapp):
     window = MainWindow()
     window.show()
     panel = window.param_panel
-    # the subset size is shown as the odd voxel span and stored as the even winsize
     assert panel.winsize.value() == window.state.para.winsize[0] + 1
     panel.winsize.setValue(33)
     assert window.state.para.winsize == (32, 32, 32)
     panel.winsize.setValue(24)  # an even value typed by hand rounds up
     assert panel.winsize.value() == 25 and window.state.para.winsize == (24, 24, 24)
-    # unchecking "whole volume" starts from the whole loaded volume, not from an empty box
+    window.close()
+
+
+def test_wheel_changes_values_only_when_focused(qapp):
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+
+    window = MainWindow()
+    window.show()
+    spin = window.param_panel.winstepsize
+    before = spin.value()
+
+    def wheel(widget):
+        event = QWheelEvent(
+            QPointF(5, 5),
+            QPointF(5, 5),
+            QPoint(0, 120),
+            QPoint(0, 120),
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+            Qt.ScrollPhase.NoScrollPhase,
+            False,
+        )
+        qapp.sendEvent(widget, event)
+
+    window.activateWindow()
+    qapp.setActiveWindow(window)
+    window.param_panel.search_radius.setFocus()
+    qapp.processEvents()
+    assert not spin.hasFocus()
+    wheel(spin)  # pointer over an unfocused box: nothing happens
+    assert spin.value() == before
+    spin.setFocus()
+    qapp.processEvents()
+    assert spin.hasFocus()
+    wheel(spin)
+    assert spin.value() == before + 1
+    window.close()
+
+
+def test_console_and_analysed_box_from_mask(qapp, small_pair):
+    window = MainWindow()
+    window.show()
+    n0 = window.console.count
+    window.state.log("hello", "warning")
+    assert window.console.count == n0 + 1 and "hello" in window.console.text()
     window.state.set_volume_arrays(list(small_pair), ["ref", "def"])
-    panel.voi_whole.setChecked(False)
-    voi = window.state.para.voi
+    assert window.state.effective_voi() is None  # no region drawn: the whole volume
     nz, ny, nx = small_pair[0].shape
-    assert voi is not None and voi.x == (0, nx - 1) and voi.y == (0, ny - 1) and voi.z == (0, nz - 1)
-    # a run with a VOI too small for the subset is refused with a message instead of a worker traceback
-    panel.voi["x"][1].setValue(5)
+    mask = np.zeros(small_pair[0].shape, dtype=bool)
+    mask[nz // 2 - 2 : nz // 2 + 2, ny // 2 - 2 : ny // 2 + 2, nx // 2 - 2 : nx // 2 + 2] = True
+    window.state.set_mask(0, mask=mask)
+    window.state.set_params(winsize=8, winstepsize=4, search_radius=2, admm_max_iter=1, verbose=False)
+    voi = window.state.effective_voi()
+    assert voi is not None and voi.x[0] > 0 and voi.x[1] < nx - 1
+    assert "region of interest" in window.param_panel._memory.text()
+    # a region too small for the subset is refused with a message, not a worker traceback
+    window.state.set_params(winsize=40)
     messages = []
     window.state.log_message.connect(lambda m, level: messages.append((m, level)))
-    window.state.set_params(winsize=16, winstepsize=8, search_radius=4, admm_max_iter=2, verbose=False)
     window.run_panel.start()
     assert any("do not fit" in m for m, _ in messages)
     assert window.state.run_state == RunState.IDLE

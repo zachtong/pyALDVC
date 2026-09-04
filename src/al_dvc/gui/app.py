@@ -13,7 +13,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QTimer
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
     QApplication,
@@ -41,11 +41,14 @@ from .panels.viewer import SliceViewer
 from .panels.volume_panel import VolumePanel
 from .session import SESSION_SUFFIX, SessionError, apply_session, load_session, save_session
 from .theme import build_stylesheet
+from .widgets import ConsoleLog
 from .window_chrome import enable_dark_title_bar
 
 logger = logging.getLogger(__name__)
 
 SESSION_FILTER = f"pyALDVC session (*{SESSION_SUFFIX})"
+LEFT_MIN_WIDTH = 400  # px: the widest button row of the left column fits without clipping
+RIGHT_MIN_WIDTH = 340
 
 
 class _Section(QWidget):
@@ -54,7 +57,7 @@ class _Section(QWidget):
     def __init__(self, title: str, body: QWidget) -> None:
         super().__init__()
         self.label = QLabel(title)
-        self.label.setObjectName("sectionHeader")
+        self.label.setObjectName("sectionTitle")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
         layout.addWidget(self.label)
@@ -80,25 +83,42 @@ class MainWindow(QMainWindow):
         self.center_tabs.addTab(self.view3d, "")
         self.results_panel = ResultsPanel(self.state)
 
+        self.console = ConsoleLog()
         self._sections = {
             "volumes": _Section("", self.volume_panel),
             "parameters": _Section("", self.param_panel),
             "run": _Section("", self.run_panel),
         }
+        # left column: data and parameters (scrolls; wide enough for every button row)
         left_body = QWidget()
         left_layout = QVBoxLayout(left_body)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        for sec in self._sections.values():
-            left_layout.addWidget(sec)
+        left_layout.setSpacing(0)
+        left_layout.addWidget(self._sections["volumes"])
+        left_layout.addWidget(self._sections["parameters"])
         left_layout.addStretch(1)
         left = QScrollArea()
         left.setWidgetResizable(True)
         left.setWidget(left_body)
-        left.setMinimumWidth(360)
-        right = QScrollArea()
-        right.setWidgetResizable(True)
-        right.setWidget(self.results_panel)
-        right.setMinimumWidth(300)
+        left.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left.setMinimumWidth(LEFT_MIN_WIDTH)
+        # right column: run controls on top, results in the middle, the console at the bottom (pyALDIC layout)
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(4)
+        right_layout.addWidget(self._sections["run"])
+        results_scroll = QScrollArea()
+        results_scroll.setWidgetResizable(True)
+        results_scroll.setWidget(self.results_panel)
+        results_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        right_layout.addWidget(results_scroll, 1)
+        console_box = QWidget()
+        console_layout = QVBoxLayout(console_box)
+        console_layout.setContentsMargins(8, 0, 8, 6)
+        console_layout.addWidget(self.console)
+        right_layout.addWidget(console_box, 0)
+        right.setMinimumWidth(RIGHT_MIN_WIDTH)
         splitter = QSplitter()
         splitter.addWidget(left)
         splitter.addWidget(self.center_tabs)
@@ -106,8 +126,9 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
-        splitter.setSizes([400, 800, 340])
+        splitter.setSizes([LEFT_MIN_WIDTH + 20, 760, RIGHT_MIN_WIDTH + 20])
         self.setCentralWidget(splitter)
+        self.state.log_message.connect(self.console.append_log)
 
         self._actions: dict[str, QAction] = {}
         self._menus = {}
@@ -295,7 +316,7 @@ class MainWindow(QMainWindow):
     def changeEvent(self, event) -> None:  # noqa: N802
         if event.type() == QEvent.Type.LanguageChange:
             self.retranslate_ui()
-            for panel in (self.volume_panel, self.param_panel, self.run_panel, self.viewer, self.results_panel):
+            for panel in (self.volume_panel, self.param_panel, self.run_panel, self.viewer, self.results_panel, self.console):
                 panel.retranslate_ui()
         super().changeEvent(event)
 

@@ -1,30 +1,20 @@
-"""Parameter editor bound to ``AppState.para`` (a ``DVCPara``)."""
+"""Parameter editor bound to ``AppState.para`` (a ``DVCPara``).
+
+Five folding sections, pyALDIC style (fixed-width labels and inputs, wheel only when focused):
+subset & search, solver, strain & units, performance, advanced. The analysed box is not a
+parameter: it follows the region of interest drawn on the slices (see ``AppState.effective_voi``).
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QDoubleSpinBox,
-    QFileDialog,
-    QFormLayout,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QPushButton,
-    QSpinBox,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
 
-from al_dvc.core.data_structures import VOIRange
 from al_dvc.io.volume_ops import memory_model
 
 from ..app_state import AppState
+from ..widgets import COMBO_WIDTH, CollapsibleSection, combo, dspin, form_label, guard_wheel, make_form, spin
 
 INTERP_METHODS = ["cubic", "bspline", "linear"]
 INIT_METHODS = ["pyramid", "ncc", "zero", "previous"]
@@ -33,186 +23,167 @@ STRAIN_TYPES = ["infinitesimal", "green_lagrange", "euler_almansi", "hencky"]
 REFERENCE_MODES = ["accumulative", "incremental"]
 SUBPB2_METHODS = ["fem", "fd"]
 GRADIENT_MODES = ["stored", "on_the_fly"]
+BACKENDS = ["auto", "cuda", "numba"]
+VOXEL_FIELD_WIDTH = 72
 
 
 class ParamPanel(QWidget):
-    """Form of the most useful ``DVCPara`` fields plus an advanced section."""
+    """Form of the ``DVCPara`` fields, grouped in folding sections."""
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._state = state
         self._updating = False
+        self.labels: dict[str, QLabel] = {}
+        self.sections: dict[str, CollapsibleSection] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        # ---- main form
-        self._form = QFormLayout()
-        self._form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        self.winsize = self._spin(5, 257, 2)  # shown as the odd voxel span 2h+1; stored as the even winsize = 2h
-        self.winstepsize = self._spin(1, 128, 1)
-        self.search_radius = self._spin(1, 128, 1)
-        self.interp = self._combo(INTERP_METHODS)
-        self.init_method = self._combo(INIT_METHODS)
+        # ---- subset & search
+        self.winsize = spin(5, 257, 2)  # the odd voxel span 2h+1; stored as the even winsize = 2h
+        self.winstepsize = spin(1, 128, 1)
+        self.search_radius = spin(1, 128, 1)
+        self.init_method = combo(INIT_METHODS)
+        self.interp = combo(INTERP_METHODS)
+        self._add_section(
+            "subset",
+            layout,
+            [
+                ("winsize", self.winsize),
+                ("winstepsize", self.winstepsize),
+                ("search_radius", self.search_radius),
+                ("init_method", self.init_method),
+                ("interp", self.interp),
+            ],
+        )
+
+        # ---- solver
+        self.reference_mode = combo(REFERENCE_MODES)
         self.use_global = QCheckBox()
-        self.subpb2 = self._combo(SUBPB2_METHODS)
-        self.reference_mode = self._combo(REFERENCE_MODES)
-        self.strain_method = self._combo(STRAIN_METHODS)
-        self.strain_type = self._combo(STRAIN_TYPES)
-        self.voxel = [self._dspin(1e-6, 1e6, 4) for _ in range(3)]
-        self.units = QLineEdit()
-        self.prefilter = self._dspin(0.0, 10.0, 2)
-        self.gradient_mode = self._combo(GRADIENT_MODES)
-        self.n_threads = self._spin(0, 512, 1)
-        self.labels: dict[str, QLabel] = {}
-        voxel_row = QHBoxLayout()
+        self.subpb2 = combo(SUBPB2_METHODS)
+        self._add_section(
+            "solver",
+            layout,
+            [("reference_mode", self.reference_mode), ("use_global", self.use_global), ("subpb2", self.subpb2)],
+        )
+
+        # ---- strain & units
+        self.strain_method = combo(STRAIN_METHODS)
+        self.strain_type = combo(STRAIN_TYPES)
+        self.voxel = [dspin(1e-6, 1e6, 4, width=VOXEL_FIELD_WIDTH) for _ in range(3)]
+        voxel_widget = QWidget()
+        voxel_row = QHBoxLayout(voxel_widget)
+        voxel_row.setContentsMargins(0, 0, 0, 0)
+        voxel_row.setSpacing(4)
         for w in self.voxel:
             voxel_row.addWidget(w)
-        voxel_widget = QWidget()
-        voxel_widget.setLayout(voxel_row)
-        voxel_row.setContentsMargins(0, 0, 0, 0)
-        for key, widget in [
-            ("winsize", self.winsize),
-            ("winstepsize", self.winstepsize),
-            ("search_radius", self.search_radius),
-            ("interp", self.interp),
-            ("init_method", self.init_method),
-            ("use_global", self.use_global),
-            ("subpb2", self.subpb2),
-            ("reference_mode", self.reference_mode),
-            ("strain_method", self.strain_method),
-            ("strain_type", self.strain_type),
-            ("voxel", voxel_widget),
-            ("units", self.units),
-            ("prefilter", self.prefilter),
-            ("gradient_mode", self.gradient_mode),
-            ("n_threads", self.n_threads),
-        ]:
-            label = QLabel()
-            self.labels[key] = label
-            self._form.addRow(label, widget)
-        layout.addLayout(self._form)
+        self.units = QLineEdit()
+        self.units.setFixedWidth(COMBO_WIDTH)
+        self._add_section(
+            "strain",
+            layout,
+            [
+                ("strain_method", self.strain_method),
+                ("strain_type", self.strain_type),
+                ("voxel", voxel_widget),
+                ("units", self.units),
+            ],
+        )
 
-        # ---- VOI
-        self._voi_group = QGroupBox()
-        voi_layout = QFormLayout(self._voi_group)
-        self.voi_whole = QCheckBox()
-        self.voi_whole.setChecked(True)
-        voi_layout.addRow(self.voi_whole)
-        self.voi = {}
-        for axis in ("x", "y", "z"):
-            lo, hi = self._spin(0, 100000, 1), self._spin(0, 100000, 1)
-            row = QHBoxLayout()
-            row.addWidget(lo)
-            row.addWidget(QLabel("-"))
-            row.addWidget(hi)
-            w = QWidget()
-            w.setLayout(row)
-            row.setContentsMargins(0, 0, 0, 0)
-            self.voi[axis] = (lo, hi)
-            label = QLabel(axis)
-            voi_layout.addRow(label, w)
-        layout.addWidget(self._voi_group)
-
-        # ---- advanced
-        self._adv_group = QGroupBox()
-        self._adv_group.setCheckable(True)
-        self._adv_group.setChecked(False)
-        adv = QFormLayout(self._adv_group)
-        self.mu = self._dspin(1e-8, 1e3, 6)
-        self.beta_auto = QCheckBox()
-        self.beta = self._dspin(1e-8, 1e6, 6)
-        self.admm_max_iter = self._spin(1, 50, 1)
-        self.icgn_tol = self._dspin(1e-6, 0.5, 6)
-        self.icgn_dp_tol = self._dspin(1e-6, 0.5, 6)
-        self.icgn_max_iter = self._spin(1, 1000, 1)
-        self.icgn_patience = self._spin(0, 100, 1)
-        self.subset_stride = self._spin(1, 8, 1)
-        self.init_coarse = self._spin(1, 8, 1)
-        self.backend = QComboBox()
-        for key in ("auto", "cuda", "numba"):
+        # ---- performance
+        self.backend = combo(BACKENDS)
+        self.backend.clear()
+        for key in BACKENDS:
             self.backend.addItem(key, key)
         self.backend_status = QLabel()
         self.backend_status.setObjectName("hint")
         self.backend_status.setWordWrap(True)
-        self.local_outlier = self._dspin(0.0, 20.0, 2)
-        self.init_outlier = self._dspin(0.0, 20.0, 2)
-        self.hessian_cond = self._dspin(1.0, 1e15, 0)
-        self.min_valid_ratio = self._dspin(0.05, 1.0, 2)
-        beta_row = QHBoxLayout()
-        beta_row.addWidget(self.beta_auto)
-        beta_row.addWidget(self.beta)
-        beta_widget = QWidget()
-        beta_widget.setLayout(beta_row)
-        beta_row.setContentsMargins(0, 0, 0, 0)
-        for key, widget in [
-            ("mu", self.mu),
-            ("beta", beta_widget),
-            ("admm_max_iter", self.admm_max_iter),
-            ("icgn_tol", self.icgn_tol),
-            ("icgn_dp_tol", self.icgn_dp_tol),
-            ("icgn_max_iter", self.icgn_max_iter),
-            ("icgn_patience", self.icgn_patience),
-            ("subset_stride", self.subset_stride),
-            ("init_coarse", self.init_coarse),
-            ("backend", self.backend),
-            ("backend_status", self.backend_status),
-            ("local_outlier", self.local_outlier),
-            ("init_outlier", self.init_outlier),
-            ("hessian_cond", self.hessian_cond),
-            ("min_valid_ratio", self.min_valid_ratio),
-        ]:
-            label = QLabel()
-            self.labels[key] = label
-            adv.addRow(label, widget)
-        layout.addWidget(self._adv_group)
-
-        # ---- output
-        out_row = QHBoxLayout()
-        self.output_dir = QLineEdit()
-        self._btn_output = QPushButton()
-        out_row.addWidget(self.output_dir)
-        out_row.addWidget(self._btn_output)
-        self._output_label = QLabel()
-        layout.addWidget(self._output_label)
-        layout.addLayout(out_row)
-        self.checkpoint = QCheckBox()
-        self.checkpoint.setChecked(state.write_checkpoints)
-        self.checkpoint.toggled.connect(lambda v: setattr(self._state, "write_checkpoints", bool(v)))
-        layout.addWidget(self.checkpoint)
+        self.n_threads = spin(0, 512, 1)
+        self.gradient_mode = combo(GRADIENT_MODES)
+        self.subset_stride = spin(1, 8, 1)
+        self.init_coarse = spin(1, 8, 1)
+        self.prefilter = dspin(0.0, 10.0, 2)
+        perf = self._add_section(
+            "performance",
+            layout,
+            [
+                ("backend", self.backend),
+                ("n_threads", self.n_threads),
+                ("gradient_mode", self.gradient_mode),
+                ("subset_stride", self.subset_stride),
+                ("init_coarse", self.init_coarse),
+                ("prefilter", self.prefilter),
+            ],
+        )
+        perf.add_widget(self.backend_status)
         self._memory = QLabel()
         self._memory.setObjectName("hint")
         self._memory.setWordWrap(True)
-        layout.addWidget(self._memory)
+        perf.add_widget(self._memory)
 
+        # ---- advanced (folded)
+        self.mu = dspin(1e-8, 1e3, 6)
+        self.beta_auto = QCheckBox()
+        self.beta = dspin(1e-8, 1e6, 6)
+        beta_widget = QWidget()
+        beta_row = QHBoxLayout(beta_widget)
+        beta_row.setContentsMargins(0, 0, 0, 0)
+        beta_row.setSpacing(6)
+        beta_row.addWidget(self.beta_auto)
+        beta_row.addWidget(self.beta)
+        self.admm_max_iter = spin(1, 50, 1)
+        self.icgn_tol = dspin(1e-6, 0.5, 6)
+        self.icgn_dp_tol = dspin(1e-6, 0.5, 6)
+        self.icgn_max_iter = spin(1, 1000, 1)
+        self.icgn_patience = spin(0, 100, 1)
+        self.local_outlier = dspin(0.0, 20.0, 2)
+        self.init_outlier = dspin(0.0, 20.0, 2)
+        self.hessian_cond = dspin(1.0, 1e15, 0)
+        self.min_valid_ratio = dspin(0.05, 1.0, 2)
+        self.checkpoint = QCheckBox()
+        self.checkpoint.setChecked(bool(state.write_checkpoints))
+        advanced = self._add_section(
+            "advanced",
+            layout,
+            [
+                ("mu", self.mu),
+                ("beta", beta_widget),
+                ("admm_max_iter", self.admm_max_iter),
+                ("icgn_tol", self.icgn_tol),
+                ("icgn_dp_tol", self.icgn_dp_tol),
+                ("icgn_max_iter", self.icgn_max_iter),
+                ("icgn_patience", self.icgn_patience),
+                ("local_outlier", self.local_outlier),
+                ("init_outlier", self.init_outlier),
+                ("hessian_cond", self.hessian_cond),
+                ("min_valid_ratio", self.min_valid_ratio),
+            ],
+            expanded=False,
+        )
+        advanced.add_widget(self.checkpoint)
+        layout.addStretch(1)
+
+        guard_wheel(self)
         self._connect()
         self._state.params_changed.connect(self.refresh)
         self._state.volumes_changed.connect(self._update_memory)
-        self._state.volumes_changed.connect(self._on_volumes_for_voi)
-        self._state.output_dir_changed.connect(lambda p: self.output_dir.setText(p))
+        self._state.mask_changed.connect(self._update_memory)
         self.retranslate_ui()
         self.refresh()
 
-    # ------------------------------------------------------------------ widgets
-    @staticmethod
-    def _spin(lo: int, hi: int, step: int) -> QSpinBox:
-        s = QSpinBox()
-        s.setRange(lo, hi)
-        s.setSingleStep(step)
-        return s
-
-    @staticmethod
-    def _dspin(lo: float, hi: float, decimals: int) -> QDoubleSpinBox:
-        s = QDoubleSpinBox()
-        s.setRange(lo, hi)
-        s.setDecimals(decimals)
-        s.setSingleStep(10 ** (-decimals) if decimals else 1.0)
-        return s
-
-    @staticmethod
-    def _combo(items: list[str]) -> QComboBox:
-        c = QComboBox()
-        c.addItems(items)
-        return c
+    # ------------------------------------------------------------------ construction helpers
+    def _add_section(self, key: str, layout, rows, expanded: bool = True) -> CollapsibleSection:
+        section = CollapsibleSection(expanded=expanded)
+        form = make_form()
+        for name, widget in rows:
+            label = form_label()
+            self.labels[name] = label
+            form.addRow(label, widget)
+        section.add_layout(form)
+        layout.addWidget(section)
+        self.sections[key] = section
+        return section
 
     # ------------------------------------------------------------------ binding
     def _connect(self) -> None:
@@ -247,12 +218,7 @@ class ParamPanel(QWidget):
         self.init_outlier.valueChanged.connect(lambda v: self._set("init_outlier_threshold", float(v)))
         self.hessian_cond.valueChanged.connect(lambda v: self._set("hessian_cond_max", float(v)))
         self.min_valid_ratio.valueChanged.connect(lambda v: self._set("min_valid_ratio", float(v)))
-        self.voi_whole.toggled.connect(self._on_voi_changed)
-        for lo, hi in self.voi.values():
-            lo.valueChanged.connect(self._on_voi_changed)
-            hi.valueChanged.connect(self._on_voi_changed)
-        self.output_dir.editingFinished.connect(lambda: self._state.set_output_dir(self.output_dir.text() or "aldvc_results"))
-        self._btn_output.clicked.connect(self._on_choose_output)
+        self.checkpoint.toggled.connect(lambda v: setattr(self._state, "write_checkpoints", bool(v)))
 
     def _set(self, name: str, value: Any) -> None:
         if self._updating:
@@ -274,46 +240,6 @@ class ParamPanel(QWidget):
             self.winsize.setValue(v + 1)  # re-enters with the odd value
             return
         self._set("winsize", v - 1)
-
-    def _voi_spins_are_unset(self) -> bool:
-        return all(int(lo.value()) == 0 and int(hi.value()) == 0 for lo, hi in self.voi.values())
-
-    def _fill_voi_from_volume(self) -> None:
-        """Whole-volume ranges in the VOI spin boxes (and their maxima) from the loaded volume."""
-        shape = self._state.volume_shape()
-        if shape is None:
-            return
-        nz, ny, nx = shape
-        was = self._updating
-        self._updating = True
-        try:
-            for ax, n in (("x", nx), ("y", ny), ("z", nz)):
-                lo, hi = self.voi[ax]
-                lo.setMaximum(max(0, n - 1))
-                hi.setMaximum(max(0, n - 1))
-                lo.setValue(0)
-                hi.setValue(max(0, n - 1))
-        finally:
-            self._updating = was
-
-    def _on_voi_changed(self, *_args) -> None:
-        if self._updating:
-            return
-        whole = self.voi_whole.isChecked()
-        if not whole and self._voi_spins_are_unset():
-            self._fill_voi_from_volume()  # start from the whole volume instead of an empty 0..0 box
-        for lo, hi in self.voi.values():
-            lo.setEnabled(not whole)
-            hi.setEnabled(not whole)
-        if whole:
-            self._set("voi", None)
-        else:
-            self._set("voi", VOIRange(**{ax: (int(lo.value()), int(hi.value())) for ax, (lo, hi) in self.voi.items()}))
-
-    def _on_choose_output(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, self.tr("Output folder"), self.output_dir.text())
-        if folder:
-            self._state.set_output_dir(folder)
 
     # ------------------------------------------------------------------ view
     def refresh(self) -> None:
@@ -354,32 +280,10 @@ class ParamPanel(QWidget):
             self.init_outlier.setValue(float(p.init_outlier_threshold))
             self.hessian_cond.setValue(float(p.hessian_cond_max))
             self.min_valid_ratio.setValue(float(p.min_valid_ratio))
-            whole = p.voi is None
-            self.voi_whole.setChecked(whole)
-            for ax, (lo, hi) in self.voi.items():
-                lo.setEnabled(not whole)
-                hi.setEnabled(not whole)
-                if p.voi is not None:
-                    rng = getattr(p.voi, ax)
-                    lo.setValue(int(rng[0]))
-                    hi.setValue(int(rng[1]))
-            self.output_dir.setText(str(self._state.output_dir))
+            self.checkpoint.setChecked(bool(self._state.write_checkpoints))
         finally:
             self._updating = False
         self._update_memory()
-
-    def _on_volumes_for_voi(self) -> None:
-        """New volumes: VOI spin boxes get the volume extent as maximum, and a fresh explicit VOI covers it all."""
-        if not self.voi_whole.isChecked() and self._voi_spins_are_unset():
-            self._fill_voi_from_volume()
-            self._on_voi_changed()
-        else:
-            shape = self._state.volume_shape()
-            if shape is not None:
-                nz, ny, nx = shape
-                for ax, n in (("x", nx), ("y", ny), ("z", nz)):
-                    self.voi[ax][0].setMaximum(max(0, n - 1))
-                    self.voi[ax][1].setMaximum(max(0, n - 1))
 
     def _update_memory(self) -> None:
         shape = self._state.volume_shape() if self._state.volumes and self._state.volumes[0].array is not None else None
@@ -387,14 +291,17 @@ class ParamPanel(QWidget):
             self._memory.setText(self.tr("Memory estimate: load a volume first"))
             return
         p = self._state.para
-        mem = memory_model(
-            shape, p.gradient_mode, p.interp_method, any(v.mask_path or v.mask is not None for v in self._state.volumes)
+        has_mask = any(v.mask_path or v.mask is not None for v in self._state.volumes) or self._state.mask_editor is not None
+        voi = self._state.effective_voi()
+        box_shape = tuple(int(e) for e in voi.clamp(shape).extent) if voi is not None else shape
+        mem = memory_model(box_shape, p.gradient_mode, p.interp_method, has_mask)
+        text = self.tr("Memory for a frame pair: {bpv:.0f} bytes/voxel, {gb:.2f} GB").format(
+            bpv=mem["bytes_per_voxel"], gb=mem["total_gb"]
         )
-        self._memory.setText(
-            self.tr("Resident memory for a frame pair: {bpv:.0f} bytes/voxel, {gb:.2f} GB").format(
-                bpv=mem["bytes_per_voxel"], gb=mem["total_gb"]
-            )
-        )
+        if voi is not None:
+            frac = 100.0 * float(box_shape[0] * box_shape[1] * box_shape[2]) / float(shape[0] * shape[1] * shape[2])
+            text += "\n" + self.tr("Analysed box from the region of interest: {pct:.0f}% of the volume").format(pct=frac)
+        self._memory.setText(text)
 
     def refresh_backend_status(self) -> None:
         """Describe the compute backend that ``backend=auto`` would pick (CUDA device name or CPU)."""
@@ -407,32 +314,31 @@ class ParamPanel(QWidget):
 
     def retranslate_ui(self) -> None:
         texts = {
-            "winsize": self.tr("Subset size [voxel, odd]"),
-            "winstepsize": self.tr("Node spacing [voxel]"),
-            "search_radius": self.tr("Search radius [voxel]"),
-            "interp": self.tr("Interpolation"),
+            "winsize": self.tr("Subset size (odd) [voxel]"),
+            "winstepsize": self.tr("Subset step [voxel]"),
+            "search_radius": self.tr("Search range [voxel]"),
             "init_method": self.tr("Initial guess"),
-            "use_global": self.tr("Global step (AL-DVC)"),
+            "interp": self.tr("Interpolation"),
+            "reference_mode": self.tr("Tracking mode"),
+            "use_global": self.tr("Global step (ADMM)"),
             "subpb2": self.tr("Global discretisation"),
-            "reference_mode": self.tr("Reference mode"),
             "strain_method": self.tr("Strain method"),
             "strain_type": self.tr("Strain measure"),
             "voxel": self.tr("Voxel size (x, y, z)"),
-            "units": self.tr("Units"),
-            "prefilter": self.tr("Pre-smoothing sigma"),
+            "units": self.tr("Length unit"),
+            "backend": self.tr("Compute backend"),
+            "n_threads": self.tr("CPU threads (0 = all)"),
             "gradient_mode": self.tr("Gradient storage"),
-            "n_threads": self.tr("Threads (0 = all)"),
-            "mu": self.tr("mu"),
-            "beta": self.tr("beta (auto / value)"),
+            "subset_stride": self.tr("Subset sampling stride"),
+            "init_coarse": self.tr("Coarse initial-guess lattice"),
+            "prefilter": self.tr("Pre-smoothing sigma"),
+            "mu": self.tr("ADMM penalty mu"),
+            "beta": self.tr("Regularisation beta"),
             "admm_max_iter": self.tr("ADMM iterations"),
             "icgn_tol": self.tr("IC-GN gradient tolerance"),
             "icgn_dp_tol": self.tr("IC-GN increment tolerance"),
             "icgn_max_iter": self.tr("IC-GN max iterations"),
             "icgn_patience": self.tr("IC-GN patience"),
-            "subset_stride": self.tr("Subset sampling stride"),
-            "init_coarse": self.tr("Coarse initial-guess lattice"),
-            "backend": self.tr("Compute backend"),
-            "backend_status": "",
             "local_outlier": self.tr("Local outlier threshold"),
             "init_outlier": self.tr("Initial-guess outlier threshold"),
             "hessian_cond": self.tr("Max Hessian condition"),
@@ -440,11 +346,24 @@ class ParamPanel(QWidget):
         }
         for key, label in self.labels.items():
             label.setText(texts[key])
-        self._voi_group.setTitle(self.tr("Volume of interest"))
-        self.voi_whole.setText(self.tr("Whole volume"))
-        self._adv_group.setTitle(self.tr("Advanced"))
+        tips = {
+            "winsize": self.tr("Edge of the cubic subset in voxels (odd: 2h+1 centred on the node)."),
+            "winstepsize": self.tr("Distance between neighbouring nodes in voxels."),
+            "search_radius": self.tr("Largest displacement the initial guess can find, in voxels."),
+            "subset_stride": self.tr("Sample every k-th voxel of the subset (k^3 times faster, slightly noisier)."),
+            "init_coarse": self.tr("Search the initial guess on every k-th node and interpolate."),
+            "backend": self.tr("auto: GPU when numba-cuda and an NVIDIA device are present, otherwise CPU."),
+        }
+        for key, tip in tips.items():
+            self.labels[key].setToolTip(tip)
+        for key, title in {
+            "subset": self.tr("Subset & search"),
+            "solver": self.tr("Solver"),
+            "strain": self.tr("Strain & units"),
+            "performance": self.tr("Performance"),
+            "advanced": self.tr("Advanced"),
+        }.items():
+            self.sections[key].set_title(title)
         self.beta_auto.setText(self.tr("auto"))
-        self._output_label.setText(self.tr("Output folder"))
-        self._btn_output.setText(self.tr("Browse..."))
-        self.checkpoint.setText(self.tr("Write checkpoints (resume interrupted runs)"))
+        self.checkpoint.setText(self.tr("Keep checkpoints (resume interrupted runs)"))
         self._update_memory()

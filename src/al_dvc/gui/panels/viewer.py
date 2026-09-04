@@ -26,6 +26,18 @@ BRUSH_MIN_MOVE = 0.5  # voxels between recorded stroke points
 LEFT, RIGHT = 1, 3
 
 
+POINT_DECIMALS = 2  # voxel coordinates of a gesture are kept to 0.01 voxel: the display round trip adds pixel noise
+
+
+def _voxel_point(event) -> tuple[float, float]:
+    """Data coordinates of a mouse event on the slice, rounded to :data:`POINT_DECIMALS`.
+
+    The pixel-to-voxel transform returns 19.9999... for a pointer on voxel 20; rounding makes
+    gestures (and the mask operations stored in a session) independent of the canvas size.
+    """
+    return (round(float(event.xdata), POINT_DECIMALS), round(float(event.ydata), POINT_DECIMALS))
+
+
 class SliceViewer(QWidget):
     """XY, XZ and YZ slices through the current frame, with sliders for the three positions."""
 
@@ -276,7 +288,7 @@ class SliceViewer(QWidget):
         except ValueError as exc:
             self._state.log(str(exc), "warning")
             return
-        p = (float(event.xdata), float(event.ydata))
+        p = _voxel_point(event)
         if s.tool == "polygon":
             if event.button == RIGHT or getattr(event, "dblclick", False):
                 self._finish_polygon(plane)
@@ -302,7 +314,7 @@ class SliceViewer(QWidget):
             return
         if self._plane_at(event) != g["plane"]:
             return
-        p = (float(event.xdata), float(event.ydata))
+        p = _voxel_point(event)
         if g["shape"] == "brush":
             last = g["points"][-1]
             if abs(p[0] - last[0]) + abs(p[1] - last[1]) >= BRUSH_MIN_MOVE:
@@ -316,7 +328,7 @@ class SliceViewer(QWidget):
         if g is None or g["shape"] == "polygon" or event.button != LEFT:
             return
         if self._plane_at(event) == g["plane"]:
-            p = (float(event.xdata), float(event.ydata))
+            p = _voxel_point(event)
             if g["shape"] == "brush":
                 g["points"].append(p)
             else:

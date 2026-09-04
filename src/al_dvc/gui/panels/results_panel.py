@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -27,6 +28,7 @@ from al_dvc.core.data_structures import STATUS_NAMES
 from al_dvc.export.export_utils import DISP_FIELDS, STD_FIELDS, STRAIN_FIELDS
 
 from ..app_state import AppState
+from ..widgets import guard_wheel, headless
 
 COLORMAPS = ["viridis", "plasma", "inferno", "magma", "coolwarm", "RdBu_r", "jet", "gray"]
 
@@ -98,6 +100,7 @@ class ResultsPanel(QWidget):
         self._export_status.setObjectName("hint")
         grid.addWidget(self._export_status, 3, 0, 1, 2)
         layout.addWidget(self._export_group)
+        guard_wheel(self)
         layout.addStretch(1)
 
         self.frame.valueChanged.connect(lambda v: self._set(display_frame=int(v) - 1))
@@ -178,26 +181,57 @@ class ResultsPanel(QWidget):
         return "\n".join(lines)
 
     # ------------------------------------------------------------------ export
+    _EXPORT_FILES = {
+        "npz": ("aldvc.npz", "NumPy (*.npz)"),
+        "mat": ("aldvc.mat", "MATLAB (*.mat)"),
+        "report": ("aldvc_report.pdf", "PDF (*.pdf)"),
+    }
+
+    def _ask_target(self, kind: str) -> Path | None:
+        """File (npz / mat / report) or folder (csv / vtk) chosen by the user; the last folder is remembered.
+
+        Headless (tests, self-test) the target goes straight into ``state.output_dir``.
+        """
+        out = Path(self._state.output_dir)
+        if headless():
+            out.mkdir(parents=True, exist_ok=True)
+            return out / self._EXPORT_FILES[kind][0] if kind in self._EXPORT_FILES else out / kind
+        if kind in self._EXPORT_FILES:
+            name, flt = self._EXPORT_FILES[kind]
+            path, _ = QFileDialog.getSaveFileName(self, self.tr("Export results"), str(out / name), flt)
+            if not path:
+                return None
+            target = Path(path)
+            self._state.set_output_dir(target.parent)
+            return target
+        folder = QFileDialog.getExistingDirectory(self, self.tr("Export folder"), str(out))
+        if not folder:
+            return None
+        self._state.set_output_dir(folder)
+        return Path(folder) / kind
+
     def export(self, kind: str) -> Path | None:
         res = self._state.results
         if res is None:
             return None
-        out = Path(self._state.output_dir)
-        out.mkdir(parents=True, exist_ok=True)
+        target = self._ask_target(kind)
+        if target is None:
+            return None
+        target.parent.mkdir(parents=True, exist_ok=True)
         QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
         try:
             from al_dvc.export import export_csv, export_mat, export_npz, export_report, export_vtk
 
             if kind == "npz":
-                path = export_npz(res, out / "aldvc.npz")
+                path = export_npz(res, target)
             elif kind == "mat":
-                path = export_mat(res, out / "aldvc.mat")
+                path = export_mat(res, target)
             elif kind == "csv":
-                path = export_csv(res, out / "csv")[0].parent
+                path = export_csv(res, target)[0].parent
             elif kind == "vtk":
-                path = export_vtk(res, out / "vtk")[0].parent
+                path = export_vtk(res, target)[0].parent
             elif kind == "report":
-                path = export_report(res, out / "aldvc_report.pdf")
+                path = export_report(res, target)
             else:
                 raise ValueError(kind)
         except Exception as exc:

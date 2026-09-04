@@ -88,3 +88,16 @@ def test_checkpoint_rejects_other_runs(sequence, tmp_path):
     r = run_aldvc(_para(winsize=24), sequence[:2], checkpoint_dir=ck, resume=False, compute_strain=False)
     meta = json.loads((ck / META_NAME).read_text(encoding="utf-8"))
     assert meta["para"]["winsize"] == [24, 24, 24] and r.n_frames == 1
+
+
+def test_resume_auto_replaces_a_foreign_checkpoint(sequence, tmp_path):
+    ck = tmp_path / "ck"
+    first = run_aldvc(_para(), sequence[:2], checkpoint_dir=ck)
+    assert first.n_frames == 1
+    other = _para(winstepsize=4)
+    with pytest.raises(CheckpointMismatch):
+        run_aldvc(other, sequence[:2], checkpoint_dir=ck, resume=True)
+    again = run_aldvc(other, sequence[:2], checkpoint_dir=ck, resume="auto")  # the GUI's mode: start over quietly
+    assert again.n_frames == 1
+    meta = json.loads((ck / META_NAME).read_text(encoding="utf-8"))
+    assert meta["para"]["winstepsize"] == [4, 4, 4]

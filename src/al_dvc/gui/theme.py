@@ -88,6 +88,45 @@ QWidget#rightSidebar {{
    Panel / Card sections
    ============================================================ */
 QFrame[frameShape="1"],
+QLabel#hint {{
+    color: {c.TEXT_MUTED};
+    font-size: 11px;
+}}
+
+QLabel#sectionTitle {{
+    color: {c.TEXT_SECONDARY};
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 1px;
+}}
+
+QPushButton#sectionHeader {{
+    text-align: left;
+    padding: 4px 8px;
+    color: {c.TEXT_SECONDARY};
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid {c.BORDER};
+    border-radius: 0;
+}}
+
+QPushButton#sectionHeader:hover {{
+    color: {c.TEXT_PRIMARY};
+    background: {c.BG_HOVER};
+}}
+
+QTextEdit#console {{
+    background: {c.BG_DARKEST};
+    border: 1px solid {c.BORDER};
+    border-radius: 4px;
+    padding: 4px;
+    font-family: 'Consolas', 'Cascadia Mono', monospace;
+    font-size: 11px;
+}}
+
 QGroupBox {{
     background: {c.BG_PANEL};
     border: 1px solid {c.BORDER};

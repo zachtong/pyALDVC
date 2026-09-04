@@ -108,16 +108,22 @@ result = run_aldvc(para, provider)
 al-dvc-gui                 # or: al-dvc gui [session.aldvc]
 ```
 
-A standalone PySide6 window (`al_dvc.gui`, architecture shared with pyALDIC):
-volume list with masks, parameter form with a memory estimate, run controls
-with progress and log, a three-plane slice viewer with result overlays and
-mask drawing (rectangle / ellipse / polygon / brush on any slice, extruded
+A standalone PySide6 window (`al_dvc.gui`, layout and architecture shared with
+pyALDIC): volumes and parameters on the left (folding sections, inputs that
+only react to the wheel when focused), the slice viewer in the middle, run
+controls, results, exports and the console on the right. The workflow is
+load, draw the region of interest, set parameters, run, export: results stay
+in memory and each export asks where to write; the analysed box is the
+bounding box of the drawn region grown by the subset half-width and the search
+range (memory and time scale with the region, not with the scan). Mask drawing
+(rectangle / ellipse / polygon / brush on any slice, extruded
 through all slices, one slice or a range; add / cut; undo; `reports/mask_tools.pdf`), a
 3-D view (pyvista: field slices, node points, iso-surface, warped lattice,
 displacement arrows, volume slices; `reports/view3d.pdf`), summary and exports,
 and a batch dialog that runs several saved sessions one after another
-(`File > Batch run...`, the same as `al-dvc batch`; `reports/batch.pdf`). Sessions (`.aldvc`) keep volumes, parameters, output
-folder and display state; `Help > Run self-test` (or `al-dvc-gui --self-test`)
+(`File > Batch run...`, the same as `al-dvc batch`; `reports/batch.pdf`). Sessions (`.aldvc`) keep volumes, parameters, export
+folder and display state; checkpoints (resume after an interruption) are an
+advanced option, and a checkpoint folder left by a different run is replaced; `Help > Run self-test` (or `al-dvc-gui --self-test`)
 checks an installation. English and Simplified Chinese; the kernels compile in
 the background after the window opens. `reports/gui.pdf` shows the screens.
 

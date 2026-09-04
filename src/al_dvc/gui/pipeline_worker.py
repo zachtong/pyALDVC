@@ -34,9 +34,11 @@ class PipelineWorker(QThread):
         masks: list | None,
         checkpoint_dir: str | Path | None = None,
         compute_strain: bool = True,
+        resume: bool | str = "auto",
         parent=None,
     ) -> None:
         super().__init__(parent)
+        self._resume = resume
         self._para = para
         self._volumes = volumes
         self._masks = masks
@@ -62,6 +64,7 @@ class PipelineWorker(QThread):
                 stop_fn=self._should_stop,
                 compute_strain=self._compute_strain,
                 checkpoint_dir=self._checkpoint_dir,
+                resume=self._resume,
             )
         except Exception as exc:  # surface to the UI, never crash the thread
             logger.exception("Pipeline failed")
