@@ -128,7 +128,7 @@ def test_session_roundtrip(qapp, small_pair, tmp_path):
     assert [v.path for v in other.state.volumes] == [str(p0.resolve()), str(p1.resolve())]
     assert other.state.para.voxel_size == (2.0, 2.0, 2.0)
     assert other.state.colormap == "magma" and other.state.display_field == "disp_u"
-    assert other.param_panel.winsize.value() == 20
+    assert other.param_panel.winsize.value() == 21  # odd span of winsize 20
     # a missing file is reported, not fatal
     p1.unlink()
     third = MainWindow()
