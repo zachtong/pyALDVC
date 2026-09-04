@@ -72,6 +72,15 @@ class RunPanel(QWidget):
         except Exception as exc:
             self._state.log(self.tr("Cannot load the volumes: {error}").format(error=exc), "error")
             return
+        from al_dvc.core.config import validate_dvcpara
+        from al_dvc.utils.validation import validate_para_against_volume
+
+        try:
+            validate_dvcpara(self._state.para)
+            validate_para_against_volume(self._state.para, tuple(int(s) for s in volumes[0].shape))
+        except ValueError as exc:
+            self._state.log(self.tr("Parameters do not fit the volume: {error}").format(error=exc), "error")
+            return
         masks = masks_list if any(m is not None for m in masks_list) else None
         if masks is not None:
             masks = [m if m is not None else np.ones(v.shape, dtype=bool) for m, v in zip(masks_list, volumes)]

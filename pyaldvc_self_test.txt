@@ -1,0 +1,11 @@
+pyALDVC self-test  2026-09-03 21:53:00
+Python 3.11.16 on Windows-10-10.0.26200-SP0
+
+[ok]   Qt and theme: PySide6 6.11.2, Qt 6.11.2, style ok (QApplication)
+[ok]   Numba kernels: numba 0.67.0, 24 threads, cache on
+[ok]   Translations: en: 0 strings, zh_CN: 203 strings
+[ok]   3-D view (pyvista): pyvista 0.48.4, VTK 9.6.2, off-screen render ok
+[ok]   Compute backend: GPU NVIDIA GeForce RTX 5090 (backend auto -> cuda)
+[ok]   Mini run through the GUI worker: 48 nodes, 100% converged, report written, 15.8 s
+
+all checks passed

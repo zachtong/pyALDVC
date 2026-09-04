@@ -48,7 +48,7 @@ class ParamPanel(QWidget):
         # ---- main form
         self._form = QFormLayout()
         self._form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        self.winsize = self._spin(8, 256, 2)
+        self.winsize = self._spin(5, 257, 2)  # shown as the odd voxel span 2h+1; stored as the even winsize = 2h
         self.winstepsize = self._spin(1, 128, 1)
         self.search_radius = self._spin(1, 128, 1)
         self.interp = self._combo(INTERP_METHODS)
@@ -187,6 +187,7 @@ class ParamPanel(QWidget):
         self._connect()
         self._state.params_changed.connect(self.refresh)
         self._state.volumes_changed.connect(self._update_memory)
+        self._state.volumes_changed.connect(self._on_volumes_for_voi)
         self._state.output_dir_changed.connect(lambda p: self.output_dir.setText(p))
         self.retranslate_ui()
         self.refresh()
@@ -215,7 +216,7 @@ class ParamPanel(QWidget):
 
     # ------------------------------------------------------------------ binding
     def _connect(self) -> None:
-        self.winsize.valueChanged.connect(lambda v: self._set("winsize", int(v)))
+        self.winsize.valueChanged.connect(self._on_winsize)
         self.winstepsize.valueChanged.connect(lambda v: self._set("winstepsize", int(v)))
         self.search_radius.valueChanged.connect(lambda v: self._set("search_radius", int(v)))
         self.interp.currentTextChanged.connect(lambda v: self._set("interp_method", v))
@@ -266,10 +267,41 @@ class ParamPanel(QWidget):
         self.beta.setEnabled(not auto)
         self._set("beta", None if auto else float(self.beta.value()))
 
+    def _on_winsize(self, value: int) -> None:
+        """The spin box shows the odd span 2h+1; an even value typed by hand rounds up to the next odd one."""
+        v = int(value)
+        if v % 2 == 0:
+            self.winsize.setValue(v + 1)  # re-enters with the odd value
+            return
+        self._set("winsize", v - 1)
+
+    def _voi_spins_are_unset(self) -> bool:
+        return all(int(lo.value()) == 0 and int(hi.value()) == 0 for lo, hi in self.voi.values())
+
+    def _fill_voi_from_volume(self) -> None:
+        """Whole-volume ranges in the VOI spin boxes (and their maxima) from the loaded volume."""
+        shape = self._state.volume_shape()
+        if shape is None:
+            return
+        nz, ny, nx = shape
+        was = self._updating
+        self._updating = True
+        try:
+            for ax, n in (("x", nx), ("y", ny), ("z", nz)):
+                lo, hi = self.voi[ax]
+                lo.setMaximum(max(0, n - 1))
+                hi.setMaximum(max(0, n - 1))
+                lo.setValue(0)
+                hi.setValue(max(0, n - 1))
+        finally:
+            self._updating = was
+
     def _on_voi_changed(self, *_args) -> None:
         if self._updating:
             return
         whole = self.voi_whole.isChecked()
+        if not whole and self._voi_spins_are_unset():
+            self._fill_voi_from_volume()  # start from the whole volume instead of an empty 0..0 box
         for lo, hi in self.voi.values():
             lo.setEnabled(not whole)
             hi.setEnabled(not whole)
@@ -288,7 +320,7 @@ class ParamPanel(QWidget):
         p = self._state.para
         self._updating = True
         try:
-            self.winsize.setValue(int(p.winsize[0]))
+            self.winsize.setValue(int(p.winsize[0]) + 1)
             self.winstepsize.setValue(int(p.winstepsize[0]))
             self.search_radius.setValue(int(p.search_radius[0]))
             self.interp.setCurrentText(p.interp_method)
@@ -336,6 +368,19 @@ class ParamPanel(QWidget):
             self._updating = False
         self._update_memory()
 
+    def _on_volumes_for_voi(self) -> None:
+        """New volumes: VOI spin boxes get the volume extent as maximum, and a fresh explicit VOI covers it all."""
+        if not self.voi_whole.isChecked() and self._voi_spins_are_unset():
+            self._fill_voi_from_volume()
+            self._on_voi_changed()
+        else:
+            shape = self._state.volume_shape()
+            if shape is not None:
+                nz, ny, nx = shape
+                for ax, n in (("x", nx), ("y", ny), ("z", nz)):
+                    self.voi[ax][0].setMaximum(max(0, n - 1))
+                    self.voi[ax][1].setMaximum(max(0, n - 1))
+
     def _update_memory(self) -> None:
         shape = self._state.volume_shape() if self._state.volumes and self._state.volumes[0].array is not None else None
         if shape is None:
@@ -362,7 +407,7 @@ class ParamPanel(QWidget):
 
     def retranslate_ui(self) -> None:
         texts = {
-            "winsize": self.tr("Subset size [voxel]"),
+            "winsize": self.tr("Subset size [voxel, odd]"),
             "winstepsize": self.tr("Node spacing [voxel]"),
             "search_radius": self.tr("Search radius [voxel]"),
             "interp": self.tr("Interpolation"),

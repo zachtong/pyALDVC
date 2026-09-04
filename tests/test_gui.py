@@ -168,3 +168,30 @@ def test_self_test_passes(qapp, tmp_path):
     report = tmp_path / "self_test.txt"
     assert run_self_test(report) == 0
     assert "all checks passed" in report.read_text(encoding="utf-8")
+
+
+def test_voi_and_odd_subset_size(qapp, small_pair, tmp_path):
+    window = MainWindow()
+    window.show()
+    panel = window.param_panel
+    # the subset size is shown as the odd voxel span and stored as the even winsize
+    assert panel.winsize.value() == window.state.para.winsize[0] + 1
+    panel.winsize.setValue(33)
+    assert window.state.para.winsize == (32, 32, 32)
+    panel.winsize.setValue(24)  # an even value typed by hand rounds up
+    assert panel.winsize.value() == 25 and window.state.para.winsize == (24, 24, 24)
+    # unchecking "whole volume" starts from the whole loaded volume, not from an empty box
+    window.state.set_volume_arrays(list(small_pair), ["ref", "def"])
+    panel.voi_whole.setChecked(False)
+    voi = window.state.para.voi
+    nz, ny, nx = small_pair[0].shape
+    assert voi is not None and voi.x == (0, nx - 1) and voi.y == (0, ny - 1) and voi.z == (0, nz - 1)
+    # a run with a VOI too small for the subset is refused with a message instead of a worker traceback
+    panel.voi["x"][1].setValue(5)
+    messages = []
+    window.state.log_message.connect(lambda m, level: messages.append((m, level)))
+    window.state.set_params(winsize=16, winstepsize=8, search_radius=4, admm_max_iter=2, verbose=False)
+    window.run_panel.start()
+    assert any("do not fit" in m for m, _ in messages)
+    assert window.state.run_state == RunState.IDLE
+    window.close()
