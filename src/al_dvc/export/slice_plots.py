@@ -89,6 +89,8 @@ def build_axes(fig, layout: str):
         cells = [gs[0, 0], gs[1, 0], gs[0, 1]]
         cax_rect = (0.60, 0.10, 0.02, 0.32)
     axes = [fig.add_subplot(cell) for cell in cells]
+    for ax in axes:
+        ax.pyaldvc_cell = tuple(ax.get_position().bounds)  # remembered for apply_equal_scale / restore_cells
     cax = fig.add_axes(cax_rect)
     cax.set_visible(False)
     return axes, cax
@@ -117,6 +119,43 @@ def slice_indices(shape: tuple[int, int, int], indices: dict[str, int | None] | 
     return one("z", nz), one("y", ny), one("x", nx)
 
 
+def apply_equal_scale(fig, axes, sizes) -> float:
+    """Give the three panes the same voxels-per-pixel scale.
+
+    ``sizes`` are the ``(width, height)`` voxel extents shown by each axes. The common scale is the
+    largest at which every slice still fits the cell its layout gave it; each axes is then shrunk to
+    exactly its slice at that scale and centred in its cell, so nothing is magnified and no pane
+    shows empty axis range. Returns the scale in pixels per voxel. :func:`restore_cells` undoes it.
+    """
+    fw, fh = fig.get_size_inches() * fig.dpi
+    cells = []
+    for ax in axes:
+        cell = getattr(ax, "pyaldvc_cell", None)
+        if cell is None:
+            cell = tuple(ax.get_position().bounds)
+            ax.pyaldvc_cell = cell
+        cells.append(cell)
+    scale = min(min(c[2] * fw / w, c[3] * fh / h) for c, (w, h) in zip(cells, sizes) if w > 0 and h > 0)
+    for ax, cell, (w, h) in zip(axes, cells, sizes):
+        bw, bh = w * scale / fw, h * scale / fh  # figure fractions
+        x = cell[0] + (cell[2] - bw) / 2.0
+        y = cell[1] + (cell[3] - bh) / 2.0
+        ax.set_position([x, y, bw, bh])
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlim(-0.5, w - 0.5)
+        ax.set_ylim(-0.5, h - 0.5)
+    return float(scale)
+
+
+def restore_cells(axes) -> None:
+    """Put axes back into the cells their layout gave them (after :func:`apply_equal_scale`)."""
+    for ax in axes:
+        cell = getattr(ax, "pyaldvc_cell", None)
+        if cell is not None:
+            ax.set_position(list(cell))
+            ax.set_aspect("equal", adjustable="box")
+
+
 def draw_field_planes(
     axes,
     cax,
@@ -131,6 +170,7 @@ def draw_field_planes(
     style: PlaneStyle = PlaneStyle(),
     volume_shape: tuple[int, int, int] | None = None,
     label_units: str | None = None,
+    equal_scale: bool = False,
 ) -> dict:
     """Draw ``field`` of ``frame`` on the XY / XZ / YZ planes through ``indices`` (voxel positions).
 
@@ -213,6 +253,10 @@ def draw_field_planes(
         ax.set_ylabel(yl, color=style.text, fontsize=7)
         ax.set_xlim(-0.5, w - 0.5)
         ax.set_ylim(-0.5, h - 0.5)
+    if equal_scale:
+        apply_equal_scale(axes[0].figure, axes, [size for _ax, _img, _ext, size, *_rest in panes])
+    else:
+        restore_cells(axes)
     axes[0].axhline(iy, color=style.cursor, lw=0.5, alpha=0.6)
     axes[0].axvline(ix, color=style.cursor, lw=0.5, alpha=0.6)
     axes[1].axhline(iz, color=style.cursor, lw=0.5, alpha=0.6)
@@ -242,6 +286,7 @@ def export_field_images(
     dpi: int = 150,
     light: bool = True,
     progress_fn=None,
+    equal_scale: bool = False,
 ) -> list:
     """Write one PNG per field and frame (``<field>_frame_<k>.png``) with the three planes.
 
@@ -266,7 +311,7 @@ def export_field_images(
         for k in frames:
             fig = Figure(figsize=(12, 4.2) if layout == "row" else (7, 9), facecolor=style.background if not light else "white")
             axes, cax = build_axes(fig, layout)
-            draw_field_planes(axes, cax, result, k, field, indices, cmap, clim, background, style=style)
+            draw_field_planes(axes, cax, result, k, field, indices, cmap, clim, background, style=style, equal_scale=equal_scale)
             path = out / f"{field}_frame_{k + 1:03d}.png"
             fig.savefig(path, dpi=dpi, facecolor=fig.get_facecolor())
             written.append(path)

@@ -8,9 +8,10 @@ from matplotlib.colors import ListedColormap
 from matplotlib.figure import Figure
 from matplotlib.patches import Ellipse, Rectangle
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
 from al_dvc.export.export_utils import field_array
+from al_dvc.export.slice_plots import apply_equal_scale, build_axes, restore_cells
 
 from ..app_state import AppState
 from ..mask_editor import MaskOp
@@ -60,6 +61,8 @@ class SliceViewer(QWidget):
             self.layout_combo.addItem(key, key)
         self.layout_combo.setCurrentIndex(max(0, LAYOUTS.index(getattr(state, "slice_layout", LAYOUTS[0]))))
         self._layout_label = QLabel()
+        self.equal_scale = QCheckBox()
+        self.equal_scale.setChecked(bool(getattr(state, "slice_equal_scale", False)))
         self.sliders: dict[str, QSlider] = {}
         self._slider_labels: dict[str, QLabel] = {}
         self.mask_tools = MaskToolbar(state)
@@ -70,6 +73,8 @@ class SliceViewer(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout_row = QHBoxLayout()
         layout_row.addStretch(1)
+        layout_row.addWidget(self.equal_scale)
+        layout_row.addSpacing(12)
         layout_row.addWidget(self._layout_label)
         layout_row.addWidget(self.layout_combo)
         layout.addLayout(layout_row)
@@ -98,6 +103,8 @@ class SliceViewer(QWidget):
         self.canvas.mpl_connect("key_press_event", self._on_key)
         self.canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.layout_combo.currentIndexChanged.connect(lambda i: self.set_layout(LAYOUTS[i]))
+        self.equal_scale.toggled.connect(self._on_equal_scale)
+        self.canvas.mpl_connect("resize_event", lambda _e: self._on_canvas_resized())
 
         self._state.volumes_changed.connect(self._on_volumes_changed)
         self._state.current_frame_changed.connect(lambda _i: self._on_volumes_changed())
@@ -109,32 +116,12 @@ class SliceViewer(QWidget):
 
     # ------------------------------------------------------------------ layout
     def _build_axes(self, key: str) -> None:
-        """Create the three image axes and the colorbar axes for one of :data:`LAYOUTS`.
+        """Create the three image axes (XY, XZ, YZ) and the colorbar axes for one of :data:`LAYOUTS`.
 
-        ``self.axes`` always holds (XY, XZ, YZ) in that order whatever the arrangement; the colorbar
-        lives in its own axes so drawing it never steals space from the images (the old
-        ``figure.colorbar(ax=...)`` shrank them on every redraw).
+        The colorbar lives in its own axes so drawing it never steals space from the images.
         """
-        if key not in LAYOUTS:
-            raise ValueError(f"layout must be one of {LAYOUTS}, got {key!r}")
-        fig = self.figure
-        fig.clear()
+        self.axes, self.cax = build_axes(self.figure, key)
         self._cbar = None
-        if key == "row":
-            gs = fig.add_gridspec(1, 3, left=0.05, right=0.90, bottom=0.14, top=0.90, wspace=0.32)
-            cells = [gs[0, 0], gs[0, 1], gs[0, 2]]
-            cax_rect = (0.925, 0.16, 0.014, 0.68)
-        elif key == "column":
-            gs = fig.add_gridspec(3, 1, left=0.14, right=0.86, bottom=0.05, top=0.96, hspace=0.42)
-            cells = [gs[0, 0], gs[1, 0], gs[2, 0]]
-            cax_rect = (0.90, 0.22, 0.02, 0.56)
-        else:  # grid: XY top-left, XZ bottom-left, YZ top-right, colorbar in the free cell
-            gs = fig.add_gridspec(2, 2, left=0.07, right=0.94, bottom=0.08, top=0.94, wspace=0.28, hspace=0.34)
-            cells = [gs[0, 0], gs[1, 0], gs[0, 1]]
-            cax_rect = (0.60, 0.10, 0.02, 0.32)
-        self.axes = [fig.add_subplot(cell) for cell in cells]
-        self.cax = fig.add_axes(cax_rect)
-        self.cax.set_visible(False)
         self._layout = key
 
     def set_layout(self, key: str) -> None:
@@ -154,6 +141,23 @@ class SliceViewer(QWidget):
     @property
     def layout_key(self) -> str:
         return self._layout
+
+    def sync_from_state(self) -> None:
+        """Layout and scale controls from the state (after a session load)."""
+        self.equal_scale.blockSignals(True)
+        self.equal_scale.setChecked(bool(self._state.slice_equal_scale))
+        self.equal_scale.blockSignals(False)
+        self.set_layout(self._state.slice_layout)
+        self.redraw()
+
+    def _on_equal_scale(self, on: bool) -> None:
+        self._state.slice_equal_scale = bool(on)
+        self.redraw()
+
+    def _on_canvas_resized(self) -> None:
+        """Equal scale depends on the pixel size of the panes: recompute the limits after a resize."""
+        if self.equal_scale.isChecked() and self._volume is not None:
+            self.redraw()
 
     # ------------------------------------------------------------------ data
     def _on_volumes_changed(self) -> None:
@@ -295,6 +299,10 @@ class SliceViewer(QWidget):
         for ax, _img, (w, h), *_rest in panes:
             ax.set_xlim(-0.5, w - 0.5)
             ax.set_ylim(-0.5, h - 0.5)
+        if self.equal_scale.isChecked():
+            apply_equal_scale(self.figure, self.axes, [size for _ax, _img, size, *_rest in panes])
+        else:
+            restore_cells(self.axes)
         self.canvas.draw_idle()
 
     def _draw_mask(self, iz: int, iy: int, ix: int) -> None:
@@ -496,6 +504,10 @@ class SliceViewer(QWidget):
     def retranslate_ui(self) -> None:
         self._empty.setText(self.tr("No volume loaded. Use 'Add volumes...' to start."))
         self._layout_label.setText(self.tr("Layout"))
+        self.equal_scale.setText(self.tr("Same scale"))
+        self.equal_scale.setToolTip(
+            self.tr("Draw the three planes with the same voxels-per-pixel scale (smaller slices get padding)")
+        )
         for i, text in enumerate((self.tr("Row"), self.tr("Column"), self.tr("2 x 2"))):
             self.layout_combo.setItemText(i, text)
         self.layout_combo.setToolTip(self.tr("Arrangement of the XY / XZ / YZ slices"))

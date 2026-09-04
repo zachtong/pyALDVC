@@ -46,6 +46,10 @@ All notable changes to pyALDVC are documented here. The format follows
   canvases and the PNG export alike.
 - Menu shortcuts: F5 run, Esc stop, Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S
   sessions.
+- "Same scale" option for the three planes (slice viewer, strain window,
+  image export): one voxels-per-pixel scale for XY, XZ and YZ, each pane shrunk
+  to its slice and centred in its cell (`slice_plots.apply_equal_scale`);
+  remembered in the session.
 - Volume formats: HDF5 (`.h5` / `.hdf5`, first 3-D dataset or `mat_key`, also
   written by `save_volume`), NIfTI (`.nii`, `.nii.gz`; needs `nibabel`), NRRD
   (needs `pynrrd`), DICOM folders (needs `pydicom`, stacked by InstanceNumber)

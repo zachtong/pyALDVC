@@ -330,6 +330,7 @@ class MainWindow(QMainWindow):
                     n=len(missing), files="\n".join(missing[:8])
                 ),
             )
+        self.viewer.sync_from_state()
         self.state.log(self.tr("Session loaded: {path}").format(path=path))
         self.remember_session(path)
         return missing

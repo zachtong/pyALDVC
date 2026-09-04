@@ -38,6 +38,7 @@ class FieldSliceCanvas(QWidget):
         self._clim: tuple[float, float] | None = None
         self._alpha = 0.85
         self._layout = "row"
+        self._equal_scale = False
         self._indices: dict[str, int | None] = {"z": None, "y": None, "x": None}
         self.last_clim: tuple[float, float] | None = None
         self._style = PlaneStyle(
@@ -52,6 +53,7 @@ class FieldSliceCanvas(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.canvas, 1)
+        self.canvas.mpl_connect("resize_event", lambda _e: self._equal_scale and self.redraw())
         rows = QHBoxLayout()
         for axis in ("z", "y", "x"):
             col = QVBoxLayout()
@@ -97,6 +99,7 @@ class FieldSliceCanvas(QWidget):
         clim: tuple[float, float] | None | str = "keep",
         layout: str | None = None,
         alpha: float | None = None,
+        equal_scale: bool | None = None,
     ) -> None:
         """Change what is drawn; ``clim=None`` means automatic, ``"keep"`` leaves it unchanged."""
         if frame is not None:
@@ -109,6 +112,8 @@ class FieldSliceCanvas(QWidget):
             self._clim = None if clim is None else (float(clim[0]), float(clim[1]))
         if alpha is not None:
             self._alpha = float(alpha)
+        if equal_scale is not None:
+            self._equal_scale = bool(equal_scale)
         if layout is not None and layout != self._layout:
             self._layout = layout
             self.axes, self.cax = build_axes(self.figure, layout)
@@ -194,6 +199,7 @@ class FieldSliceCanvas(QWidget):
             alpha=self._alpha,
             style=self._style,
             volume_shape=self._shape,
+            equal_scale=self._equal_scale,
         )
         self.last_clim = info["clim"]
         self.canvas.draw_idle()

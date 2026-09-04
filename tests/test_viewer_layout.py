@@ -153,3 +153,48 @@ def test_view3d_renders_on_a_white_background(qapp, window_with_result):
     assert (corner > 240).all()  # the corner pixel shows the white background
     panel.background.setCurrentIndex(0)
     window_with_result.center_tabs.setCurrentIndex(0)
+
+
+def _pixels_per_voxel(ax):
+    x0 = ax.transData.transform((0.0, 0.0))
+    x1 = ax.transData.transform((1.0, 1.0))
+    return float(x1[0] - x0[0]), float(x1[1] - x0[1])
+
+
+def test_equal_scale_option(qapp, window_with_result):
+    window = window_with_result
+    viewer = window.viewer
+    viewer.equal_scale.setChecked(False)
+    viewer.canvas.draw()
+    scales = [_pixels_per_voxel(ax)[0] for ax in viewer.axes]
+    assert max(scales) / min(scales) > 1.05  # the volume is not a cube: independent panes differ in scale
+    viewer.equal_scale.setChecked(True)
+    assert window.state.slice_equal_scale
+    viewer.canvas.draw()
+    sx = [_pixels_per_voxel(ax)[0] for ax in viewer.axes]
+    sy = [_pixels_per_voxel(ax)[1] for ax in viewer.axes]
+    assert max(sx) / min(sx) < 1.01 and max(sy) / min(sy) < 1.01  # one common voxels-per-pixel scale
+    assert all(abs(a - b) / a < 0.01 for a, b in zip(sx, sy))  # and square voxels
+    nz, ny, nx = window.state.results.volume_shape
+    lo, hi = viewer.axes[0].get_xlim()
+    assert lo <= -0.5 and hi >= nx - 0.5  # the whole slice still fits (with padding)
+    viewer.set_layout("grid")
+    viewer.canvas.draw()
+    sx = [_pixels_per_voxel(ax)[0] for ax in viewer.axes]
+    assert max(sx) / min(sx) < 1.01
+    viewer.set_layout("row")
+    viewer.equal_scale.setChecked(False)
+
+
+def test_equal_scale_in_export_and_strain_canvas(window_with_result, tmp_path):
+    from al_dvc.export.slice_plots import export_field_images
+
+    res = window_with_result.state.results
+    files = export_field_images(res, tmp_path / "eq", ["disp_u"], frames=[0], equal_scale=True, dpi=50)
+    assert files and files[0].is_file()
+    sw = window_with_result.open_strain_window()
+    sw.equal_scale.setChecked(True)
+    sw.canvas.canvas.draw()
+    sx = [_pixels_per_voxel(ax)[0] for ax in sw.canvas.axes]
+    assert max(sx) / min(sx) < 1.01
+    sw.close()

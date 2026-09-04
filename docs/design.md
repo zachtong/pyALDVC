@@ -512,7 +512,10 @@ Differences from pyALDIC, all consequences of the data being 3-D:
   plane (`mesh.to_grid`, extent from the node axes). The three axes are laid
   out by a `GridSpec` as a row, a column or a 2 x 2 grid (`LAYOUTS`; XY / XZ
   in the left column, YZ top-right) and the colorbar owns a fixed axes, so a
-  redraw never changes the image sizes. `field_array` returns NaN at nodes
+  redraw never changes the image sizes. With "Same scale" on,
+  `apply_equal_scale` computes the largest voxels-per-pixel scale at which every
+  slice fits its cell and shrinks each axes to its slice at that scale (the
+  cells are remembered on the axes as `pyaldvc_cell`; `restore_cells` undoes it). `field_array` returns NaN at nodes
   the reference precompute marked invalid, for displacement as for strain:
   the solver inpaints those nodes only so that the global step has a complete
   lattice, and the overlay shows the region of interest alone;

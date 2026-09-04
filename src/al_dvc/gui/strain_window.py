@@ -197,6 +197,7 @@ class StrainWindow(QMainWindow):
             self.layout_combo.addItem(key, key)
         self.show_volume = QCheckBox()
         self.show_volume.setChecked(True)
+        self.equal_scale = QCheckBox()
         for key, w in [
             ("field", self.field),
             ("colormap", self.colormap),
@@ -210,6 +211,7 @@ class StrainWindow(QMainWindow):
             dform.addRow(label, w)
         display.add_layout(dform)
         display.add_widget(self.show_volume)
+        display.add_widget(self.equal_scale)
         self.sections["display"] = display
         side_layout.addWidget(display)
 
@@ -244,6 +246,7 @@ class StrainWindow(QMainWindow):
         self.vmax.valueChanged.connect(lambda _v: self._on_display_changed())
         self.layout_combo.currentIndexChanged.connect(lambda _i: self._on_display_changed())
         self.show_volume.toggled.connect(lambda _v: self._load_data())
+        self.equal_scale.toggled.connect(lambda _v: self._on_display_changed())
         for w in (self.method, self.measure):
             w.currentIndexChanged.connect(lambda _i: self._mark_stale())
         for w in (self.halfwidth, self.disp_smoothing, self.strain_smoothing):
@@ -445,7 +448,12 @@ class StrainWindow(QMainWindow):
         clim = None if self.auto_range.isChecked() else (float(self.vmin.value()), float(self.vmax.value()))
         layout = str(self.layout_combo.currentData() or "row")
         self.canvas.set_view(
-            frame=int(self.frame_slider.value()), field=field, cmap=self.colormap.currentText(), clim=clim, layout=layout
+            frame=int(self.frame_slider.value()),
+            field=field,
+            cmap=self.colormap.currentText(),
+            clim=clim,
+            layout=layout,
+            equal_scale=self.equal_scale.isChecked(),
         )
         n = self.frame_slider.maximum() + 1
         self._frame_label.setText(self.tr("Frame {k}/{n}").format(k=self.frame_slider.value() + 1, n=n))
@@ -518,5 +526,6 @@ class StrainWindow(QMainWindow):
         for i, text in enumerate((self.tr("Row"), self.tr("Column"), self.tr("2 x 2"))):
             self.layout_combo.setItemText(i, text)
         self.show_volume.setText(self.tr("Show the reference volume under the field"))
+        self.equal_scale.setText(self.tr("Same scale on the three planes"))
         self.canvas.set_empty_text(self.tr("No field to show."))
         self._update_status()

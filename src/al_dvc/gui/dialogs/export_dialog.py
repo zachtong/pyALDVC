@@ -64,6 +64,7 @@ class ExportConfig:
     image_dpi: int = 150
     image_light: bool = True
     image_background: bool = True
+    image_equal_scale: bool = False
 
     def formats(self) -> list[str]:
         return [k for k in ("npz", "mat", "csv", "vtk", "report", "images") if getattr(self, k)]
@@ -107,6 +108,7 @@ def run_export(result: PipelineResult, cfg: ExportConfig, background=None, progr
                 background=background if cfg.image_background else None,
                 dpi=cfg.image_dpi,
                 light=cfg.image_light,
+                equal_scale=cfg.image_equal_scale,
                 progress_fn=(lambda f, m: progress_fn((i + f) / len(steps), f"images: {m}")) if progress_fn else None,
             )
             if files:
@@ -261,10 +263,12 @@ class ExportDialog(QDialog):
         self.image_light.setChecked(True)
         self.image_bg = QCheckBox()
         self.image_bg.setChecked(True)
+        self.image_equal = QCheckBox()
         for w in (self._layout_label, self.image_layout, self._cmap_label, self.image_cmap, self._dpi_label, self.image_dpi):
             il.addWidget(w)
         il.addWidget(self.image_light)
         il.addWidget(self.image_bg)
+        il.addWidget(self.image_equal)
         il.addStretch(1)
         layout.addWidget(self._image_group)
 
@@ -382,6 +386,7 @@ class ExportDialog(QDialog):
             image_dpi=int(self.image_dpi.value()),
             image_light=self.image_light.isChecked(),
             image_background=self.image_bg.isChecked(),
+            image_equal_scale=self.image_equal.isChecked(),
         )
 
     # ------------------------------------------------------------------ run
@@ -474,6 +479,7 @@ class ExportDialog(QDialog):
         self._dpi_label.setText(self.tr("DPI"))
         self.image_light.setText(self.tr("White background"))
         self.image_bg.setText(self.tr("Volume under the field"))
+        self.image_equal.setText(self.tr("Same scale"))
         for i, text in enumerate((self.tr("Row"), self.tr("Column"), self.tr("2 x 2"))):
             self.image_layout.setItemText(i, text)
         self._btn_export.setText(self.tr("Export"))
