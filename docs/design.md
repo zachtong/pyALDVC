@@ -442,7 +442,9 @@ Other findings from the same run:
   defaults, 3.2 min with `init_coarse_factor=2` (12.5 min before the 0.3.2
   work): initial guess 51 s (17 s coarse), local IC-GN 71 s, three 3-DOF passes
   89 s with the noise-corrected Hessian and the look-ahead stop (4.4 / 4.1 /
-  3.9 iterations per pass instead of 7.3 / 6.9 / 6.5)
+  3.9 iterations per pass instead of 7.3 / 6.9 / 6.5); on the RTX 5090 with the
+  CUDA backend 23 s (initial guess 9.9 s, precompute 2.7 s, local IC-GN 2.6 s,
+  three 3-DOF passes 6.2 s) with the same node-wise agreement
   (initial guess 58 s, 12-DOF pass 218 s, three 3-DOF passes 471 s, global
   steps < 1 s) plus 3.9 min for the equivalence check on 18,108 sampled
   nodes. Before the stall rule and the block-cyclic schedule the 12-DOF pass

@@ -32,8 +32,10 @@ All notable changes to pyALDVC are documented here. The format follows
   default) uses the GPU when numba-cuda and a CUDA device are present and
   falls back to the CPU kernels otherwise; `cuda` / `numba` / `numpy` force a
   backend; the GUI has a backend selector with the detected device. RTX 5090
-  vs 24-core CPU: 12-DOF kernel 28x, 3-DOF 39x; `tests/test_cuda_backend.py`
-  (skipped without a GPU).
+  vs 24-core CPU: 12-DOF kernel 28x, 3-DOF 39x; the micro-CT example runs in
+  23 s instead of 190 s with the same agreement to MATLAB; `reports/gpu.pdf`
+  (`scripts/make_gpu_report.py`), `tests/test_cuda_backend.py` (skipped without
+  a GPU). The portable Windows bundle stays CPU-only.
 - `icgn_predictive_stop` (default on): the IC-GN kernels apply the current step
   and stop when the steps contract by at least 2x and the predicted next step
   `dp_k^2 / dp_{k-1}` is below `icgn_dp_tol`, instead of spending one more
