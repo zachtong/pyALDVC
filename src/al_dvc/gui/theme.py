@@ -570,6 +570,35 @@ QTabBar::tab:hover:!selected {{
     color: {c.TEXT_PRIMARY};
 }}
 
+/* the Slices / 3-D view switch of the centre column: a prominent segmented control */
+QTabWidget#viewTabs::pane {{
+    border: 1px solid {c.BORDER};
+    border-top: 2px solid {c.ACCENT};
+}}
+
+QTabWidget#viewTabs > QTabBar::tab {{
+    font-size: 13px;
+    font-weight: bold;
+    padding: 8px 24px;
+    min-height: 18px;
+    color: {c.TEXT_SECONDARY};
+    background: {c.BG_SIDEBAR};
+    border: 1px solid {c.BORDER};
+    border-bottom: none;
+    margin-right: 3px;
+}}
+
+QTabWidget#viewTabs > QTabBar::tab:selected {{
+    color: white;
+    background: {c.ACCENT};
+    border-color: {c.ACCENT};
+}}
+
+QTabWidget#viewTabs > QTabBar::tab:hover:!selected {{
+    color: {c.TEXT_PRIMARY};
+    background: {c.BG_HOVER};
+}}
+
 /* ============================================================
    Console / log text
    ============================================================ */

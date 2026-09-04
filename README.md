@@ -118,8 +118,9 @@ bounding box of the drawn region grown by the subset half-width and the search
 range (memory and time scale with the region, not with the scan). Mask drawing
 (rectangle / ellipse / polygon / brush on any slice, extruded
 through all slices, one slice or a range; add / cut; undo; `reports/mask_tools.pdf`), a
-3-D view (pyvista: field slices, node points, iso-surface, warped lattice,
-displacement arrows, volume slices; `reports/view3d.pdf`), summary and exports,
+3-D view (pyvista: field slices with their own position controls, node points,
+iso-surface, warped lattice, displacement arrows, volume slices, selectable
+background; `reports/view3d.pdf`), summary and exports,
 and a batch dialog that runs several saved sessions one after another
 (`File > Batch run...`, the same as `al-dvc batch`; `reports/batch.pdf`). Sessions (`.aldvc`) keep volumes, parameters, export
 folder and display state; checkpoints (resume after an interruption) are an

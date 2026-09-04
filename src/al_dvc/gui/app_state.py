@@ -95,13 +95,14 @@ class AppState(QObject):
         # display
         self.display_field: str = "disp_magnitude"
         self.display_frame: int = 0
-        self.colormap: str = "viridis"
+        self.colormap: str = "turbo"
         self.color_auto: bool = True
         self.color_min: float = 0.0
         self.color_max: float = 1.0
         self.overlay_alpha: float = 0.75
         self.show_overlay: bool = True
         self.slice_index: dict[str, int | None] = {"z": None, "y": None, "x": None}
+        self.slice_layout: str = "row"  # arrangement of the three slices ("row", "column", "grid")
         # mask drawing
         self.mask_editor: MaskEditor | None = None
         self.mask_target: str = "current"  # "current" | "all"

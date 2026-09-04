@@ -79,6 +79,8 @@ class MainWindow(QMainWindow):
         self.viewer = SliceViewer(self.state)
         self.view3d = View3DPanel(self.state)
         self.center_tabs = QTabWidget()
+        self.center_tabs.setObjectName("viewTabs")
+        self.center_tabs.tabBar().setExpanding(True)
         self.center_tabs.addTab(self.viewer, "")
         self.center_tabs.addTab(self.view3d, "")
         self.results_panel = ResultsPanel(self.state)

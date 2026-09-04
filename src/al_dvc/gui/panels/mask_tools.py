@@ -187,7 +187,14 @@ class MaskToolbar(QWidget):
         self._labels["depth"].setText(self.tr("Depth"))
         self._labels["to"].setText(self.tr("to"))
         self._labels["radius"].setText(self.tr("Brush"))
-        self._labels["target"].setText(self.tr("Apply to"))
+        self._labels["target"].setText(self.tr("Mask for"))
+        self.target.setToolTip(
+            self.tr(
+                "Which frames receive the drawn mask. The reference mask (frame 0) defines the region of interest\n"
+                "and the analysed box; a mask on a deformed frame only excludes its own voxels. Choose all frames\n"
+                "when the same region applies to every scan."
+            )
+        )
         tools = {
             "none": self.tr("(off)"),
             "rectangle": self.tr("Rectangle"),
@@ -202,7 +209,7 @@ class MaskToolbar(QWidget):
         depths = {"all": self.tr("All slices"), "current": self.tr("Current slice"), "range": self.tr("Range")}
         for i, key in enumerate(DEPTHS):
             self.depth.setItemText(i, depths[key])
-        self.target.setItemText(0, self.tr("Current frame"))
+        self.target.setItemText(0, self.tr("This frame"))
         self.target.setItemText(1, self.tr("All frames"))
         texts = {
             "undo": self.tr("Undo"),

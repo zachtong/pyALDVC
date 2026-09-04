@@ -52,24 +52,36 @@ def displacement_physical(fr: FrameResult, voxel_size) -> NDArray[np.float64]:
     return np.asarray(U, dtype=np.float64) * np.asarray(voxel_size, dtype=np.float64)[None, :]
 
 
+def _trim_invalid(result: PipelineResult, values: NDArray) -> NDArray[np.float64]:
+    """NaN at the nodes the reference precompute marked invalid (no-op without validity information)."""
+    valid = np.asarray(getattr(result.dvc_mesh, "node_valid", None))
+    if valid.ndim != 1 or valid.size != values.shape[0]:
+        return np.asarray(values, dtype=np.float64)
+    out = np.array(values, dtype=np.float64, copy=True)
+    out[~valid.astype(bool)] = np.nan
+    return out
+
+
 def field_array(result: PipelineResult, frame: int, name: str, trimmed: bool = True) -> NDArray[np.float64]:
-    """Per-node array of a named field for one frame (displacement or strain)."""
+    """Per-node array of a named field for one frame (displacement or strain).
+
+    With ``trimmed`` (the default) nodes that are invalid on the reference (outside the mask / region
+    of interest, or ill-conditioned) are NaN, for displacement exactly as for strain: the solver fills
+    them by inpainting so that the global step has a complete lattice, but they are not measurements.
+    """
     fr = result.result_disp[frame]
     if name in DISP_FIELDS:
         U = displacement_physical(fr, result.dvc_para.voxel_size)
-        if name == "disp_u":
-            return U[:, 0]
-        if name == "disp_v":
-            return U[:, 1]
-        if name == "disp_w":
-            return U[:, 2]
-        return np.linalg.norm(U, axis=1)
+        comp = {"disp_u": 0, "disp_v": 1, "disp_w": 2}.get(name)
+        values = U[:, comp] if comp is not None else np.linalg.norm(U, axis=1)
+        return _trim_invalid(result, values) if trimmed else values
     if name in STD_FIELDS:
         if fr.U_std is None:
             raise ValueError("displacement uncertainty is not available for this result (U_std is None)")
         S = np.asarray(fr.U_std, dtype=np.float64) * np.asarray(result.dvc_para.voxel_size, dtype=np.float64)[None, :]
         comp = {"disp_std_u": 0, "disp_std_v": 1, "disp_std_w": 2}.get(name)
-        return S[:, comp] if comp is not None else np.linalg.norm(S, axis=1)
+        values = S[:, comp] if comp is not None else np.linalg.norm(S, axis=1)
+        return _trim_invalid(result, values) if trimmed else values
     if frame >= len(result.result_strain):
         raise ValueError(f"strain field '{name}' requested but strain was not computed")
     sr: StrainResult = result.result_strain[frame]

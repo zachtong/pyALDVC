@@ -31,6 +31,17 @@ ARROW_SCALE_FRACTION = 0.6  # longest arrow = this fraction of the node spacing 
 VOLUME_SLICE_MAX_PIXELS = 4_000_000  # subsample larger image slices before turning them into textures
 CAMERAS = ("iso", "xy", "xz", "yz")
 BACKGROUND = "#1b1d23"
+BACKGROUNDS = {"dark": BACKGROUND, "black": "#000000", "grey": "#808080", "white": "#ffffff"}
+
+
+def foreground_for(background: str) -> str:
+    """White text on a dark background, black on a light one (scalar bar, axes triad)."""
+    try:
+        h = background.lstrip("#")
+        r, g, b = (int(h[i : i + 2], 16) for i in (0, 2, 4))
+    except (ValueError, IndexError):
+        return "white"
+    return "black" if 0.299 * r + 0.587 * g + 0.114 * b > 140 else "white"
 
 
 def import_error() -> str | None:
@@ -54,7 +65,7 @@ class SceneOptions:
     field: str = "disp_magnitude"
     frame: int = 0
     mode: str = "slices"
-    colormap: str = "viridis"
+    colormap: str = "turbo"
     clim: tuple[float, float] | None = None
     opacity: float = 1.0
     warp_scale: float = 1.0
@@ -65,6 +76,7 @@ class SceneOptions:
     show_volume_slices: bool = False
     iso_fraction: float = 0.5
     slice_index: dict[str, int | None] = dc_field(default_factory=dict)
+    background: str = BACKGROUND
 
     def __post_init__(self) -> None:
         if self.mode not in MODES:
@@ -174,17 +186,25 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
     clim = opts.clim if opts.clim is not None else auto_clim(values)
     info = SceneInfo(field=opts.field, clim=clim, n_nodes=int(values.size), n_finite=int(finite.sum()))
     common = dict(scalars=opts.field, cmap=opts.colormap, clim=clim, nan_opacity=0.0, show_scalar_bar=False)
-    scalar_bar = dict(
-        title=opts.field,
+    fg = foreground_for(opts.background)
+    plotter.set_background(opts.background)
+    scalar_bar = dict(  # a slim vertical bar centred on the right edge, plain sans-serif text
+        title=opts.field + chr(10),  # the newline keeps the title clear of the top label
         vertical=True,
         n_labels=5,
         fmt="%.3g",
-        width=0.1,
-        height=0.45,
-        position_x=0.86,
-        position_y=0.05,
-        title_font_size=12,
-        label_font_size=10,
+        width=0.07,
+        height=0.55,
+        position_x=0.90,
+        position_y=0.22,
+        title_font_size=13,
+        label_font_size=11,
+        unconstrained_font_size=True,
+        font_family="arial",
+        color=fg,
+        shadow=False,
+        italic=False,
+        bold=False,
     )
 
     if opts.mode == "slices":
@@ -217,7 +237,7 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
     if opts.show_arrows:
         info.n_arrows = _add_arrows(plotter, grid, finite, result, opts, info)
     if opts.show_outline:
-        info.actors["outline"] = plotter.add_mesh(_volume_outline(result), color="white", line_width=1, opacity=0.6)
+        info.actors["outline"] = plotter.add_mesh(_volume_outline(result), color=fg, line_width=1, opacity=0.6)
     if opts.show_volume_slices and volume is not None:
         planes = volume_slice_planes(volume, opts.slice_index, result.dvc_para.voxel_size)
         for key, plane in planes.items():
@@ -227,7 +247,7 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
     if "field" in info.actors:
         # bind the bar to the field's mapper explicitly: by default pyvista takes the last added mesh (outline, arrows)
         plotter.add_scalar_bar(mapper=info.actors["field"].mapper, **scalar_bar)
-    plotter.add_axes()
+    plotter.add_axes(color=fg)
     return info
 
 
@@ -293,8 +313,9 @@ def render_image(
     import pyvista as pv
 
     pl = pv.Plotter(off_screen=True, window_size=window_size)
-    pl.set_background(BACKGROUND)
-    info = build_scene(pl, result, opts or SceneOptions(), volume)
+    opts = opts or SceneOptions()
+    pl.set_background(opts.background)
+    info = build_scene(pl, result, opts, volume)
     _apply_camera(pl, camera)
     img = np.asarray(pl.screenshot(str(path) if path is not None else None, return_img=True))
     pl.close()

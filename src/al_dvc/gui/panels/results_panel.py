@@ -30,7 +30,7 @@ from al_dvc.export.export_utils import DISP_FIELDS, STD_FIELDS, STRAIN_FIELDS
 from ..app_state import AppState
 from ..widgets import guard_wheel, headless
 
-COLORMAPS = ["viridis", "plasma", "inferno", "magma", "coolwarm", "RdBu_r", "jet", "gray"]
+COLORMAPS = ["turbo", "viridis", "plasma", "inferno", "magma", "coolwarm", "RdBu_r", "jet", "gray"]
 
 
 class ResultsPanel(QWidget):

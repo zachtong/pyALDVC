@@ -495,9 +495,18 @@ a different run is replaced instead of raising `CheckpointMismatch`.
 
 Differences from pyALDIC, all consequences of the data being 3-D:
 
-* the viewer draws the XY, XZ and YZ mid-planes of the current volume with
+* the viewer draws the XY, XZ and YZ planes of the current volume with
   sliders, and node-grid fields as blocks on the node layer nearest to each
-  plane (`mesh.to_grid`, extent from the node axes), with a shared colorbar;
+  plane (`mesh.to_grid`, extent from the node axes). The three axes are laid
+  out by a `GridSpec` as a row, a column or a 2 x 2 grid (`LAYOUTS`; XY / XZ
+  in the left column, YZ top-right) and the colorbar owns a fixed axes, so a
+  redraw never changes the image sizes. `field_array` returns NaN at nodes
+  the reference precompute marked invalid, for displacement as for strain:
+  the solver inpaints those nodes only so that the global step has a complete
+  lattice, and the overlay shows the region of interest alone;
+* the 3-D tab shows only the controls of its mode, shares the slice positions
+  with the slice viewer through `AppState.slice_index`, and offers a
+  background colour with contrast-aware scalar-bar text (`foreground_for`);
 * masks are loaded as volumes or drawn on the slices (see below);
 * translations are JSON dictionaries answered by a `QTranslator` subclass,
   which removes the Qt Linguist tool chain (pyALDIC ships `.qm` catalogs);

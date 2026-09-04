@@ -314,7 +314,7 @@ class ParamPanel(QWidget):
 
     def retranslate_ui(self) -> None:
         texts = {
-            "winsize": self.tr("Subset size (odd) [voxel]"),
+            "winsize": self.tr("Subset size [voxel]"),
             "winstepsize": self.tr("Subset step [voxel]"),
             "search_radius": self.tr("Search range [voxel]"),
             "init_method": self.tr("Initial guess"),

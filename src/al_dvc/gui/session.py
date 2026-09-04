@@ -61,6 +61,7 @@ def build_session(state: AppState, results_path: str | None = None) -> SessionDa
             "field": state.display_field,
             "frame": state.display_frame,
             "colormap": state.colormap,
+            "slice_layout": state.slice_layout,
             "color_auto": state.color_auto,
             "color_min": state.color_min,
             "color_max": state.color_max,
@@ -166,6 +167,7 @@ def apply_session(data: SessionData, state: AppState, path: str | Path | None = 
     state.display_field = d.get("field", state.display_field)
     state.display_frame = int(d.get("frame", 0))
     state.colormap = d.get("colormap", state.colormap)
+    state.slice_layout = d.get("slice_layout", state.slice_layout)
     state.color_auto = bool(d.get("color_auto", True))
     state.color_min = float(d.get("color_min", 0.0))
     state.color_max = float(d.get("color_max", 1.0))

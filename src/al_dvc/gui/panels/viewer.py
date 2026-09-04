@@ -8,7 +8,7 @@ from matplotlib.colors import ListedColormap
 from matplotlib.figure import Figure
 from matplotlib.patches import Ellipse, Rectangle
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
 from al_dvc.export.export_utils import field_array
 
@@ -24,6 +24,7 @@ MASK_EDGE = "#ff5555"
 PREVIEW_COLOR = "#ffd166"
 BRUSH_MIN_MOVE = 0.5  # voxels between recorded stroke points
 LEFT, RIGHT = 1, 3
+LAYOUTS = ("row", "column", "grid")  # three slices side by side, stacked, or XY / XZ left and YZ top-right
 
 
 POINT_DECIMALS = 2  # voxel coordinates of a gesture are kept to 0.01 voxel: the display round trip adds pixel noise
@@ -50,8 +51,15 @@ class SliceViewer(QWidget):
         self._vmax = 1.0
         self.figure = Figure(figsize=(9, 3.4), facecolor=COLORS.BG_CANVAS)
         self.canvas = FigureCanvas(self.figure)
-        self.axes = [self.figure.add_subplot(1, 3, k + 1) for k in range(3)]
+        self.axes: list = []
+        self.cax = None  # one colorbar axes of fixed position: the image axes never shrink on redraw
         self._cbar = None
+        self._build_axes(getattr(state, "slice_layout", LAYOUTS[0]))
+        self.layout_combo = QComboBox()
+        for key in LAYOUTS:
+            self.layout_combo.addItem(key, key)
+        self.layout_combo.setCurrentIndex(max(0, LAYOUTS.index(getattr(state, "slice_layout", LAYOUTS[0]))))
+        self._layout_label = QLabel()
         self.sliders: dict[str, QSlider] = {}
         self._slider_labels: dict[str, QLabel] = {}
         self.mask_tools = MaskToolbar(state)
@@ -61,6 +69,11 @@ class SliceViewer(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.mask_tools)
+        layout_row = QHBoxLayout()
+        layout_row.addStretch(1)
+        layout_row.addWidget(self._layout_label)
+        layout_row.addWidget(self.layout_combo)
+        layout.addLayout(layout_row)
         layout.addWidget(self.canvas, stretch=1)
         rows = QHBoxLayout()
         for axis in ("z", "y", "x"):
@@ -85,6 +98,7 @@ class SliceViewer(QWidget):
         self.canvas.mpl_connect("button_release_event", self._on_release)
         self.canvas.mpl_connect("key_press_event", self._on_key)
         self.canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.layout_combo.currentIndexChanged.connect(lambda i: self.set_layout(LAYOUTS[i]))
 
         self._state.volumes_changed.connect(self._on_volumes_changed)
         self._state.current_frame_changed.connect(lambda _i: self._on_volumes_changed())
@@ -93,6 +107,54 @@ class SliceViewer(QWidget):
         self._state.mask_changed.connect(self.redraw)
         self.retranslate_ui()
         self._on_volumes_changed()
+
+    # ------------------------------------------------------------------ layout
+    def _build_axes(self, key: str) -> None:
+        """Create the three image axes and the colorbar axes for one of :data:`LAYOUTS`.
+
+        ``self.axes`` always holds (XY, XZ, YZ) in that order whatever the arrangement; the colorbar
+        lives in its own axes so drawing it never steals space from the images (the old
+        ``figure.colorbar(ax=...)`` shrank them on every redraw).
+        """
+        if key not in LAYOUTS:
+            raise ValueError(f"layout must be one of {LAYOUTS}, got {key!r}")
+        fig = self.figure
+        fig.clear()
+        self._cbar = None
+        if key == "row":
+            gs = fig.add_gridspec(1, 3, left=0.05, right=0.90, bottom=0.14, top=0.90, wspace=0.32)
+            cells = [gs[0, 0], gs[0, 1], gs[0, 2]]
+            cax_rect = (0.925, 0.16, 0.014, 0.68)
+        elif key == "column":
+            gs = fig.add_gridspec(3, 1, left=0.14, right=0.86, bottom=0.05, top=0.96, hspace=0.42)
+            cells = [gs[0, 0], gs[1, 0], gs[2, 0]]
+            cax_rect = (0.90, 0.22, 0.02, 0.56)
+        else:  # grid: XY top-left, XZ bottom-left, YZ top-right, colorbar in the free cell
+            gs = fig.add_gridspec(2, 2, left=0.07, right=0.94, bottom=0.08, top=0.94, wspace=0.28, hspace=0.34)
+            cells = [gs[0, 0], gs[1, 0], gs[0, 1]]
+            cax_rect = (0.60, 0.10, 0.02, 0.32)
+        self.axes = [fig.add_subplot(cell) for cell in cells]
+        self.cax = fig.add_axes(cax_rect)
+        self.cax.set_visible(False)
+        self._layout = key
+
+    def set_layout(self, key: str) -> None:
+        """Arrange the three slices as a row, a column or a 2 x 2 grid (remembered in the state)."""
+        if key == getattr(self, "_layout", None):
+            return
+        self._cancel_gesture()
+        self._build_axes(key)
+        if self.layout_combo.currentData() != key:
+            self.layout_combo.blockSignals(True)
+            self.layout_combo.setCurrentIndex(LAYOUTS.index(key))
+            self.layout_combo.blockSignals(False)
+        if getattr(self._state, "slice_layout", None) != key:
+            self._state.slice_layout = key
+        self.redraw()
+
+    @property
+    def layout_key(self) -> str:
+        return self._layout
 
     # ------------------------------------------------------------------ data
     def _on_volumes_changed(self) -> None:
@@ -162,12 +224,9 @@ class SliceViewer(QWidget):
             ax.tick_params(colors=COLORS.TEXT_SECONDARY, labelsize=7)
             for spine in ax.spines.values():
                 spine.set_color(COLORS.BORDER)
-        if self._cbar is not None:
-            try:
-                self._cbar.remove()
-            except Exception:
-                pass
-            self._cbar = None
+        self.cax.clear()
+        self.cax.set_visible(False)
+        self._cbar = None
         if self._volume is None:
             self._empty.setVisible(True)
             self.canvas.draw_idle()
@@ -222,7 +281,8 @@ class SliceViewer(QWidget):
                     extent=extent,
                     interpolation="nearest",
                 )
-            self._cbar = self.figure.colorbar(mappable, ax=self.axes, fraction=0.025, pad=0.02)
+            self.cax.set_visible(True)
+            self._cbar = self.figure.colorbar(mappable, cax=self.cax)
             self._cbar.set_label(label, color=COLORS.TEXT_SECONDARY, fontsize=8)
             self._cbar.ax.tick_params(colors=COLORS.TEXT_SECONDARY, labelsize=7)
         # cursor lines showing the other two slice positions
@@ -232,6 +292,10 @@ class SliceViewer(QWidget):
         self.axes[1].axvline(ix, color=COLORS.ACCENT, lw=0.5, alpha=0.6)
         self.axes[2].axhline(iz, color=COLORS.ACCENT, lw=0.5, alpha=0.6)
         self.axes[2].axvline(iy, color=COLORS.ACCENT, lw=0.5, alpha=0.6)
+        # every pane shows its whole slice: the last imshow (the field overlay) must not zoom the view to itself
+        for ax, _img, (w, h), *_rest in panes:
+            ax.set_xlim(-0.5, w - 0.5)
+            ax.set_ylim(-0.5, h - 0.5)
         self.canvas.draw_idle()
 
     def _draw_mask(self, iz: int, iy: int, ix: int) -> None:
@@ -432,4 +496,8 @@ class SliceViewer(QWidget):
 
     def retranslate_ui(self) -> None:
         self._empty.setText(self.tr("No volume loaded. Use 'Add volumes...' to start."))
+        self._layout_label.setText(self.tr("Layout"))
+        for i, text in enumerate((self.tr("Row"), self.tr("Column"), self.tr("2 x 2"))):
+            self.layout_combo.setItemText(i, text)
+        self.layout_combo.setToolTip(self.tr("Arrangement of the XY / XZ / YZ slices"))
         self.mask_tools.retranslate_ui()

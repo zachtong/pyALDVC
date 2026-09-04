@@ -32,6 +32,18 @@ All notable changes to pyALDVC are documented here. The format follows
   holding a float32 copy of every frame of a sequence.
 
 ### Changed
+- Slice viewer: the three slices can be arranged as a row, a column or a
+  2 x 2 grid (XY / XZ left, YZ top-right; remembered in the session); the
+  colorbar has its own axes, so changing a slice no longer shrinks the images.
+  Displacement fields are NaN outside the valid nodes like strain (the
+  inpainted values outside the region of interest are not shown or exported
+  with `trimmed=True`). Default colormap `turbo`. The Slices / 3-D view
+  switch is a prominent segmented control; the mask toolbar's target reads
+  "Mask for: This frame / All frames" with an explanation.
+- 3-D view: controls follow the mode (slice positions shared with the Slices
+  tab, iso level, warp scale; arrow settings only with arrows), a background
+  selector (dark / black / grey / white) with contrast-aware text, and a slim
+  centred scalar bar in a plain sans-serif font.
 - GUI layout after pyALDIC: run controls, results, exports and the console on
   the right, folding parameter sections with fixed-width inputs on the left
   (`Subset & search`, `Solver`, `Strain & units`, `Performance`, `Advanced`),

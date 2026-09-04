@@ -11,7 +11,10 @@ Two backends behind one panel:
 
 Without pyvista the panel shows how to install it and does nothing else.
 The scene itself is built by :mod:`al_dvc.gui.view3d_scene`, so the two
-backends cannot drift apart.
+backends cannot drift apart. The controls shown depend on the mode: slice
+positions for ``slices`` (shared with the Slices tab), the iso level for
+``surface``, the warp scale for ``warped``; arrows, outline, volume slices,
+background and camera are always available.
 """
 
 from __future__ import annotations
@@ -40,6 +43,7 @@ from PySide6.QtWidgets import (
 from ..app_state import AppState
 from ..view3d_scene import (
     BACKGROUND,
+    BACKGROUNDS,
     CAMERAS,
     MODES,
     SceneInfo,
@@ -49,11 +53,13 @@ from ..view3d_scene import (
     import_error,
     render_image,
 )
+from ..widgets import guard_wheel
 
 logger = logging.getLogger(__name__)
 
 STATIC_SIZE = (900, 640)
 INSTALL_HINT = "pip install pyvista pyvistaqt"
+SLICE_AXES = ("z", "y", "x")
 
 
 class View3DPanel(QWidget):
@@ -67,6 +73,7 @@ class View3DPanel(QWidget):
         self._camera_reset_pending = True
         self._last_info: SceneInfo | None = None
         self._last_image: np.ndarray | None = None
+        self._updating = False
         self.backend = "unavailable"
         self._interactor = None
 
@@ -74,6 +81,20 @@ class View3DPanel(QWidget):
         self.mode = QComboBox()
         for key in MODES:
             self.mode.addItem(key, key)
+        self.slice_spins: dict[str, QSpinBox] = {}
+        for axis in SLICE_AXES:
+            s = QSpinBox()
+            s.setRange(0, 0)
+            s.setFixedWidth(80)
+            self.slice_spins[axis] = s
+        self.iso = QDoubleSpinBox()
+        self.iso.setRange(0.0, 1.0)
+        self.iso.setSingleStep(0.05)
+        self.iso.setValue(0.5)
+        self.warp_scale = QDoubleSpinBox()
+        self.warp_scale.setRange(0.0, 1000.0)
+        self.warp_scale.setValue(1.0)
+        self.warp_scale.setSingleStep(1.0)
         self.arrows = QCheckBox()
         self.stride = QSpinBox()
         self.stride.setRange(1, 20)
@@ -82,40 +103,56 @@ class View3DPanel(QWidget):
         self.arrow_scale.setRange(0.05, 100.0)
         self.arrow_scale.setValue(1.0)
         self.arrow_scale.setSingleStep(0.5)
-        self.warp_scale = QDoubleSpinBox()
-        self.warp_scale.setRange(0.0, 1000.0)
-        self.warp_scale.setValue(1.0)
-        self.warp_scale.setSingleStep(1.0)
         self.volume_slices = QCheckBox()
         self.outline = QCheckBox()
         self.outline.setChecked(True)
-        self.iso = QDoubleSpinBox()
-        self.iso.setRange(0.0, 1.0)
-        self.iso.setSingleStep(0.05)
-        self.iso.setValue(0.5)
+        self.background = QComboBox()
+        for key in BACKGROUNDS:
+            self.background.addItem(key, key)
         self.camera = QComboBox()
         for key in CAMERAS:
             self.camera.addItem(key, key)
         self._btn_refresh = QPushButton()
         self._btn_shot = QPushButton()
-        self._labels: dict[str, QLabel] = {k: QLabel() for k in ("mode", "stride", "arrow_scale", "warp_scale", "iso", "camera")}
+        self._labels: dict[str, QLabel] = {
+            k: QLabel()
+            for k in (
+                "mode",
+                "slice_z",
+                "slice_y",
+                "slice_x",
+                "iso",
+                "warp_scale",
+                "stride",
+                "arrow_scale",
+                "background",
+                "camera",
+            )
+        }
 
+        # row 1: mode and the mode-specific controls
         top = QHBoxLayout()
-        for key, widget in [
-            ("mode", self.mode),
-            (None, self.arrows),
-            ("stride", self.stride),
-            ("arrow_scale", self.arrow_scale),
-            ("warp_scale", self.warp_scale),
-            ("iso", self.iso),
-        ]:
-            if key is not None:
-                top.addWidget(self._labels[key])
-            top.addWidget(widget)
+        top.addWidget(self._labels["mode"])
+        top.addWidget(self.mode)
+        for axis in SLICE_AXES:
+            top.addWidget(self._labels[f"slice_{axis}"])
+            top.addWidget(self.slice_spins[axis])
+        top.addWidget(self._labels["iso"])
+        top.addWidget(self.iso)
+        top.addWidget(self._labels["warp_scale"])
+        top.addWidget(self.warp_scale)
+        top.addWidget(self.arrows)
+        top.addWidget(self._labels["stride"])
+        top.addWidget(self.stride)
+        top.addWidget(self._labels["arrow_scale"])
+        top.addWidget(self.arrow_scale)
         top.addStretch(1)
+        # row 2: scene-wide options
         bottom = QHBoxLayout()
         bottom.addWidget(self.volume_slices)
         bottom.addWidget(self.outline)
+        bottom.addWidget(self._labels["background"])
+        bottom.addWidget(self.background)
         bottom.addWidget(self._labels["camera"])
         bottom.addWidget(self.camera)
         bottom.addWidget(self._btn_refresh)
@@ -146,20 +183,25 @@ class View3DPanel(QWidget):
         layout.addWidget(self._status)
 
         self._init_backend()
+        guard_wheel(self)
 
         self.mode.currentIndexChanged.connect(lambda _i: self._on_control_changed())
         for w in (self.arrows, self.volume_slices, self.outline):
             w.toggled.connect(lambda _v: self._on_control_changed())
         for w in (self.stride, self.arrow_scale, self.warp_scale, self.iso):
             w.valueChanged.connect(lambda _v: self._on_control_changed())
+        for axis, s in self.slice_spins.items():
+            s.valueChanged.connect(lambda v, a=axis: self._on_slice_spin(a, v))
+        self.background.currentIndexChanged.connect(lambda _i: self._on_background())
         self.camera.currentIndexChanged.connect(lambda i: self._on_camera(CAMERAS[i]))
         self._btn_refresh.clicked.connect(self.refresh)
         self._btn_shot.clicked.connect(self._on_screenshot)
         self._state.results_changed.connect(self._on_results_changed)
-        self._state.display_changed.connect(self.invalidate)
-        self._state.volumes_changed.connect(self.invalidate)
+        self._state.display_changed.connect(self._on_display_changed)
+        self._state.volumes_changed.connect(self._on_volumes_changed)
         self._state.current_frame_changed.connect(lambda _i: self.invalidate())
         self.retranslate_ui()
+        self._sync_slice_spins()
         self._update_enabled()
 
     # ------------------------------------------------------------------ backends
@@ -189,6 +231,9 @@ class View3DPanel(QWidget):
     def mode_key(self) -> str:
         return str(self.mode.currentData() or MODES[max(0, self.mode.currentIndex())])
 
+    def background_key(self) -> str:
+        return str(self.background.currentData() or "dark")
+
     def options(self) -> SceneOptions:
         st = self._state
         return SceneOptions(
@@ -206,6 +251,7 @@ class View3DPanel(QWidget):
             show_volume_slices=self.volume_slices.isChecked(),
             iso_fraction=float(self.iso.value()),
             slice_index=dict(st.slice_index),
+            background=BACKGROUNDS.get(self.background_key(), BACKGROUND),
         )
 
     def _volume_for_scene(self):
@@ -216,6 +262,33 @@ class View3DPanel(QWidget):
         except Exception as exc:
             self._state.log(f"3-D view: cannot load the volume for the slices: {exc}", "warning")
             return None
+
+    # ------------------------------------------------------------------ slice positions (shared with the Slices tab)
+    def _sync_slice_spins(self) -> None:
+        """Ranges from the loaded volume, values from ``state.slice_index`` (without re-emitting)."""
+        shape = self._state.volume_shape() if self._state.volumes else None
+        self._updating = True
+        try:
+            for axis, n in zip(SLICE_AXES, shape if shape is not None else (1, 1, 1)):
+                s = self.slice_spins[axis]
+                s.setRange(0, max(0, int(n) - 1))
+                cur = self._state.slice_index.get(axis)
+                s.setValue(int(cur) if cur is not None else int(n) // 2)
+        finally:
+            self._updating = False
+
+    def _on_slice_spin(self, axis: str, value: int) -> None:
+        if self._updating:
+            return
+        self._state.set_slice(axis, int(value))  # display_changed -> the Slices tab and this view redraw
+
+    def _on_display_changed(self) -> None:
+        self._sync_slice_spins()
+        self.invalidate()
+
+    def _on_volumes_changed(self) -> None:
+        self._sync_slice_spins()
+        self.invalidate()
 
     # ------------------------------------------------------------------ drawing
     def invalidate(self) -> None:
@@ -230,6 +303,13 @@ class View3DPanel(QWidget):
 
     def _on_control_changed(self) -> None:
         self._update_enabled()
+        self.invalidate()
+
+    def _on_background(self) -> None:
+        colour = BACKGROUNDS.get(self.background_key(), BACKGROUND)
+        self._image.setStyleSheet(f"background: {colour};")
+        if self._interactor is not None:
+            self._interactor.set_background(colour)
         self.invalidate()
 
     def _on_camera(self, camera: str) -> None:
@@ -335,14 +415,48 @@ class View3DPanel(QWidget):
 
     # ------------------------------------------------------------------ misc
     def _update_enabled(self) -> None:
+        """Enable what makes sense and show only the controls of the current mode."""
         has = self.backend != "unavailable" and self._state.results is not None
         mode = self.mode_key()
-        for w in (self.mode, self.arrows, self.outline, self.volume_slices, self.camera, self._btn_refresh, self._btn_shot):
+        for w in (
+            self.mode,
+            self.arrows,
+            self.outline,
+            self.volume_slices,
+            self.background,
+            self.camera,
+            self._btn_refresh,
+            self._btn_shot,
+        ):
             w.setEnabled(has)
-        self.stride.setEnabled(has and self.arrows.isChecked())
-        self.arrow_scale.setEnabled(has and self.arrows.isChecked())
-        self.warp_scale.setEnabled(has and mode == "warped")
-        self.iso.setEnabled(has and mode == "surface")
+        show_slices = mode == "slices"
+        for axis in SLICE_AXES:
+            self._labels[f"slice_{axis}"].setVisible(show_slices)
+            self.slice_spins[axis].setVisible(show_slices)
+            self.slice_spins[axis].setEnabled(has)
+        self._labels["iso"].setVisible(mode == "surface")
+        self.iso.setVisible(mode == "surface")
+        self.iso.setEnabled(has)
+        self._labels["warp_scale"].setVisible(mode == "warped")
+        self.warp_scale.setVisible(mode == "warped")
+        self.warp_scale.setEnabled(has)
+        arrows_on = has and self.arrows.isChecked()
+        for w in (self._labels["stride"], self.stride, self._labels["arrow_scale"], self.arrow_scale):
+            w.setVisible(self.arrows.isChecked())
+            w.setEnabled(arrows_on)
+
+    def visible_controls(self) -> set[str]:
+        """Names of the mode-specific controls currently shown (tests)."""
+        names = set()
+        if self.slice_spins["z"].isVisibleTo(self):
+            names.add("slices")
+        if self.iso.isVisibleTo(self):
+            names.add("iso")
+        if self.warp_scale.isVisibleTo(self):
+            names.add("warp_scale")
+        if self.stride.isVisibleTo(self):
+            names.add("arrows")
+        return names
 
     def _hint_text(self) -> str:
         if self.backend == "unavailable":
@@ -354,10 +468,14 @@ class View3DPanel(QWidget):
 
     def retranslate_ui(self) -> None:
         self._labels["mode"].setText(self.tr("Mode"))
+        self._labels["slice_z"].setText(self.tr("Slice z"))
+        self._labels["slice_y"].setText(self.tr("Slice y"))
+        self._labels["slice_x"].setText(self.tr("Slice x"))
         self._labels["stride"].setText(self.tr("Stride"))
         self._labels["arrow_scale"].setText(self.tr("Arrow scale"))
         self._labels["warp_scale"].setText(self.tr("Warp scale"))
         self._labels["iso"].setText(self.tr("Iso level"))
+        self._labels["background"].setText(self.tr("Background"))
         self._labels["camera"].setText(self.tr("Camera"))
         self.arrows.setText(self.tr("Arrows"))
         self.volume_slices.setText(self.tr("Volume slices"))
@@ -375,8 +493,13 @@ class View3DPanel(QWidget):
         cams = {"iso": self.tr("Isometric"), "xy": "XY", "xz": "XZ", "yz": "YZ"}
         for i, key in enumerate(CAMERAS):
             self.camera.setItemText(i, cams[key])
+        bgs = {"dark": self.tr("Dark"), "black": self.tr("Black"), "grey": self.tr("Grey"), "white": self.tr("White")}
+        for i, key in enumerate(BACKGROUNDS):
+            self.background.setItemText(i, bgs[key])
         self.mode.setToolTip(
             self.tr("Orthogonal slices of the field, node points, an iso-surface, or the grid warped by the displacement")
         )
+        for axis in SLICE_AXES:
+            self.slice_spins[axis].setToolTip(self.tr("Position of the three field slices (shared with the Slices tab)"))
         self.volume_slices.setToolTip(self.tr("Show the current volume's XY / XZ / YZ slices at the slider positions"))
         self._hint.setText(self._hint_text())
