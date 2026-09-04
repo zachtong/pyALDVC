@@ -53,6 +53,7 @@ MIN_WINDOW_WIDTH = 1200
 MIN_WINDOW_HEIGHT = 680
 SETTINGS_ORG = "pyALDVC"
 SETTINGS_APP = "gui"
+MAX_RECENT = 8
 
 
 class _Section(QWidget):
@@ -148,10 +149,14 @@ class MainWindow(QMainWindow):
         self._menus = {}
         self._build_menu_bar()
         self.state.progress_updated.connect(lambda _f, msg: self.statusBar().showMessage(msg))
+        self._backend_label = QLabel()
+        self._backend_label.setObjectName("hint")
+        self.statusBar().addPermanentWidget(self._backend_label)
         self.state.run_state_changed.connect(self._on_run_state_changed)
         self.state.log_message.connect(self._on_log_message)
         self.retranslate_ui()
-        QTimer.singleShot(START_DELAY_MS + 1500, self.param_panel.refresh_backend_status)
+        QTimer.singleShot(START_DELAY_MS + 1500, self._refresh_backend)
+        self.state.log(self.tr("Welcome. Add volumes, draw a region of interest, set parameters, run, then strain or export."))
 
     # ------------------------------------------------------------------ messages
     @property
@@ -198,6 +203,9 @@ class MainWindow(QMainWindow):
             self._menus["file"].addAction(act)
             if key in ("save_as", "batch"):
                 self._menus["file"].addSeparator()
+            if key == "save_as":
+                self._menus["recent"] = self._menus["file"].addMenu("")
+                self._rebuild_recent_menu()
         self._menus["view"] = bar.addMenu("")
         for key, slot, shortcut in [
             ("left_column", self._toggle_left, "Ctrl+1"),
@@ -247,6 +255,39 @@ class MainWindow(QMainWindow):
             self._menus["help"].addAction(act)
         self._sync_language_check()
 
+    def _refresh_backend(self) -> None:
+        """Backend line in the parameter panel and a permanent status-bar label (GPU name or CPU)."""
+        self.param_panel.refresh_backend_status()
+        from al_dvc.solver.cuda_kernels import cuda_available, device_name
+
+        self._backend_label.setText(
+            self.tr("GPU: {name}").format(name=device_name()) if cuda_available() else self.tr("CPU kernels")
+        )
+
+    # ------------------------------------------------------------------ recent sessions
+    def recent_sessions(self) -> list[str]:
+        value = QSettings(SETTINGS_ORG, SETTINGS_APP).value("recent_sessions", [])
+        if isinstance(value, str):
+            value = [value]
+        return [str(p) for p in (value or []) if p][:MAX_RECENT]
+
+    def remember_session(self, path) -> None:
+        items = [str(path)] + [p for p in self.recent_sessions() if p != str(path)]
+        QSettings(SETTINGS_ORG, SETTINGS_APP).setValue("recent_sessions", items[:MAX_RECENT])
+        self._rebuild_recent_menu()
+
+    def _rebuild_recent_menu(self) -> None:
+        menu = self._menus.get("recent")
+        if menu is None:
+            return
+        menu.clear()
+        recent = self.recent_sessions()
+        for p in recent:
+            act = menu.addAction(Path(p).name)
+            act.setToolTip(p)
+            act.triggered.connect(lambda _c=False, path=p: self.open_session_path(path))
+        menu.setEnabled(bool(recent))
+
     def _sync_language_check(self) -> None:
         mgr = _language_manager()
         code = mgr.code if mgr is not None else "en"
@@ -288,6 +329,7 @@ class MainWindow(QMainWindow):
                 ),
             )
         self.state.log(self.tr("Session loaded: {path}").format(path=path))
+        self.remember_session(path)
         return missing
 
     def _on_save_session(self) -> None:
@@ -314,6 +356,7 @@ class MainWindow(QMainWindow):
             return None
         self.setWindowTitle(f"pyALDVC {__version__} - {p.name}")
         self.state.log(self.tr("Session saved: {path}").format(path=p))
+        self.remember_session(p)
         return p
 
     # ------------------------------------------------------------------ help
@@ -476,6 +519,7 @@ class MainWindow(QMainWindow):
         self._menus["file"].setTitle(self.tr("&File"))
         self._menus["view"].setTitle(self.tr("&View"))
         self._menus["language"].setTitle(self.tr("Language"))
+        self._menus["recent"].setTitle(self.tr("Recent sessions"))
         self._menus["analysis"].setTitle(self.tr("&Analysis"))
         self._menus["help"].setTitle(self.tr("&Help"))
         texts = {

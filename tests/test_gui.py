@@ -269,3 +269,25 @@ def test_volume_table_region_column_and_reorder(qapp, small_pair):
     window.state.move_volume(0, 5)  # out of range: ignored
     assert table.item(0, 1).text() == "beta"
     window.close()
+
+
+def test_recent_sessions_menu(qapp, small_pair, tmp_path):
+    from PySide6.QtCore import QSettings
+
+    from al_dvc.gui.app import SETTINGS_APP, SETTINGS_ORG
+
+    QSettings(SETTINGS_ORG, SETTINGS_APP).remove("recent_sessions")
+    window = MainWindow()
+    window.show()
+    assert window.recent_sessions() == [] and not window._menus["recent"].isEnabled()
+    p0, p1 = tmp_path / "ref.npy", tmp_path / "def.npy"
+    save_volume(p0, small_pair[0])
+    save_volume(p1, small_pair[1])
+    window.state.add_volume_paths([str(p0), str(p1)])
+    for k in range(3):
+        assert window.save_session_path(tmp_path / f"s{k}.aldvc") is not None
+    recent = window.recent_sessions()
+    assert [Path(p).name for p in recent] == ["s2.aldvc", "s1.aldvc", "s0.aldvc"]
+    assert window._menus["recent"].isEnabled() and len(window._menus["recent"].actions()) == 3
+    QSettings(SETTINGS_ORG, SETTINGS_APP).remove("recent_sessions")
+    window.close()

@@ -65,7 +65,8 @@ class VolumePanel(QWidget):
         self._btn_up = QPushButton()
         self._btn_down = QPushButton()
         for b in (self._btn_up, self._btn_down):
-            b.setFixedWidth(40)
+            b.setFixedWidth(36)
+            b.setStyleSheet("padding: 4px 2px;")
         self._info = QLabel()
         self._info.setWordWrap(True)
         self._info.setObjectName("hint")
@@ -295,8 +296,8 @@ class VolumePanel(QWidget):
         self._btn_folder.setText(self.tr("Add folder..."))
         self._btn_mask.setText(self.tr("Set mask..."))
         self._btn_remove.setText(self.tr("Remove"))
-        self._btn_up.setText(self.tr("Up"))
-        self._btn_down.setText(self.tr("Down"))
+        self._btn_up.setText("\u25b2")  # up-pointing triangle
+        self._btn_down.setText("\u25bc")
         self._btn_up.setToolTip(self.tr("Move the frame up (frame 0 is the reference)"))
         self._btn_down.setToolTip(self.tr("Move the frame down"))
         self._list.setHorizontalHeaderLabels([self.tr("#"), self.tr("Volume"), self.tr("Shape"), self.tr("Region")])
