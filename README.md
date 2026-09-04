@@ -102,7 +102,7 @@ result = run_aldvc(para, provider)
 ### Graphical application
 
 ```bash
-pip install "al-dvc[gui]"          # add [gui3d] for the pyvista 3-D view
+pip install "al-dvc[gui]"          # add [gui3d] for the pyvista 3-D view, [cuda] for NVIDIA GPUs
 al-dvc-gui                 # or: al-dvc gui [session.aldvc]
 ```
 
@@ -137,6 +137,22 @@ al-dvc plot results/aldvc.npz --field exx --frame 1
 al-dvc batch study/*.aldvc --export npz summary report              # sessions saved by the GUI, one after another
 al-dvc info scan/*.tif
 ```
+
+### GPU acceleration (optional)
+
+```bash
+pip install "al-dvc[cuda]"         # numba-cuda with the CUDA 12 wheels; needs an NVIDIA driver
+```
+
+With an NVIDIA GPU the local solvers (Hessian precompute, 12-DOF IC-GN, the
+3-DOF ADMM passes) run as CUDA kernels compiled at first use for the installed
+card (any compute capability the CUDA 12 toolchain supports, Maxwell and
+newer; the RTX 5090 included). Results agree with the CPU kernels to about
+1e-5 voxel (float32 sampling, float64 solves); the local steps are 25-40x
+faster on an RTX 5090 than on a 24-core CPU. Installations without the extra,
+without a driver or without a usable device are unaffected: `backend="auto"`
+(the default) probes CUDA once and uses the CPU kernels otherwise, and the GUI
+shows which backend it picked. The portable Windows bundle is CPU-only.
 
 ## How it works
 
@@ -194,7 +210,8 @@ The most useful fields:
 | `init_coarse_factor` | 1 | > 1: the NCC search and a 12-DOF IC-GN run on every k-th node per axis only (k^3 fewer nodes) and the displacement *and* gradient are interpolated to all nodes as the initial guess of the full pass, which then starts within ~0.1 voxel with the local gradient in place; 2 is a good choice for smooth fields on dense grids (micro-CT example: initial guess 50 -> 17 s, run 233 -> 206 s, same result; on clean synthetic data the full pass also needs fewer iterations) |
 | `icgn_noise_hessian` | True | Gauss-Newton steps with the noise-corrected Hessian once a node is in its fine-convergence phase (capped at half of the diagonal): the stored Hessian is inflated by the reference-gradient noise, which makes the plain steps too short; same fixed point, about 2x fewer iterations on noisy data (real micro-CT: 4 instead of 7 per ADMM pass), no change on clean data |
 | `icgn_predictive_stop` | True | one-step look-ahead: when the IC-GN steps contract and the predicted next step is below `icgn_dp_tol`, apply the current step and stop instead of spending one more sampling pass to confirm (13-30 % fewer iterations on smooth fields, same solution within `icgn_dp_tol`) |
-| `n_threads` | 0 (all) | Numba thread count |
+| `backend` | `auto` | `auto` runs the local solvers on an NVIDIA GPU when `numba-cuda` and a CUDA device are present and falls back to the CPU otherwise; `cuda` insists on the GPU (error when unusable); `numba` / `numpy` force the CPU |
+| `n_threads` | 0 (all) | Numba thread count (CPU backend) |
 | `gradient_mode` | `"stored"` | `on_the_fly` drops the three gradient volumes (21 -> 9 bytes per voxel) for scans that do not fit otherwise; about 15-20 % slower local step |
 
 ## Accuracy and performance

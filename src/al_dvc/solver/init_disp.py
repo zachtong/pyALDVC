@@ -21,6 +21,16 @@ from .integer_search import (
 logger = logging.getLogger(__name__)
 
 
+def _ncc_backend(para: DVCPara) -> str:
+    """``'cuda'`` when the parameter set resolves to the GPU backend, else ``'numba'``."""
+    from .local_icgn import resolve_backend
+
+    try:
+        return resolve_backend(para)
+    except RuntimeError:
+        return "numba"
+
+
 def compute_initial_guess(
     f: NDArray[np.float32],
     g: NDArray[np.float32],
@@ -64,6 +74,7 @@ def compute_initial_guess(
             auto_expand=para.ncc_auto_expand,
             max_expand=para.ncc_max_expand,
             fine_radius=int(getattr(para, "pyramid_fine_radius", 2)),
+            backend=_ncc_backend(para),
         )
         disp = info["disp"]
         ok = info.get("ok", np.ones(N, dtype=bool))
@@ -72,7 +83,15 @@ def compute_initial_guess(
     else:
         shift0 = None if shift is None else np.tile(np.round(shift).astype(np.int64), (N, 1))
         res = ncc_search_expanding(
-            f, g, coords, subset, tuple(int(r) for r in para.search_radius), shift0, para.ncc_auto_expand, para.ncc_max_expand
+            f,
+            g,
+            coords,
+            subset,
+            tuple(int(r) for r in para.search_radius),
+            shift0,
+            para.ncc_auto_expand,
+            para.ncc_max_expand,
+            backend=_ncc_backend(para),
         )
         disp = res["disp"]
         ok = res["ok"]

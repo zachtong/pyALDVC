@@ -116,6 +116,7 @@ class MainWindow(QMainWindow):
         self.state.run_state_changed.connect(self._on_run_state_changed)
         self.state.log_message.connect(self._on_log_message)
         self.retranslate_ui()
+        QTimer.singleShot(START_DELAY_MS + 1500, self.param_panel.refresh_backend_status)
 
     # ------------------------------------------------------------------ messages
     @property

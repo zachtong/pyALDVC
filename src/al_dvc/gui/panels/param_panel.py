@@ -128,6 +128,12 @@ class ParamPanel(QWidget):
         self.icgn_patience = self._spin(0, 100, 1)
         self.subset_stride = self._spin(1, 8, 1)
         self.init_coarse = self._spin(1, 8, 1)
+        self.backend = QComboBox()
+        for key in ("auto", "cuda", "numba"):
+            self.backend.addItem(key, key)
+        self.backend_status = QLabel()
+        self.backend_status.setObjectName("hint")
+        self.backend_status.setWordWrap(True)
         self.local_outlier = self._dspin(0.0, 20.0, 2)
         self.init_outlier = self._dspin(0.0, 20.0, 2)
         self.hessian_cond = self._dspin(1.0, 1e15, 0)
@@ -148,6 +154,8 @@ class ParamPanel(QWidget):
             ("icgn_patience", self.icgn_patience),
             ("subset_stride", self.subset_stride),
             ("init_coarse", self.init_coarse),
+            ("backend", self.backend),
+            ("backend_status", self.backend_status),
             ("local_outlier", self.local_outlier),
             ("init_outlier", self.init_outlier),
             ("hessian_cond", self.hessian_cond),
@@ -233,6 +241,7 @@ class ParamPanel(QWidget):
         self.icgn_patience.valueChanged.connect(lambda v: self._set("icgn_patience", int(v)))
         self.subset_stride.valueChanged.connect(lambda v: self._set("subset_stride", int(v)))
         self.init_coarse.valueChanged.connect(lambda v: self._set("init_coarse_factor", int(v)))
+        self.backend.currentIndexChanged.connect(lambda i: self._set("backend", str(self.backend.itemData(i))))
         self.local_outlier.valueChanged.connect(lambda v: self._set("local_outlier_threshold", float(v)))
         self.init_outlier.valueChanged.connect(lambda v: self._set("init_outlier_threshold", float(v)))
         self.hessian_cond.valueChanged.connect(lambda v: self._set("hessian_cond_max", float(v)))
@@ -307,6 +316,8 @@ class ParamPanel(QWidget):
             self.icgn_patience.setValue(int(p.icgn_patience))
             self.subset_stride.setValue(int(p.subset_stride))
             self.init_coarse.setValue(int(p.init_coarse_factor))
+            i = self.backend.findData(p.backend)
+            self.backend.setCurrentIndex(i if i >= 0 else 0)
             self.local_outlier.setValue(float(p.local_outlier_threshold))
             self.init_outlier.setValue(float(p.init_outlier_threshold))
             self.hessian_cond.setValue(float(p.hessian_cond_max))
@@ -340,6 +351,15 @@ class ParamPanel(QWidget):
             )
         )
 
+    def refresh_backend_status(self) -> None:
+        """Describe the compute backend that ``backend=auto`` would pick (CUDA device name or CPU)."""
+        from al_dvc.solver.cuda_kernels import cuda_available, device_name, unavailable_reason
+
+        if cuda_available():
+            self.backend_status.setText(self.tr("GPU: {name}").format(name=device_name()))
+        else:
+            self.backend_status.setText(self.tr("CPU only ({reason})").format(reason=unavailable_reason()[:80]))
+
     def retranslate_ui(self) -> None:
         texts = {
             "winsize": self.tr("Subset size [voxel]"),
@@ -366,6 +386,8 @@ class ParamPanel(QWidget):
             "icgn_patience": self.tr("IC-GN patience"),
             "subset_stride": self.tr("Subset sampling stride"),
             "init_coarse": self.tr("Coarse initial-guess lattice"),
+            "backend": self.tr("Compute backend"),
+            "backend_status": "",
             "local_outlier": self.tr("Local outlier threshold"),
             "init_outlier": self.tr("Initial-guess outlier threshold"),
             "hessian_cond": self.tr("Max Hessian condition"),

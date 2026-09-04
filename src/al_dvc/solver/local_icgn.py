@@ -61,8 +61,24 @@ class LocalContext:
         return int(self.coords_int.shape[0])
 
 
+def resolve_backend(para: DVCPara) -> str:
+    """``"cuda"``, ``"numba"`` or ``"numpy"`` for this parameter set on this machine."""
+    backend = getattr(para, "backend", "auto")
+    if backend in ("auto", "cuda"):
+        from .cuda_kernels import cuda_available, unavailable_reason
+
+        if cuda_available():
+            return "cuda"
+        if backend == "cuda":
+            raise RuntimeError(f"backend='cuda' requested but CUDA is not usable ({unavailable_reason()})")
+        backend = "numba"
+    if backend == "numba" and not HAS_NUMBA:
+        return "numpy"
+    return backend
+
+
 def _use_numba(para: DVCPara) -> bool:
-    return HAS_NUMBA and para.backend == "numba"
+    return resolve_backend(para) in ("numba", "cuda")
 
 
 def _configure_threads(para: DVCPara) -> None:
@@ -83,7 +99,25 @@ def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara)
     coords_int = np.round(mesh.coordinates).astype(np.int64)
     hx, hy, hz = (int(w) // 2 for w in para.winsize)
     stride = int(getattr(para, "subset_stride", 1))
-    if _use_numba(para):
+    backend = resolve_backend(para)
+    if backend == "cuda":
+        from .cuda_kernels import precompute_nodes_cuda
+
+        H_all, L_all, meanf, bottomf, n_valid, valid = precompute_nodes_cuda(
+            coords_int,
+            hx,
+            hy,
+            hz,
+            ref.f,
+            ref.gx,
+            ref.gy,
+            ref.gz,
+            ref.mask,
+            float(para.min_valid_ratio),
+            float(para.hessian_cond_max),
+            stride,
+        )
+    elif backend == "numba":
         from .numba_kernels import precompute_nodes
 
         H_all, L_all, meanf, bottomf, n_valid, valid = precompute_nodes(
@@ -171,7 +205,38 @@ def local_icgn(
     pattern, gain = ctx.noise_args(para)
 
     t0 = time.perf_counter()
-    if _use_numba(para):
+    backend = resolve_backend(para)
+    if backend == "cuda":
+        from .cuda_kernels import icgn_12dof_cuda
+
+        P, n_iter, status, zncc = icgn_12dof_cuda(
+            ctx.coords_int,
+            P0,
+            hx,
+            hy,
+            hz,
+            ref.f,
+            ref.gx,
+            ref.gy,
+            ref.gz,
+            ref.mask,
+            g,
+            mode,
+            ctx.L_all,
+            ctx.meanf,
+            ctx.bottomf,
+            ctx.valid,
+            float(para.icgn_tol),
+            float(para.icgn_dp_tol),
+            int(para.icgn_max_iter),
+            int(para.icgn_patience),
+            ctx.stride,
+            ctx.H_all,
+            pattern,
+            gain,
+            bool(para.icgn_predictive_stop),
+        )
+    elif backend == "numba":
         from .numba_kernels import icgn_12dof_parallel
 
         P, n_iter, status, zncc = icgn_12dof_parallel(

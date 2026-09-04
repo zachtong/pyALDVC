@@ -116,11 +116,21 @@ def check_view3d() -> str:
     return f"pyvista {pv.__version__}, VTK {vtkVersion.GetVTKVersion()}, off-screen render ok"
 
 
+def check_cuda() -> str:
+    """Compute backend: the CUDA device when the optional backend works, else the CPU (never a failure)."""
+    from al_dvc.solver.cuda_kernels import cuda_available, device_name, unavailable_reason
+
+    if cuda_available():
+        return f"GPU {device_name()} (backend auto -> cuda)"
+    return f"CPU kernels (CUDA not available: {unavailable_reason()[:60]}; optional: pip install al-dvc[cuda])"
+
+
 CHECKS: list[tuple[str, Callable[[], str]]] = [
     ("Qt and theme", check_qt),
     ("Numba kernels", check_numba),
     ("Translations", check_languages),
     ("3-D view (pyvista)", check_view3d),
+    ("Compute backend", check_cuda),
     ("Mini run through the GUI worker", check_mini_run),
 ]
 

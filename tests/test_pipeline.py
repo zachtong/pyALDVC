@@ -190,7 +190,7 @@ def test_numpy_backend_matches_numba(affine_pair):
     from dataclasses import replace
 
     f, g, disp = affine_pair
-    para = dvcpara_default(winsize=16, winstepsize=16, search_radius=4, verbose=False, admm_max_iter=2)
+    para = dvcpara_default(winsize=16, winstepsize=16, search_radius=4, verbose=False, admm_max_iter=2, backend="numba")
     a = run_aldvc(para, [f, g], compute_strain=False)
     b = run_aldvc(replace(para, backend="numpy"), [f, g], compute_strain=False)
     assert np.allclose(a.result_disp[0].U, b.result_disp[0].U, atol=1e-7)

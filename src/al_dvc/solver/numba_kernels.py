@@ -298,6 +298,31 @@ def _precompute_one(x0, y0, z0, hx, hy, hz, stride, f, gx, gy, gz, mask, min_val
 
 
 @njit(parallel=True, cache=JIT_CACHE)
+def _cholesky12_batch(H_all, ok, cond_max):
+    """Cholesky factors and the conditioning test of ``precompute_nodes`` for a batch of Hessians."""
+    N = H_all.shape[0]
+    L_all = np.zeros((N, 12, 12))
+    good = np.zeros(N, dtype=np.bool_)
+    for n in prange(N):
+        if not ok[n]:
+            continue
+        if not _cholesky12(H_all[n], L_all[n]):
+            continue
+        L = L_all[n]
+        dmin = L[0, 0]
+        dmax = L[0, 0]
+        for i in range(1, 12):
+            if L[i, i] < dmin:
+                dmin = L[i, i]
+            if L[i, i] > dmax:
+                dmax = L[i, i]
+        if dmin <= 0.0 or (dmax / dmin) * (dmax / dmin) > cond_max:
+            continue
+        good[n] = True
+    return L_all, good
+
+
+@njit(parallel=True, cache=JIT_CACHE)
 def precompute_nodes(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, cond_max, stride=1):
     """Parallel per-node precomputation.
 

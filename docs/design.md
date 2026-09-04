@@ -163,6 +163,30 @@ guess 50 -> 17 s, run 233 -> 206 s with the same result); on clean synthetic
 data the fine pass also needs fewer iterations (2.9 -> 1.8), on the noisy
 scan it does not. Frames that reuse a previous solution (`previous`) skip it.
 
+### CUDA backend
+
+`cuda_kernels.py` holds numba-cuda versions of `precompute_nodes`,
+`icgn_12dof_parallel` and `icgn_3dof_parallel` with the same contracts. One
+thread block (256 threads) solves one node: the threads stride over the
+subset voxels, sampled values go to a per-block scratch row, the ZNSSD
+statistics and the 12 gradient components are block-reduced in shared
+memory, and thread 0 runs the per-iteration control (12x12 Cholesky in
+float64, warp composition, the stopping, stall, noise-correction and
+look-ahead rules) and broadcasts the decision. Sampling and accumulation are
+float32 (consumer GPUs run float64 at 1/64 rate); the per-thread partial sums
+cover ~100 voxels, so the displacement agrees with the CPU kernels to ~1e-5
+voxel with identical statuses and iteration counts. Launches are chunked
+(2048 nodes) so a display GPU never runs one kernel for more than a fraction
+of a second (Windows TDR) and progress can be reported; reference volumes
+are uploaded once per array object and cached across the ADMM passes.
+Everything is imported lazily and `cuda_available()` compiles a probe kernel
+once, so a CPU-only installation never touches CUDA; `backend="auto"`
+falls back to the CPU kernels, `"cuda"` raises when the GPU is unusable. The
+kernels are compiled at first use for the installed card, so any NVIDIA GPU
+the CUDA 12 toolchain supports works (the CPU kernels remain the reference).
+Not on the GPU yet: the NCC initial guess and the global step; the portable
+Windows bundle is CPU-only.
+
 ### Look-ahead stopping
 
 The increment criterion (`icgn_dp_tol`) discards the step that is already
@@ -535,7 +559,8 @@ stack are excluded. pyvista imports most `vtkmodules` lazily, so the spec runs
 a probe (import pyvista and pyvistaqt, render one scene with every feature
 the panel uses) and adds the modules that were loaded as hidden imports;
 the `vtk` facade package, which would pull in every VTK module, stays
-excluded. With VTK the bundle is about 620 MB unpacked. `packaging/rthook_pyaldvc.py` gives matplotlib a writable
+excluded, and so do `numba_cuda` and the CUDA wheels: the bundle is CPU-only
+(pip users add the `cuda` extra). With VTK the bundle is about 620 MB unpacked. `packaging/rthook_pyaldvc.py` gives matplotlib a writable
 configuration directory, and `packaging/pyaldvc_launcher.py` is the entry
 script (kept out of the package so `al_dvc/__main__.py` is never collected as
 a second entry point). `tools/build_exe.py` runs PyInstaller with the pinned

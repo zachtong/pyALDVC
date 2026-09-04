@@ -116,7 +116,7 @@ def test_kernels_match_with_and_without_gradient_volumes(normalized_pair):
 
 def test_pipeline_on_the_fly_matches_stored(affine_pair):
     f, g, _ = affine_pair
-    common = dict(winsize=16, winstepsize=8, search_radius=5, verbose=False, admm_max_iter=2)
+    common = dict(winsize=16, winstepsize=8, search_radius=5, verbose=False, admm_max_iter=2, backend="numba")  # CPU semantics
     r_s = run_aldvc(dvcpara_default(**common), [f, g], compute_strain=False)
     r_f = run_aldvc(dvcpara_default(gradient_mode="on_the_fly", **common), [f, g], compute_strain=False)
     a, b = r_s.result_disp[0], r_f.result_disp[0]

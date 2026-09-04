@@ -23,6 +23,17 @@ All notable changes to pyALDVC are documented here. The format follows
   holding a float32 copy of every frame of a sequence.
 
 ### Added
+- CUDA backend (`al_dvc.solver.cuda_kernels`, extra `cuda` = `numba-cuda[cu12]`):
+  the Hessian precompute, the 12-DOF IC-GN and the 3-DOF ADMM kernels as
+  numba-cuda kernels, one thread block per node, float32 sampling and
+  reductions with float64 solves, masks / NaN voxels / stride / noise
+  correction / look-ahead stop identical to the CPU kernels (same statuses and
+  iteration counts, displacements within ~1e-5 voxel). `backend="auto"` (new
+  default) uses the GPU when numba-cuda and a CUDA device are present and
+  falls back to the CPU kernels otherwise; `cuda` / `numba` / `numpy` force a
+  backend; the GUI has a backend selector with the detected device. RTX 5090
+  vs 24-core CPU: 12-DOF kernel 28x, 3-DOF 39x; `tests/test_cuda_backend.py`
+  (skipped without a GPU).
 - `icgn_predictive_stop` (default on): the IC-GN kernels apply the current step
   and stop when the steps contract by at least 2x and the predicted next step
   `dp_k^2 / dp_{k-1}` is below `icgn_dp_tol`, instead of spending one more

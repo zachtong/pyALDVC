@@ -169,6 +169,8 @@ excludes = [
     "numba.np.ufunc.tbbpool",
     # the "vtk" facade imports every VTK module (hundreds of MB); pyvista uses vtkmodules directly
     "vtk",
+    # the CUDA backend is a pip extra (numba-cuda + CUDA 12 wheels, driver-specific): the bundle stays CPU-only
+    "numba_cuda", "numba.cuda", "cuda", "cuda_bindings", "cuda_core", "cuda_pathfinder", "cuda_toolkit", "nvidia",
     # optional heavy extras
     "IPython", "jupyter", "notebook", "tkinter",
 ]

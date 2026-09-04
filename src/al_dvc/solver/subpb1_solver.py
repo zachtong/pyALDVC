@@ -8,7 +8,7 @@ import time
 import numpy as np
 from numpy.typing import NDArray
 
-from .._numba_compat import HAS_NUMBA, set_num_threads
+from .._numba_compat import set_num_threads
 from ..core.config import DVCPara
 from ..core.data_structures import (
     STATUS_CONVERGED,
@@ -20,7 +20,7 @@ from ..core.data_structures import (
 )
 from ..utils.outlier_detection import universal_median_test
 from .interp_kernels import INTERP_MODE_BY_NAME
-from .local_icgn import LocalContext
+from .local_icgn import LocalContext, resolve_backend
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,40 @@ def subpb1_solver(
     n_full = float(pattern[9, 9])
 
     t0 = time.perf_counter()
-    if HAS_NUMBA and para.backend == "numba":
+    backend = resolve_backend(para)
+    if backend == "cuda":
+        from .cuda_kernels import icgn_3dof_cuda
+
+        U, n_iter, status, zncc = icgn_3dof_cuda(
+            ctx.coords_int,
+            U_hat,
+            F_hat,
+            vdual,
+            hx,
+            hy,
+            hz,
+            ref.f,
+            ref.gx,
+            ref.gy,
+            ref.gz,
+            ref.mask,
+            g,
+            mode,
+            ctx.H_all,
+            ctx.meanf,
+            ctx.bottomf,
+            ctx.valid,
+            float(mu),
+            float(para.icgn_tol),
+            float(para.icgn_dp_tol),
+            int(para.icgn_max_iter),
+            int(para.icgn_patience),
+            ctx.stride,
+            n_full,
+            gain,
+            bool(para.icgn_predictive_stop),
+        )
+    elif backend == "numba":
         from .numba_kernels import icgn_3dof_parallel
 
         U, n_iter, status, zncc = icgn_3dof_parallel(

@@ -329,6 +329,7 @@ def ncc_search(
     radius: tuple[int, int, int],
     shift0: NDArray[np.int64] | None = None,
     chunk: int = 64,
+    backend: str = "numba",
 ) -> dict:
     """Per-node normalised cross-correlation search.
 
@@ -387,6 +388,7 @@ def ncc_search(
     # spatial-domain kernel (one MAC per template voxel and offset, parallel over
     # nodes) beats the FFT path unless offsets x template is very large
     use_direct = HAS_NUMBA and (vz * vy * vx) * n_tpl <= DIRECT_NCC_MAX_OPS
+    use_cuda = use_direct and backend == "cuda"
     if use_direct:
         chunk = max(chunk, 4096)
 
@@ -395,7 +397,16 @@ def ncc_search(
         n = ids.size
         if use_direct:
             ncc = np.empty((n, vz, vy, vx))
-            _zncc_direct(f, g, coords[ids], hx, hy, hz, rx, ry, rz, wx0[ids], wy0[ids], wz0[ids], np.ones(n, dtype=np.bool_), ncc)
+            if use_cuda:
+                from .cuda_kernels import zncc_direct_cuda
+
+                zncc_direct_cuda(
+                    f, g, coords[ids], hx, hy, hz, rx, ry, rz, wx0[ids], wy0[ids], wz0[ids], np.ones(n, dtype=np.bool_), ncc
+                )
+            else:
+                _zncc_direct(
+                    f, g, coords[ids], hx, hy, hz, rx, ry, rz, wx0[ids], wy0[ids], wz0[ids], np.ones(n, dtype=np.bool_), ncc
+                )
             t_norm = np.where(ncc[:, 0, 0, 0] > -1.5, 1.0, 0.0)  # flat templates were marked -2
             ncc[ncc < -1.0] = 0.0
         else:
@@ -474,6 +485,7 @@ def ncc_search_expanding(
     auto_expand: bool = True,
     max_expand: int = 3,
     chunk: int = 64,
+    backend: str = "numba",
 ) -> dict:
     """:func:`ncc_search` plus automatic radius doubling for clipped peaks.
 
@@ -481,7 +493,7 @@ def ncc_search_expanding(
     with a doubled radius (up to ``max_expand`` times), so the cost of an
     expansion is proportional to the number of affected nodes.
     """
-    res = ncc_search(f, g, coords, subset, radius, shift0, chunk=chunk)
+    res = ncc_search(f, g, coords, subset, radius, shift0, chunk=chunk, backend=backend)
     res["expansions"] = 0
     res["radius"] = tuple(int(r) for r in radius)
     rad = res["radius"]
@@ -493,7 +505,7 @@ def ncc_search_expanding(
         rad = tuple(2 * r for r in rad)
         logger.info("NCC: %d/%d peaks clipped; re-searching them with radius %s", int(sel.sum()), n_ok, rad)
         sub_shift = None if shift0 is None else shift0[sel]
-        sub = ncc_search(f, g, coords[sel], subset, rad, sub_shift, chunk=chunk)
+        sub = ncc_search(f, g, coords[sel], subset, rad, sub_shift, chunk=chunk, backend=backend)
         if not sub["ok"].any():
             break  # window no longer fits in the volume; keep the previous peaks
         idx = np.flatnonzero(sel)[sub["ok"]]
@@ -574,6 +586,7 @@ def pyramid_search(
     auto_expand: bool = True,
     max_expand: int = 3,
     fine_radius: int = PYRAMID_FINE_RADIUS,
+    backend: str = "numba",
 ) -> dict:
     """Coarse-to-fine NCC search. Returns ``disp`` (N, 3) in full-resolution voxels + info.
 
@@ -601,7 +614,7 @@ def pyramid_search(
         rad_l = tuple(int(r) for r in radius) if lv == levels else (int(fine_radius),) * 3
         coords_l = np.round(coords / fac).astype(np.int64)
         shift_l = np.round(disp_full / fac).astype(np.int64)
-        res = ncc_search_expanding(fl, gl, coords_l, subset_l, rad_l, shift_l, auto_expand, max_expand)
+        res = ncc_search_expanding(fl, gl, coords_l, subset_l, rad_l, shift_l, auto_expand, max_expand, backend=backend)
         rad_l = res["radius"]
         info["expansions"] += res["expansions"]
         d = res["disp"] * fac

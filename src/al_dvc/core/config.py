@@ -121,7 +121,9 @@ class DVCPara:
     cumulative_interp: Literal["linear", "cubic"] = "cubic"
 
     # --- 9. Compute ---
-    backend: Literal["numba", "numpy"] = "numba"
+    backend: Literal["auto", "numba", "numpy", "cuda"] = (
+        "auto"  # auto: CUDA when an NVIDIA GPU and numba-cuda are available, else numba
+    )
     gradient_mode: Literal["stored", "on_the_fly"] = "stored"  # "on_the_fly": no gradient volumes (-12 bytes/voxel),
     # about 15-20 % slower local step
     n_threads: int = 0  # 0 = all cores
@@ -280,8 +282,8 @@ def validate_dvcpara(p: DVCPara) -> None:
             raise TypeError("frame_schedule must be a FrameSchedule instance.")
     if p.cumulative_interp not in ("linear", "cubic"):
         raise ValueError("cumulative_interp must be 'linear' or 'cubic'.")
-    if p.backend not in ("numba", "numpy"):
-        raise ValueError("backend must be 'numba' or 'numpy'.")
+    if p.backend not in ("auto", "numba", "numpy", "cuda"):
+        raise ValueError("backend must be 'auto', 'numba', 'numpy' or 'cuda'.")
     if p.gradient_mode not in ("stored", "on_the_fly"):
         raise ValueError("gradient_mode must be 'stored' or 'on_the_fly'.")
     if p.gradient_mode == "on_the_fly" and p.backend == "numpy":
