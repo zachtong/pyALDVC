@@ -27,7 +27,7 @@ from ..app_state import AppState
 from ..mask_editor import MaskOp
 from ..widgets import COMBO_WIDTH, guard_wheel, make_form
 
-ROI_LABEL_WIDTH = 64  # px: short labels, the column is only 400 px wide
+ROI_LABEL_WIDTH = 96  # px: room for the longer German and Japanese labels in a 420 px column
 
 TOOLS = ("none", "rectangle", "ellipse", "polygon", "brush")
 DEPTHS = ("all", "current", "range")

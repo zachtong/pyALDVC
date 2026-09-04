@@ -32,6 +32,13 @@ All notable changes to pyALDVC are documented here. The format follows
   holding a float32 copy of every frame of a sequence.
 
 ### Added
+- Languages: Traditional Chinese, Japanese, German, French and Spanish join
+  English and Simplified Chinese (`View > Language`; the system locale picks
+  the closest shipped language, e.g. `de_AT` -> German, `zh_HK` -> Traditional
+  Chinese). `al_dvc.gui.i18n_tools` extracts the `tr()` strings from the code
+  and audits every table; `tools/i18n_extract.py` reports coverage, lists
+  missing strings or adds them to a table; a test keeps every shipped language
+  complete.
 - Strain post-processing window (`Analysis > Strain post-processing...`,
   Ctrl+T, or the button of the results panel): strain method, measure,
   plane-fit window and smoothing chosen after the run, computed on a worker

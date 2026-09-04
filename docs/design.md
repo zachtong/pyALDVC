@@ -540,6 +540,10 @@ Differences from pyALDIC, all consequences of the data being 3-D:
 * masks are loaded as volumes or drawn on the slices (see below);
 * translations are JSON dictionaries answered by a `QTranslator` subclass,
   which removes the Qt Linguist tool chain (pyALDIC ships `.qm` catalogs);
+  seven languages ship (`i18n.SUPPORTED_LANGUAGES`), the system locale maps
+  onto the closest one (`LanguageManager.base_language`), and
+  `i18n_tools.extract_sources` reads the `tr()` literals out of the code so
+  `tools/i18n_extract.py` and `tests/test_i18n.py` can keep every table complete;
 * dialogs go through `MainWindow._message`, which logs instead of blocking
   under the offscreen platform, so the whole application is testable headless
   (`tests/test_gui.py`, `QT_QPA_PLATFORM=offscreen`; on Windows the offscreen

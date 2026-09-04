@@ -24,11 +24,21 @@ logger = logging.getLogger(__name__)
 
 SETTINGS_KEY: Final[str] = "pyaldvc/language"
 TRANSLATIONS_DIR: Final[Path] = Path(__file__).parent / "translations"
-SUPPORTED_LANGUAGES: Final[dict[str, str]] = {"en": "English", "zh_CN": "简体中文"}
+SUPPORTED_LANGUAGES: Final[dict[str, str]] = {
+    "en": "English",
+    "zh_CN": "简体中文",
+    "zh_TW": "繁體中文",
+    "ja": "日本語",
+    "de": "Deutsch",
+    "fr": "Français",
+    "es": "Español",
+}
+# locale name -> shipped languages to try, in order, before the bare language code and English
 FALLBACK_CHAIN: Final[dict[str, tuple[str, ...]]] = {
     "zh": ("zh_CN",),
-    "zh_TW": ("zh_CN",),
-    "zh_HK": ("zh_CN",),
+    "zh_TW": ("zh_TW", "zh_CN"),
+    "zh_HK": ("zh_TW", "zh_CN"),
+    "zh_MO": ("zh_TW", "zh_CN"),
     "zh_SG": ("zh_CN",),
 }
 
@@ -75,18 +85,23 @@ class LanguageManager(QObject):
         return self._code
 
     @staticmethod
+    def base_language(name: str) -> str:
+        """The shipped language for a locale name (``de_AT`` -> ``de``, ``zh_HK`` -> ``zh_TW``), else ``en``."""
+        if name in SUPPORTED_LANGUAGES:
+            return name
+        base = name.split("_")[0]
+        for candidate in FALLBACK_CHAIN.get(name, ()) + FALLBACK_CHAIN.get(base, ()) + (base,):
+            if candidate in SUPPORTED_LANGUAGES:
+                return candidate
+        return "en"
+
+    @staticmethod
     def resolve_language() -> str:
         """Persisted choice, else the system locale mapped onto a shipped language, else English."""
         saved = QSettings().value(SETTINGS_KEY, "", type=str)
         if saved in SUPPORTED_LANGUAGES:
             return saved
-        name = QLocale.system().name()  # e.g. "zh_CN"
-        if name in SUPPORTED_LANGUAGES:
-            return name
-        for candidate in FALLBACK_CHAIN.get(name, ()) + FALLBACK_CHAIN.get(name.split("_")[0], ()):
-            if candidate in SUPPORTED_LANGUAGES:
-                return candidate
-        return "en"
+        return LanguageManager.base_language(QLocale.system().name())  # e.g. "zh_CN", "de_AT"
 
     def load(self, code: str) -> None:
         if code not in SUPPORTED_LANGUAGES:

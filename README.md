@@ -127,8 +127,10 @@ and a batch dialog that runs several saved sessions one after another
 (`File > Batch run...`, the same as `al-dvc batch`; `reports/batch.pdf`). Sessions (`.aldvc`) keep volumes, parameters, export
 folder and display state; checkpoints (resume after an interruption) are an
 advanced option, and a checkpoint folder left by a different run is replaced; `Help > Run self-test` (or `al-dvc-gui --self-test`)
-checks an installation. English and Simplified Chinese; the kernels compile in
-the background after the window opens. `reports/gui.pdf` shows the screens.
+checks an installation. Seven languages (English, Simplified and Traditional
+Chinese, Japanese, German, French, Spanish; `View > Language`, or the system
+locale); `tools/i18n_extract.py` audits the tables against the code. The
+kernels compile in the background after the window opens. `reports/gui.pdf` shows the screens.
 
 **Without Python (Windows):** every release also ships a portable bundle
 `pyALDVC-<version>-win64.zip` on the
