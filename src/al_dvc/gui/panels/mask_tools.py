@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -24,6 +25,9 @@ from PySide6.QtWidgets import (
 
 from ..app_state import AppState
 from ..mask_editor import MaskOp
+from ..widgets import COMBO_WIDTH, guard_wheel, make_form
+
+ROI_LABEL_WIDTH = 64  # px: short labels, the column is only 400 px wide
 
 TOOLS = ("none", "rectangle", "ellipse", "polygon", "brush")
 DEPTHS = ("all", "current", "range")
@@ -72,27 +76,45 @@ class MaskToolbar(QWidget):
         self._status = QLabel()
         self._status.setObjectName("hint")
 
-        row1 = QHBoxLayout()
-        for key, w in [("tool", self.tool), ("mode", self.mode), ("depth", self.depth)]:
-            row1.addWidget(self._labels[key])
-            row1.addWidget(w)
-        row1.addWidget(self.depth_from)
-        row1.addWidget(self._labels["to"])
-        row1.addWidget(self.depth_to)
-        row1.addWidget(self._labels["radius"])
-        row1.addWidget(self.radius)
-        row1.addStretch(1)
-        row2 = QHBoxLayout()
-        for key in ("undo", "redo", "invert", "fill", "clear", "remove", "save"):
-            row2.addWidget(self._btn[key])
-        row2.addWidget(self._labels["target"])
-        row2.addWidget(self.target)
-        row2.addWidget(self.show_mask)
-        row2.addWidget(self._status, stretch=1)
+        # compact vertical form (the section lives in the left column, pyALDIC style)
+        form = make_form()
+        for key, w in [("tool", self.tool), ("mode", self.mode)]:
+            form.addRow(self._labels[key], w)
+        depth_widget = QWidget()
+        depth_row = QHBoxLayout(depth_widget)
+        depth_row.setContentsMargins(0, 0, 0, 0)
+        depth_row.setSpacing(4)
+        depth_row.addWidget(self.depth)
+        depth_row.addWidget(self.depth_from)
+        depth_row.addWidget(self._labels["to"])
+        depth_row.addWidget(self.depth_to)
+        form.addRow(self._labels["depth"], depth_widget)
+        form.addRow(self._labels["radius"], self.radius)
+        form.addRow(self._labels["target"], self.target)
+        for w in (self.tool, self.mode, self.target):
+            w.setMinimumWidth(COMBO_WIDTH)
+        self.depth.setMinimumWidth(100)
+        for w in (self.depth_from, self.depth_to, self.radius):
+            w.setFixedWidth(56)
+        for key, label in self._labels.items():
+            if key != "to":
+                label.setFixedWidth(ROI_LABEL_WIDTH)
+        buttons = QGridLayout()
+        buttons.setSpacing(4)
+        for i, key in enumerate(("undo", "redo", "invert", "fill", "clear", "remove")):
+            self._btn[key].setMinimumWidth(0)
+            buttons.addWidget(self._btn[key], i // 2, i % 2)
+        buttons.addWidget(self._btn["save"], 3, 0, 1, 2)
+        status_row = QHBoxLayout()
+        status_row.addWidget(self.show_mask)
+        status_row.addWidget(self._status, 1)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addLayout(row1)
-        layout.addLayout(row2)
+        layout.setSpacing(4)
+        layout.addLayout(form)
+        layout.addLayout(buttons)
+        layout.addLayout(status_row)
+        guard_wheel(self)
 
         self._btn["undo"].clicked.connect(self._state.undo_mask)
         self._btn["redo"].clicked.connect(self._state.redo_mask)

@@ -47,9 +47,9 @@ from .window_chrome import enable_dark_title_bar
 logger = logging.getLogger(__name__)
 
 SESSION_FILTER = f"pyALDVC session (*{SESSION_SUFFIX})"
-LEFT_MIN_WIDTH = 400  # px: the widest button row of the left column fits without clipping
+LEFT_MIN_WIDTH = 420  # px: the widest row of the left column fits beside the scrollbar without clipping
 RIGHT_MIN_WIDTH = 340
-MIN_WINDOW_WIDTH = 1100
+MIN_WINDOW_WIDTH = 1200
 MIN_WINDOW_HEIGHT = 680
 SETTINGS_ORG = "pyALDVC"
 SETTINGS_APP = "gui"
@@ -92,6 +92,7 @@ class MainWindow(QMainWindow):
         self.console = ConsoleLog()
         self._sections = {
             "volumes": _Section("", self.volume_panel),
+            "roi": _Section("", self.viewer.mask_tools),
             "parameters": _Section("", self.param_panel),
             "run": _Section("", self.run_panel),
         }
@@ -101,6 +102,7 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(0)
         left_layout.addWidget(self._sections["volumes"])
+        left_layout.addWidget(self._sections["roi"])
         left_layout.addWidget(self._sections["parameters"])
         left_layout.addStretch(1)
         left = QScrollArea()
@@ -468,6 +470,7 @@ class MainWindow(QMainWindow):
         self._sections["volumes"].label.setText(self.tr("Volumes"))
         self._sections["parameters"].label.setText(self.tr("Parameters"))
         self._sections["run"].label.setText(self.tr("Run"))
+        self._sections["roi"].label.setText(self.tr("Region of interest"))
         self.center_tabs.setTabText(0, self.tr("Slices"))
         self.center_tabs.setTabText(1, self.tr("3-D view"))
         self._menus["file"].setTitle(self.tr("&File"))

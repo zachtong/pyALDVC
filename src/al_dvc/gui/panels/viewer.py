@@ -68,7 +68,6 @@ class SliceViewer(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.mask_tools)
         layout_row = QHBoxLayout()
         layout_row.addStretch(1)
         layout_row.addWidget(self._layout_label)

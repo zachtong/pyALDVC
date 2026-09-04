@@ -196,6 +196,7 @@
   "Redo": "重做",
   "Reference mode": "参考帧模式",
   "Refresh": "刷新",
+  "Region of interest": "感兴趣区域",
   "Region of interest covers {pct:.0f}% of the reference volume.": "感兴趣区域占参考体数据的 {pct:.0f}%。",
   "Regularisation beta": "正则化参数 beta",
   "Remove": "移除",
