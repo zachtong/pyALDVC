@@ -1,6 +1,6 @@
 """CUDA (numba-cuda) versions of the local IC-GN kernels: one thread block per node.
 
-Optional backend: ``pip install al-dvc[cuda]`` installs ``numba-cuda`` with the
+Optional backend: ``pip install al-dvc[gpu]`` installs ``numba-cuda`` with the
 CUDA 12 wheels; without it, or without an NVIDIA GPU, :func:`cuda_available`
 is False and the CPU kernels run. Everything here is imported lazily so a
 CPU-only installation never touches CUDA.

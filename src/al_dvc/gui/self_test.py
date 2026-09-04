@@ -103,7 +103,7 @@ def check_view3d() -> str:
 
     reason = import_error()
     if reason is not None:
-        return f"pyvista not available ({reason}); optional: pip install al-dvc[gui3d]"
+        return f"pyvista not available ({reason}); pip install pyvista pyvistaqt"
     import pyvista as pv
     from vtkmodules.vtkCommonCore import vtkVersion  # the 'vtk' facade package is not bundled
 
@@ -122,7 +122,7 @@ def check_cuda() -> str:
 
     if cuda_available():
         return f"GPU {device_name()} (backend auto -> cuda)"
-    return f"CPU kernels (CUDA not available: {unavailable_reason()[:60]}; optional: pip install al-dvc[cuda])"
+    return f"CPU kernels (CUDA not available: {unavailable_reason()[:60]}; optional: pip install al-dvc[gpu])"
 
 
 CHECKS: list[tuple[str, Callable[[], str]]] = [
