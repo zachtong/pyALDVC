@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -27,8 +28,36 @@ from PySide6.QtWidgets import (
 
 from ..app_state import AppState
 
-VOLUME_FILTER = "Volumes (*.tif *.tiff *.mat *.npy *.npz);;All files (*)"
-COLUMNS = ("index", "name", "shape", "region")
+VOLUME_FILTER = "Volumes (*.tif *.tiff *.mat *.npy *.npz *.h5 *.hdf5 *.nii *.nii.gz *.nrrd);;All files (*)"
+COLUMNS = ("thumb", "index", "name", "shape", "region")
+THUMB_SIZE = 44  # px, middle XY slice of a loaded volume
+
+
+def thumbnail_pixmap(volume, size: int = THUMB_SIZE):
+    """``QPixmap`` of the middle XY slice of ``volume`` (percentile-stretched grey), ``None`` when it fails."""
+    try:
+        import numpy as np
+        from PySide6.QtGui import QImage, QPixmap
+
+        vol = np.asarray(volume)
+        if vol.ndim != 3 or vol.size == 0:
+            return None
+        sl = np.asarray(vol[vol.shape[0] // 2], dtype=np.float64)
+        finite = sl[np.isfinite(sl)]
+        if finite.size == 0:
+            return None
+        lo, hi = np.percentile(finite, (1, 99))
+        if hi <= lo:
+            hi = lo + 1.0
+        img = np.clip((sl - lo) / (hi - lo) * 255.0, 0, 255).astype(np.uint8)
+        img = np.ascontiguousarray(img[::-1])  # origin at the bottom, like the slice viewer
+        h, w = img.shape
+        qimg = QImage(img.data, w, h, w, QImage.Format.Format_Grayscale8).copy()
+        return QPixmap.fromImage(qimg).scaled(
+            size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        )
+    except Exception:  # a thumbnail must never break the panel
+        return None
 
 
 class _VolumeTable(QTableWidget):
@@ -53,10 +82,14 @@ class VolumePanel(QWidget):
         self._list.setMinimumHeight(110)
         self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header = self._list.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        header.resizeSection(0, THUMB_SIZE + 8)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self._list.verticalHeader().setDefaultSectionSize(THUMB_SIZE + 6)
+        self._thumbs: dict[int, QPixmap] = {}
         header.setHighlightSections(False)
         self._btn_add = QPushButton()
         self._btn_folder = QPushButton()
@@ -240,13 +273,14 @@ class VolumePanel(QWidget):
         for i, entry in enumerate(self._state.volumes):
             name = Path(entry.path).name if entry.path else entry.name
             shape = f"{tuple(entry.array.shape)}" if entry.array is not None else ""
-            cells = [str(i), name, shape, self._region_text(i, entry)]
+            cells = ["", str(i), name, shape, self._region_text(i, entry)]
             for c, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 item.setToolTip(entry.path or self.tr("in-memory array"))
-                if c in (0, 2, 3):
+                if c in (1, 3, 4):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self._list.setItem(i, c, item)
+            self._list.setCellWidget(i, 0, self._thumbnail_label(entry))
         self._list.blockSignals(False)
         if self._state.volumes:
             row = min(self._state.current_frame, len(self._state.volumes) - 1)
@@ -258,6 +292,17 @@ class VolumePanel(QWidget):
         self._update_roi_hint()
         for b in (self._btn_mask, self._btn_remove, self._btn_up, self._btn_down):
             b.setEnabled(has)
+
+    def _thumbnail_label(self, entry) -> QLabel:
+        """A small grey-scale picture of the middle XY slice (only for volumes already in memory)."""
+        label = QLabel()
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pix = thumbnail_pixmap(entry.array, THUMB_SIZE) if entry.array is not None else None
+        if pix is not None:
+            label.setPixmap(pix)
+        else:
+            label.setText("\u25a1")  # empty square: not loaded yet
+        return label
 
     def _update_info(self, row: int) -> None:
         n = len(self._state.volumes)
@@ -300,7 +345,7 @@ class VolumePanel(QWidget):
         self._btn_down.setText("\u25bc")
         self._btn_up.setToolTip(self.tr("Move the frame up (frame 0 is the reference)"))
         self._btn_down.setToolTip(self.tr("Move the frame down"))
-        self._list.setHorizontalHeaderLabels([self.tr("#"), self.tr("Volume"), self.tr("Shape"), self.tr("Region")])
+        self._list.setHorizontalHeaderLabels(["", self.tr("#"), self.tr("Volume"), self.tr("Shape"), self.tr("Region")])
         self._placeholder.setText(self.tr("Drop volume files or a folder here\n(TIFF, npy, npz, mat)"))
         self._update_roi_hint()
         self.refresh()

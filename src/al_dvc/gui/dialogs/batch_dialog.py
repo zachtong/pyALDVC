@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QFileDialog,
+    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -82,6 +83,8 @@ class BatchDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
 
         self._btn = {k: QPushButton() for k in ("add", "add_current", "remove", "clear", "start", "stop", "open", "close")}
+        self._btn["start"].setProperty("class", "btn-primary")
+        self._btn["start"].setMinimumHeight(30)
         self.exports = {k: QCheckBox() for k in EXPORT_KINDS}
         for k in DEFAULT_EXPORTS:
             self.exports[k].setChecked(True)
@@ -104,13 +107,18 @@ class BatchDialog(QDialog):
         self._summary.setWordWrap(True)
 
         layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+        self._queue_group = QGroupBox()
+        queue = QVBoxLayout(self._queue_group)
         row = QHBoxLayout()
         for k in ("add", "add_current", "remove", "clear"):
             row.addWidget(self._btn[k])
         row.addStretch(1)
-        layout.addLayout(row)
-        layout.addWidget(self.table, stretch=2)
-        opts = QHBoxLayout()
+        queue.addLayout(row)
+        queue.addWidget(self.table, stretch=1)
+        layout.addWidget(self._queue_group, stretch=2)
+        self._options_group = QGroupBox()
+        opts = QHBoxLayout(self._options_group)
         opts.addWidget(self._exports_label)
         for k in EXPORT_KINDS:
             opts.addWidget(self.exports[k])
@@ -118,13 +126,17 @@ class BatchDialog(QDialog):
         opts.addWidget(self.checkpoints)
         opts.addWidget(self.strain)
         opts.addStretch(1)
-        layout.addLayout(opts)
-        layout.addWidget(self._overall_label)
-        layout.addWidget(self.overall)
-        layout.addWidget(self._current_label)
-        layout.addWidget(self.current)
-        layout.addWidget(self.log, stretch=1)
-        layout.addWidget(self._summary)
+        layout.addWidget(self._options_group)
+        self._progress_group = QGroupBox()
+        prog = QVBoxLayout(self._progress_group)
+        prog.addWidget(self._overall_label)
+        prog.addWidget(self.overall)
+        prog.addWidget(self._current_label)
+        prog.addWidget(self.current)
+        self.log.setObjectName("console")
+        prog.addWidget(self.log, stretch=1)
+        prog.addWidget(self._summary)
+        layout.addWidget(self._progress_group, stretch=1)
         row2 = QHBoxLayout()
         row2.addWidget(self._btn["start"])
         row2.addWidget(self._btn["stop"])
@@ -329,6 +341,9 @@ class BatchDialog(QDialog):
         for k, t in texts.items():
             self._btn[k].setText(t)
         self._exports_label.setText(self.tr("Exports:"))
+        self._queue_group.setTitle(self.tr("Queue"))
+        self._options_group.setTitle(self.tr("Options"))
+        self._progress_group.setTitle(self.tr("Progress and log"))
         for k in EXPORT_KINDS:
             self.exports[k].setText(k)
         self.checkpoints.setText(self.tr("Write checkpoints"))

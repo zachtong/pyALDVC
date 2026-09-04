@@ -258,17 +258,18 @@ def test_volume_table_region_column_and_reorder(qapp, small_pair):
     window.show()
     window.state.set_volume_arrays(list(small_pair), ["alpha", "beta"])
     table = window.volume_panel._list
-    assert table.count() == 2 and table.item(0, 1).text() == "alpha"
-    assert table.item(0, 3).text() == "whole volume" and table.item(1, 3).text() == "-"
+    assert table.count() == 2 and table.item(0, 2).text() == "alpha"
+    assert table.item(0, 4).text() == "whole volume" and table.item(1, 4).text() == "-"
     mask = np.zeros(small_pair[0].shape, dtype=bool)
     mask[10:30, 10:30, 10:30] = True
     window.state.set_mask(0, mask=mask)
-    assert table.item(0, 3).text().startswith("ROI")
+    assert table.item(0, 4).text().startswith("ROI")
+    assert table.cellWidget(0, 0).pixmap() is not None  # thumbnail of the middle slice
     window.state.move_volume(1, 0)
-    assert table.item(0, 1).text() == "beta" and window.state.current_frame == 0
-    assert table.item(1, 3).text() == "own mask"  # the mask travels with its frame
+    assert table.item(0, 2).text() == "beta" and window.state.current_frame == 0
+    assert table.item(1, 4).text() == "own mask"  # the mask travels with its frame
     window.state.move_volume(0, 5)  # out of range: ignored
-    assert table.item(0, 1).text() == "beta"
+    assert table.item(0, 2).text() == "beta"
     window.close()
 
 
@@ -291,4 +292,24 @@ def test_recent_sessions_menu(qapp, small_pair, tmp_path):
     assert [Path(p).name for p in recent] == ["s2.aldvc", "s1.aldvc", "s0.aldvc"]
     assert window._menus["recent"].isEnabled() and len(window._menus["recent"].actions()) == 3
     QSettings(SETTINGS_ORG, SETTINGS_APP).remove("recent_sessions")
+    window.close()
+
+
+def test_sticky_headers_follow_the_scroll(qapp):
+    window = MainWindow()
+    window.resize(1200, 700)
+    window.show()
+    qapp.processEvents()
+    overlay = window.sticky_headers
+    assert overlay.pinned_titles() == []
+    scroll = window._left_column
+    bar = scroll.verticalScrollBar()
+    assert bar.maximum() > 0  # the column is taller than the viewport
+    bar.setValue(bar.maximum())
+    qapp.processEvents()
+    pinned = overlay.pinned_titles()
+    assert pinned and pinned[0] == "Volumes"  # the sections above the viewport are pinned in order
+    overlay.scroll_to(window._sections["volumes"])
+    qapp.processEvents()
+    assert bar.value() == 0 and overlay.pinned_titles() == []
     window.close()

@@ -29,7 +29,7 @@ ParaView export, tests against analytic ground truth and a command line.
 | **Performance** | Numba `prange` kernels that read subsets in place (no per-node subset cache: 21 bytes per voxel, 9 with `gradient_mode="on_the_fly"`); scalar global operator assembled once, solved by PCG for all three components |
 | **Tracking** | accumulative, incremental or any reference-frame schedule; cumulative displacement composition; per-frame checkpoints and resume |
 | **Strain** | plane fit (3D Savitzky-Golay), FEM nodal, finite difference or direct ADMM gradient; infinitesimal, Green-Lagrange, Euler-Almansi, Hencky; principal / von Mises / volumetric / rotation; physical voxel sizes |
-| **I/O** | TIFF stacks, slice folders, MATLAB `.mat` (v5/v7.3, MATLAB axis order handled), NumPy; exports to `.npz`, `.mat`, CSV, VTK `.vti` (+ `.pvd` time series) and a PDF report |
+| **I/O** | TIFF stacks, slice folders (TIFF / PNG / BMP / JPEG, colour to luminance), MATLAB `.mat` (v5/v7.3, MATLAB axis order handled), NumPy, HDF5; NIfTI, NRRD and DICOM series through the optional `nibabel`, `pynrrd`, `pydicom`; exports to `.npz`, `.mat`, CSV, VTK `.vti` (+ `.pvd` time series), slice images and a PDF report |
 
 ## Installation
 

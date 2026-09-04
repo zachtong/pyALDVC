@@ -1,4 +1,5 @@
-"""Volume file I/O: TIFF stacks, MATLAB ``.mat``, NumPy, slice folders.
+"""Volume file I/O: TIFF stacks, MATLAB ``.mat``, NumPy, HDF5, slice folders, and (optional readers)
+NIfTI, NRRD and DICOM series.
 
 All loaders return ``(nz, ny, nx)`` arrays (``vol[z, y, x]``).
 
@@ -26,6 +27,12 @@ from .volume_ops import normalize_volume
 
 _TIFF_EXT = {".tif", ".tiff"}
 _SLICE_EXT = {".tif", ".tiff", ".png", ".bmp", ".jpg", ".jpeg"}
+_HDF5_EXT = {".h5", ".hdf5", ".hdf"}
+_NIFTI_EXT = {".nii", ".nii.gz"}
+_NRRD_EXT = {".nrrd", ".nhdr"}
+_DICOM_EXT = {".dcm", ".dicom", ""}
+VOLUME_EXT = _TIFF_EXT | {".mat", ".npy", ".npz"} | _HDF5_EXT | _NIFTI_EXT | _NRRD_EXT
+OPTIONAL_READERS = {"nifti": "nibabel", "nrrd": "pynrrd", "dicom": "pydicom"}
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +118,95 @@ def _pick_mat_array(candidates: dict, key: str | None, path: Path) -> NDArray:
     return arr
 
 
+def _read_hdf5(path: Path, key: str | None) -> NDArray:
+    """First 3-D dataset of an HDF5 file (or the dataset at ``key``, a path inside the file)."""
+    import h5py
+
+    with h5py.File(str(path), "r") as f:
+        if key is not None:
+            if key not in f:
+                raise KeyError(f"{path}: no dataset '{key}'")
+            return np.asarray(f[key])
+        found: list[str] = []
+
+        def visit(name, obj):
+            if isinstance(obj, h5py.Dataset) and obj.ndim == 3 and not found:
+                found.append(name)
+
+        f.visititems(visit)
+        if not found:
+            raise ValueError(f"{path}: no 3-D dataset found (pass mat_key=<dataset path>)")
+        return np.asarray(f[found[0]])
+
+
+def _optional(module: str, kind: str):
+    try:
+        return __import__(module)
+    except ImportError as exc:
+        pkg = OPTIONAL_READERS[kind]
+        raise ImportError(f"reading {kind} volumes needs the optional package '{pkg}': pip install {pkg}") from exc
+
+
+def _read_nifti(path: Path) -> NDArray:
+    """NIfTI (``.nii`` / ``.nii.gz``): stored (x, y, z) -> ``(z, y, x)``."""
+    nib = _optional("nibabel", "nifti")
+    img = nib.load(str(path))
+    arr = np.asarray(img.dataobj)
+    return np.transpose(_squeeze_to_3d(arr, path), (2, 1, 0))
+
+
+def _read_nrrd(path: Path) -> NDArray:
+    """NRRD: pynrrd returns Fortran-ordered (x, y, z) -> ``(z, y, x)``."""
+    nrrd = _optional("nrrd", "nrrd")
+    arr, _header = nrrd.read(str(path))
+    return np.transpose(_squeeze_to_3d(np.asarray(arr), path), (2, 1, 0))
+
+
+def _read_dicom_folder(folder: Path) -> NDArray:
+    """A folder of single-slice DICOM files, stacked by InstanceNumber (else by slice position, else by name)."""
+    pydicom = _optional("pydicom", "dicom")
+    files = sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in _DICOM_EXT)
+    datasets = []
+    for p in files:
+        try:
+            ds = pydicom.dcmread(str(p), force=True)
+        except Exception:
+            continue
+        if hasattr(ds, "pixel_array"):
+            datasets.append((p, ds))
+    if not datasets:
+        raise FileNotFoundError(f"No DICOM slices in {folder}")
+
+    def order(item):
+        p, ds = item
+        num = getattr(ds, "InstanceNumber", None)
+        pos = getattr(ds, "ImagePositionPatient", None)
+        return (0, float(num), "") if num is not None else ((1, float(pos[2]), "") if pos is not None else (2, 0.0, p.name))
+
+    datasets.sort(key=order)
+    slices = [np.asarray(ds.pixel_array) for _p, ds in datasets]
+    shapes = {s.shape for s in slices}
+    if len(shapes) != 1:
+        raise ValueError(f"{folder}: DICOM slices have inconsistent shapes {sorted(shapes)}")
+    return np.stack(slices, axis=0)
+
+
+def _is_dicom_folder(folder: Path) -> bool:
+    files = [p for p in folder.iterdir() if p.is_file()]
+    if not files:
+        return False
+    if any(p.suffix.lower() in _SLICE_EXT for p in files):
+        return False
+    if any(p.suffix.lower() in {".dcm", ".dicom"} for p in files):
+        return True
+    try:
+        with open(files[0], "rb") as fh:
+            fh.seek(128)
+            return fh.read(4) == b"DICM"
+    except OSError:
+        return False
+
+
 def _read_slices(folder: Path, pattern: str | None) -> NDArray:
     pat = pattern or "*"
     files = sorted(p for p in folder.glob(pat) if p.suffix.lower() in _SLICE_EXT)
@@ -134,7 +230,11 @@ def _read_slice(path: Path) -> NDArray:
         with Image.open(path) as im:
             arr = np.asarray(im)
     if arr.ndim == 3:
-        arr = arr[..., 0]
+        if arr.shape[-1] in (3, 4):  # colour slice: ITU-R 601 luminance, alpha ignored
+            rgb = arr[..., :3].astype(np.float32)
+            arr = (0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2]).astype(np.float32)
+        else:
+            arr = arr[..., 0]
     if arr.ndim != 2:
         raise ValueError(f"{path}: expected a 2-D slice, got shape {arr.shape}")
     return arr
@@ -156,7 +256,11 @@ def load_volume(
     """Load one volume as a ``(nz, ny, nx)`` array.
 
     Args:
-        path: ``.tif/.tiff`` stack, ``.mat``, ``.npy``, ``.npz`` (first array)
+        path: ``.tif/.tiff`` stack, ``.mat``, ``.npy``, ``.npz`` (first array),
+            ``.h5/.hdf5`` (first 3-D dataset or ``mat_key``), ``.nii/.nii.gz``
+            (nibabel), ``.nrrd`` (pynrrd), a folder of 2-D slices (TIFF, PNG,
+            BMP, JPEG; colour slices become luminance) or a folder of DICOM
+            files (pydicom, stacked by InstanceNumber)
             or a folder of 2-D slices.
         mat_key: variable name inside a ``.mat`` file (default: ``vol`` or the
             first 3-D array).
@@ -169,8 +273,21 @@ def load_volume(
     if not p.exists():
         raise FileNotFoundError(f"Volume not found: {p}")
     suffix = p.suffix.lower()
+    name = p.name.lower()
     if p.is_dir():
-        arr = _read_slices(p, slice_pattern)
+        arr = _read_dicom_folder(p) if _is_dicom_folder(p) else _read_slices(p, slice_pattern)
+        if matlab_order is None:
+            matlab_order = False
+    elif suffix in _HDF5_EXT:
+        arr = _read_hdf5(p, mat_key)
+        if matlab_order is None:
+            matlab_order = False
+    elif name.endswith(".nii.gz") or suffix == ".nii":
+        arr = _read_nifti(p)
+        if matlab_order is None:
+            matlab_order = False
+    elif suffix in _NRRD_EXT:
+        arr = _read_nrrd(p)
         if matlab_order is None:
             matlab_order = False
     elif suffix in _TIFF_EXT:
@@ -210,7 +327,7 @@ def resolve_volume_paths(spec: str | os.PathLike | Sequence[str | os.PathLike]) 
         s = str(spec)
         p = Path(s)
         if p.is_dir():
-            files = sorted(q for q in p.iterdir() if q.suffix.lower() in (_TIFF_EXT | {".mat", ".npy", ".npz"}))
+            files = sorted(q for q in p.iterdir() if q.suffix.lower() in VOLUME_EXT or q.name.lower().endswith(".nii.gz"))
             if not files:
                 # a directory of directories (one slice folder per frame)?
                 subdirs = sorted(q for q in p.iterdir() if q.is_dir())
@@ -253,6 +370,11 @@ def save_volume(path: str | os.PathLike, vol: NDArray, *, matlab_order: bool = F
         from scipy.io import savemat
 
         savemat(str(p), {"vol": arr}, do_compression=True)
+    elif suffix in _HDF5_EXT:
+        import h5py
+
+        with h5py.File(str(p), "w") as f:
+            f.create_dataset("volume", data=np.ascontiguousarray(arr), compression="gzip")
     else:
         raise ValueError(f"Unsupported output format '{suffix}'")
 

@@ -46,6 +46,16 @@ All notable changes to pyALDVC are documented here. The format follows
   canvases and the PNG export alike.
 - Menu shortcuts: F5 run, Esc stop, Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S
   sessions.
+- Volume formats: HDF5 (`.h5` / `.hdf5`, first 3-D dataset or `mat_key`, also
+  written by `save_volume`), NIfTI (`.nii`, `.nii.gz`; needs `nibabel`), NRRD
+  (needs `pynrrd`), DICOM folders (needs `pydicom`, stacked by InstanceNumber)
+  with a clear message naming the missing optional package; colour slices are
+  converted to luminance instead of keeping the red channel; folder resolution
+  and the file dialog know the new extensions.
+- Left column: section titles stay pinned at the top while scrolling (stacked,
+  click to jump back); the volume table shows a thumbnail of the middle slice;
+  the batch dialog uses the same groups, primary button and console style as
+  the main window.
 - Volumes panel: a table (frame, name, shape, region) showing which frame
   carries the region of interest or its own mask, frame reordering (Up / Down,
   context menu), drag and drop of files or folders, a placeholder in the empty

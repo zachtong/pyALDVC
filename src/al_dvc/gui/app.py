@@ -40,6 +40,7 @@ from .panels.view3d import View3DPanel
 from .panels.viewer import SliceViewer
 from .panels.volume_panel import VolumePanel
 from .session import SESSION_SUFFIX, SessionError, apply_session, load_session, save_session
+from .sticky_headers import StickyHeadersOverlay
 from .theme import build_stylesheet
 from .widgets import ConsoleLog
 from .window_chrome import enable_dark_title_bar
@@ -111,6 +112,7 @@ class MainWindow(QMainWindow):
         left.setWidget(left_body)
         left.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         left.setMinimumWidth(LEFT_MIN_WIDTH)
+        self.sticky_headers = StickyHeadersOverlay(left, [self._sections[k] for k in ("volumes", "roi", "parameters")])
         # right column: run controls on top, results in the middle, the console at the bottom (pyALDIC layout)
         right = QWidget()
         right_layout = QVBoxLayout(right)

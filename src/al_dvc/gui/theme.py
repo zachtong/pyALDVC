@@ -126,6 +126,7 @@ QPushButton#sectionHeader:hover {{
     background: {c.BG_HOVER};
 }}
 
+QPlainTextEdit#console,
 QTextEdit#console {{
     background: {c.BG_DARKEST};
     border: 1px solid {c.BORDER};
