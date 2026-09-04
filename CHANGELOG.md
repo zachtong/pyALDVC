@@ -22,8 +22,14 @@ All notable changes to pyALDVC are documented here. The format follows
 - `ListVolumeProvider` normalises frames on demand (LRU of three) instead of
   holding a float32 copy of every frame of a sequence.
 
+### Changed
+- Two install flavours only: `pip install al-dvc` is the complete CPU
+  application (PySide6, pyvista and pyvistaqt are regular dependencies now),
+  `pip install al-dvc[gpu]` adds the CUDA backend. The `gui`, `gui3d`, `viz`
+  and `dev` extras are gone.
+
 ### Added
-- CUDA backend (`al_dvc.solver.cuda_kernels`, extra `cuda` = `numba-cuda[cu12]`):
+- CUDA backend (`al_dvc.solver.cuda_kernels`, extra `gpu` = `numba-cuda[cu12]`):
   the Hessian precompute, the 12-DOF IC-GN and the 3-DOF ADMM kernels as
   numba-cuda kernels, one thread block per node, float32 sampling and
   reductions with float64 solves, masks / NaN voxels / stride / noise
@@ -72,7 +78,7 @@ GUI follow-ups: a 3-D view, mask drawing on the slices, batch runs.
 
 ### Added
 - 3-D view tab in the GUI (`al_dvc.gui.view3d_scene`, `panels/view3d.py`,
-  extra `gui3d` = pyvista + pyvistaqt): field slices, node points, iso-surface,
+  pyvista + pyvistaqt): field slices, node points, iso-surface,
   warped lattice, displacement arrows, volume slices, camera presets and PNG
   screenshots; interactive pyvistaqt widget with an off-screen fallback;
   `scripts/make_view3d_report.py` (`reports/view3d.pdf`).

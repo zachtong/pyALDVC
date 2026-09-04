@@ -529,7 +529,7 @@ renderer with camera presets (the offscreen platform of the tests, some
 remote desktops), so the whole panel is testable headless. The panel follows
 the shared display state (field, frame, colour map, range, opacity) and the
 slice sliders, and only re-renders while its tab is visible. pyvista and
-pyvistaqt are the optional extra `gui3d`; without them the tab shows the
+pyvistaqt are regular dependencies; should they be missing the tab shows the
 install command.
 
 ### Batch runs

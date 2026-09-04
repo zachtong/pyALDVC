@@ -33,13 +33,16 @@ ParaView export, tests against analytic ground truth and a command line.
 
 ## Installation
 
+Two flavours, nothing else to pick:
+
 ```bash
-pip install al-dvc           # from PyPI (once the 0.2 release is published)
-pip install -e ".[dev]"      # from a clone of this repository
+pip install al-dvc           # CPU: the complete application (GUI, 3-D view, CLI)
+pip install "al-dvc[gpu]"    # the same plus the CUDA backend for NVIDIA GPUs
 ```
 
-Requires Python >= 3.10 and NumPy, SciPy, Numba, tifffile, h5py,
-matplotlib, PyYAML (all installed automatically). The Numba kernels compile
+From a clone of this repository use `pip install -e .` or `pip install -e ".[gpu]"`.
+Requires Python >= 3.10; NumPy, SciPy, Numba, tifffile, h5py, matplotlib,
+PyYAML, PySide6, pyvista and pyvistaqt are installed automatically. The Numba kernels compile
 on first use (~10 s) and are cached on disk; call `al_dvc.warmup()` at
 application start to hide this.
 
@@ -102,7 +105,6 @@ result = run_aldvc(para, provider)
 ### Graphical application
 
 ```bash
-pip install "al-dvc[gui]"          # add [gui3d] for the pyvista 3-D view, [cuda] for NVIDIA GPUs
 al-dvc-gui                 # or: al-dvc gui [session.aldvc]
 ```
 
@@ -141,7 +143,7 @@ al-dvc info scan/*.tif
 ### GPU acceleration (optional)
 
 ```bash
-pip install "al-dvc[cuda]"         # numba-cuda with the CUDA 12 wheels; needs an NVIDIA driver
+pip install "al-dvc[gpu]"          # numba-cuda with the CUDA 12 wheels; needs an NVIDIA driver
 ```
 
 With an NVIDIA GPU the local solvers (Hessian precompute, 12-DOF IC-GN, the
@@ -149,7 +151,7 @@ With an NVIDIA GPU the local solvers (Hessian precompute, 12-DOF IC-GN, the
 card (any compute capability the CUDA 12 toolchain supports, Maxwell and
 newer; the RTX 5090 included). Results agree with the CPU kernels to about
 1e-5 voxel (float32 sampling, float64 solves); the local steps are 25-40x
-faster on an RTX 5090 than on a 24-core CPU. Installations without the extra,
+faster on an RTX 5090 than on a 24-core CPU. Installations without the `gpu` flavour,
 without a driver or without a usable device are unaffected: `backend="auto"`
 (the default) probes CUDA once and uses the CPU kernels otherwise, and the GUI
 shows which backend it picked. The portable Windows bundle is CPU-only.

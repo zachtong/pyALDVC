@@ -53,7 +53,7 @@ from ..view3d_scene import (
 logger = logging.getLogger(__name__)
 
 STATIC_SIZE = (900, 640)
-INSTALL_HINT = "pip install al-dvc[gui3d]"
+INSTALL_HINT = "pip install pyvista pyvistaqt"
 
 
 class View3DPanel(QWidget):

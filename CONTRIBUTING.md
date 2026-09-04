@@ -5,7 +5,8 @@
 ```bash
 git clone https://github.com/zachtong/pyALDVC.git
 cd pyALDVC
-pip install -e ".[dev]"
+pip install -e .
+pip install pytest pytest-xdist psutil ruff
 pytest
 ```
 

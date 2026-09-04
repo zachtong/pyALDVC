@@ -265,11 +265,11 @@ def cmd_batch(args: argparse.Namespace) -> int:
 
 
 def cmd_gui(args: argparse.Namespace) -> int:
-    """Launch the graphical application (needs the ``gui`` extra: ``pip install al-dvc[gui]``)."""
+    """Launch the graphical application."""
     try:
         from .gui.app import main as gui_main
     except ImportError as exc:  # PySide6 missing
-        raise SystemExit(f"the GUI needs PySide6: pip install al-dvc[gui] ({exc})") from exc
+        raise SystemExit(f"the GUI needs PySide6: pip install al-dvc ({exc})") from exc
     argv = [sys.argv[0]] + ([args.session] if args.session else [])
     return int(gui_main(argv) or 0)
 
