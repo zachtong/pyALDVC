@@ -13,8 +13,9 @@ All notable changes to pyALDVC are documented here. The format follows
   accumulated in the gradient pass, and per-voxel divisions became
   multiplications. Results unchanged to 3e-14 with identical iteration counts;
   256^3 / subset 32 / step 8: local step 14.9 -> 4.6 s, ADMM local steps 5.6 ->
-  1.6 s; the 1024x1024x306 micro-CT example (79,200 nodes) runs in 3.9 min
-  instead of 12.5 min with unchanged agreement to the MATLAB code.
+  1.6 s; the 1024x1024x306 micro-CT example (79,200 nodes) runs in 3.6 min
+  (3.2 min with `init_coarse_factor=2`) instead of 12.5 min with unchanged
+  agreement to the MATLAB code.
 - The NCC pyramid refines the finer levels with radius 2 instead of 4
   (`pyramid_fine_radius`, auto-expand still covers clipped peaks): initial
   guess 4.7 -> 2.2 s at 19,683 nodes with the same error.

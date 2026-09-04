@@ -226,7 +226,7 @@ Throughput on a 24-core workstation (Intel Core Ultra 9 285K, Numba warm, ADMM w
 | 256^3 | 32 / 8 | 19 683 | 9.0 s (3.8 s with `subset_stride=2`) | 4.2 s (0.9 s) |
 | 256^3 | 48 / 16 | 2 197 | 3.1 s | 1.5 s |
 | 384^3 | 32 / 16 | 10 648 | 6.7 s | 2.8 s |
-| 1024 x 1024 x 306 micro-CT (MATLAB example) | 32 / 8 | 79 200 | 3.9 min (12.5 min before the 0.3.2 kernel work) | 1.2 min + 1.7 min for three 3-DOF passes; initial guess 0.8 min |
+| 1024 x 1024 x 306 micro-CT (MATLAB example) | 32 / 8 | 79 200 | 3.6 min, 3.2 min with `init_coarse_factor=2` (12.5 min before the 0.3.2 work) | 1.2 min + 1.5 min for three 3-DOF passes; initial guess 0.9 min (0.3 min coarse) |
 
 See `reports/validation_synthetic.pdf` and `reports/performance.pdf` for the
 complete tables, noise sweep, spatial-resolution study and stage timings, and
@@ -251,7 +251,7 @@ The two IC-GN implementations minimise the same functional; the stored
 solutions differ along z because the scan has 7x less texture in that
 direction and both codes stop early there. The automatic `beta` equals the
 MATLAB value, and the ZNCC of the pyALDVC fields is never below MATLAB's.
-The run takes 3.9 min on a 24-core workstation. See `docs/design.md`,
+The run takes 3.6 min on a 24-core workstation (3.2 min with `init_coarse_factor=2`). See `docs/design.md`,
 section 10.
 
 ## Tutorial
