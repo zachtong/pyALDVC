@@ -177,7 +177,7 @@ def test_panel_static_backend_renders_and_follows_the_state(qapp, small_result, 
     # display changes reach the panel through the state
     window.state.set_display(display_field="exx", colormap="coolwarm")
     assert panel._last_info.field == "exx"
-    window.results_panel.field.setCurrentText("disp_u")
+    window.results_panel.select_field("disp_u")
     assert panel.options().field == "disp_u"
     # slider moves of the slice viewer move the 3-D slices
     window.viewer.sliders["z"].setValue(3)

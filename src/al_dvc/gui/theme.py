@@ -88,6 +88,14 @@ QWidget#rightSidebar {{
    Panel / Card sections
    ============================================================ */
 QFrame[frameShape="1"],
+QLabel#placeholder {{
+    color: {c.TEXT_MUTED};
+    font-size: 12px;
+    background: transparent;
+    border: 1px dashed {c.BORDER};
+    border-radius: 6px;
+}}
+
 QLabel#hint {{
     color: {c.TEXT_MUTED};
     font-size: 11px;

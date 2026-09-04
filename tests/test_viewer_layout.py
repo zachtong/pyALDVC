@@ -51,6 +51,11 @@ def window_with_result(qapp, small_pair):
     assert window.run_panel.wait(300_000)
     qapp.processEvents()
     assert window.state.results is not None
+    sw = window.open_strain_window()  # strain is a post-processing step: compute it for the tests
+    sw.compute()
+    assert sw.wait(120_000)
+    qapp.processEvents()
+    sw.close()
     yield window
     window.close()
 

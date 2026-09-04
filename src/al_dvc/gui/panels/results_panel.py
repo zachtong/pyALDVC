@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QApplication,
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGridLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QSlider,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from al_dvc.core.data_structures import STATUS_NAMES
 from al_dvc.export.export_utils import DISP_FIELDS, STD_FIELDS, STRAIN_FIELDS
+from al_dvc.export.slice_plots import FIELD_LABELS
 
 from ..app_state import AppState
 from ..widgets import guard_wheel, headless
@@ -34,7 +36,10 @@ COLORMAPS = ["turbo", "viridis", "plasma", "inferno", "magma", "coolwarm", "RdBu
 
 
 class ResultsPanel(QWidget):
-    """Field / frame / colour controls, a text summary and export buttons."""
+    """Field / frame / colour controls, a text summary, the strain window and export buttons."""
+
+    strain_requested = Signal()
+    export_requested = Signal()
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -47,6 +52,19 @@ class ResultsPanel(QWidget):
         form = QFormLayout(self._display_group)
         self.frame = QSpinBox()
         self.frame.setRange(1, 1)
+        self.frame.setFixedWidth(64)
+        self._btn_prev = QPushButton("<")
+        self._btn_prev.setFixedWidth(28)
+        self._btn_next = QPushButton(">")
+        self._btn_next.setFixedWidth(28)
+        frame_widget = QWidget()
+        frame_row = QHBoxLayout(frame_widget)
+        frame_row.setContentsMargins(0, 0, 0, 0)
+        frame_row.setSpacing(4)
+        frame_row.addWidget(self._btn_prev)
+        frame_row.addWidget(self.frame)
+        frame_row.addWidget(self._btn_next)
+        frame_row.addStretch(1)
         self.field = QComboBox()
         self.colormap = QComboBox()
         self.colormap.addItems(COLORMAPS)
@@ -65,7 +83,7 @@ class ResultsPanel(QWidget):
         self.show_overlay.setChecked(True)
         self._labels: dict[str, QLabel] = {}
         for key, widget in [
-            ("frame", self.frame),
+            ("frame", frame_widget),
             ("field", self.field),
             ("colormap", self.colormap),
             ("auto", self.auto_range),
@@ -87,24 +105,30 @@ class ResultsPanel(QWidget):
         sl.addWidget(self._summary)
         layout.addWidget(self._summary_group)
 
+        self._btn_strain = QPushButton()
+        self._btn_strain.setProperty("class", "btn-primary")
+        self._btn_strain.setMinimumHeight(30)
+        self._btn_strain.setEnabled(False)
+        self._btn_strain.clicked.connect(self.strain_requested.emit)
+        layout.addWidget(self._btn_strain)
         self._export_group = QGroupBox()
         grid = QGridLayout(self._export_group)
-        self._export_buttons: dict[str, QPushButton] = {}
-        for i, key in enumerate(["npz", "mat", "csv", "vtk", "report"]):
-            b = QPushButton()
-            b.clicked.connect(lambda _c=False, k=key: self.export(k))
-            grid.addWidget(b, i // 2, i % 2)
-            self._export_buttons[key] = b
+        self._btn_export = QPushButton()
+        self._btn_export.setMinimumHeight(30)
+        self._btn_export.clicked.connect(self.export_requested.emit)
+        grid.addWidget(self._btn_export, 0, 0)
         self._export_status = QLabel()
         self._export_status.setWordWrap(True)
         self._export_status.setObjectName("hint")
-        grid.addWidget(self._export_status, 3, 0, 1, 2)
+        grid.addWidget(self._export_status, 1, 0)
         layout.addWidget(self._export_group)
         guard_wheel(self)
         layout.addStretch(1)
 
         self.frame.valueChanged.connect(lambda v: self._set(display_frame=int(v) - 1))
-        self.field.currentTextChanged.connect(lambda v: self._set(display_field=v) if v else None)
+        self._btn_prev.clicked.connect(lambda: self.frame.setValue(self.frame.value() - 1))
+        self._btn_next.clicked.connect(lambda: self.frame.setValue(self.frame.value() + 1))
+        self.field.currentIndexChanged.connect(self._on_field_index)
         self.colormap.currentTextChanged.connect(lambda v: self._set(colormap=v))
         self.auto_range.toggled.connect(self._on_auto)
         self.vmin.valueChanged.connect(lambda v: self._set(color_min=float(v)))
@@ -120,6 +144,22 @@ class ResultsPanel(QWidget):
         if not self._updating:
             self._state.set_display(**values)
 
+    def _on_field_index(self, index: int) -> None:
+        name = self.field.itemData(index) if index >= 0 else None
+        if name:
+            self._set(display_field=str(name))
+
+    def select_field(self, name: str) -> bool:
+        """Select a field by its internal name (``disp_u``, ``exx``, ...); False when absent."""
+        i = self.field.findData(name)
+        if i < 0:
+            return False
+        self.field.setCurrentIndex(i)
+        return True
+
+    def field_names(self) -> list[str]:
+        return [self.field.itemData(i) for i in range(self.field.count())]
+
     def _on_auto(self, auto: bool) -> None:
         self.vmin.setEnabled(not auto)
         self.vmax.setEnabled(not auto)
@@ -131,6 +171,7 @@ class ResultsPanel(QWidget):
         has = res is not None and bool(res.result_disp)
         self._display_group.setEnabled(has)
         self._export_group.setEnabled(has)
+        self._btn_strain.setEnabled(has)
         self._updating = True
         try:
             self.field.clear()
@@ -140,9 +181,10 @@ class ResultsPanel(QWidget):
                     fields += list(STD_FIELDS)
                 if res.result_strain:
                     fields += list(STRAIN_FIELDS)
-                self.field.addItems(fields)
+                for name in fields:
+                    self.field.addItem(FIELD_LABELS.get(name, name), name)
                 if self._state.display_field in fields:
-                    self.field.setCurrentText(self._state.display_field)
+                    self.field.setCurrentIndex(self.field.findData(self._state.display_field))
                 else:
                     self._state.display_field = fields[0]
                 self.frame.setRange(1, len(res.result_disp))
@@ -248,6 +290,7 @@ class ResultsPanel(QWidget):
         self._display_group.setTitle(self.tr("Display"))
         self._summary_group.setTitle(self.tr("Summary"))
         self._export_group.setTitle(self.tr("Export"))
+        self._btn_strain.setText(self.tr("Strain post-processing..."))
         texts = {
             "frame": self.tr("Frame"),
             "field": self.tr("Field"),
@@ -260,13 +303,7 @@ class ResultsPanel(QWidget):
         }
         for key, label in self._labels.items():
             label.setText(texts[key])
-        for key, text in {
-            "npz": self.tr("NumPy (.npz)"),
-            "mat": self.tr("MATLAB (.mat)"),
-            "csv": self.tr("CSV"),
-            "vtk": self.tr("ParaView (.vti)"),
-            "report": self.tr("PDF report"),
-        }.items():
-            self._export_buttons[key].setText(text)
+        self._btn_export.setText(self.tr("Export results..."))
+        self._export_status.setText(self.tr("npz, mat, CSV, ParaView, PDF report and slice images"))
         if self._state.results is None:
             self._summary.setText(self.tr("No results yet."))

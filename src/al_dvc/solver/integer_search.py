@@ -31,6 +31,8 @@ from ..utils.outlier_detection import universal_median_test
 logger = logging.getLogger(__name__)
 
 PYRAMID_FINE_RADIUS = 2  # refinement radius at the finer levels; auto-expand covers the clipped peaks
+COARSE_RADIUS_MARGIN = 1  # coarse voxels added to ceil(radius / factor) at the coarsest level
+MIN_COARSE_RADIUS = 2
 MIN_PYRAMID_SUBSET = 8
 DEFAULT_INIT_SUBSET = 16  # NCC template size used when init_subset is None (capped at winsize)
 CLIPPED_EXPAND_FRACTION = 0.05  # expand the search radius when more than this fraction of peaks is clipped
@@ -289,6 +291,9 @@ def phase_correlation_shift(
     return np.array([dx, dy, dz], dtype=np.float64)
 
 
+_NB_DZ, _NB_DY, _NB_DX = (a.ravel()[None, :] for a in np.meshgrid([-1, 0, 1], [-1, 0, 1], [-1, 0, 1], indexing="ij"))
+
+
 def _subvoxel_peak(neigh: NDArray[np.float64]) -> NDArray[np.float64]:
     """Quadratic sub-voxel refinement for ``(n, 27)`` peak neighbourhoods."""
     n = neigh.shape[0]
@@ -389,6 +394,11 @@ def ncc_search(
     # nodes) beats the FFT path unless offsets x template is very large
     use_direct = HAS_NUMBA and (vz * vy * vx) * n_tpl <= DIRECT_NCC_MAX_OPS
     use_cuda = use_direct and backend == "cuda"
+    if backend == "cuda" and HAS_NUMBA and not use_direct:
+        from .cuda_kernels import TPL_MAX
+
+        if n_tpl <= TPL_MAX:  # the GPU kernel scales with offsets x template; the CPU FFT path would not
+            use_direct = use_cuda = True
     if use_direct:
         chunk = max(chunk, 4096)
 
@@ -459,9 +469,7 @@ def ncc_search(
         interior = ~at_border & (rx > 0) & (ry > 0) & (rz > 0)
         if interior.any():
             ii = np.flatnonzero(interior)
-            neigh = np.empty((ii.size, 27))
-            for kk, k in enumerate(ii):
-                neigh[kk] = ncc[k, pz[k] - 1 : pz[k] + 2, py[k] - 1 : py[k] + 2, px[k] - 1 : px[k] + 2].ravel()
+            neigh = ncc[ii[:, None], pz[ii][:, None] + _NB_DZ, py[ii][:, None] + _NB_DY, px[ii][:, None] + _NB_DX]
             sub[ii] = _subvoxel_peak(neigh)
         # displacement = (window start + peak offset + half) - node centre
         disp[ids, 0] = wx0[ids] + px + hx - cx[ids] + sub[:, 0]
@@ -516,6 +524,24 @@ def ncc_search_expanding(
     return res
 
 
+def _scatter_search(sub: dict, active: NDArray[np.int64], n: int) -> dict:
+    """Search results of the ``active`` nodes as full-size arrays (NaN / False elsewhere)."""
+    if active.size == n:
+        return sub
+    res = {
+        "disp": np.full((n, 3), np.nan),
+        "cc": np.full(n, np.nan),
+        "pce": np.full(n, np.nan),
+        "clipped": np.zeros(n, dtype=bool),
+        "ok": np.zeros(n, dtype=bool),
+        "expansions": sub.get("expansions", 0),
+        "radius": sub.get("radius"),
+    }
+    for key in ("disp", "cc", "pce", "clipped", "ok"):
+        res[key][active] = sub[key]
+    return res
+
+
 def _clean_field(disp: NDArray[np.float64], grid_shape: tuple[int, int, int], threshold: float) -> NDArray[np.float64]:
     """Median-test outlier removal + spring inpainting on the node grid."""
     d = disp.reshape(grid_shape + (3,)).copy()
@@ -535,6 +561,15 @@ def _clean_field(disp: NDArray[np.float64], grid_shape: tuple[int, int, int], th
 
 
 MIN_COARSE_STD_RATIO = 0.35  # a coarse level must retain this fraction of the texture contrast
+
+
+def coarse_radius(radius, fac: int) -> tuple[int, int, int]:
+    """Search radius at a coarse level: the requested fine-voxel radius scaled to coarse voxels plus a margin.
+
+    The former rule (the full radius in coarse voxels, i.e. ``factor`` times what was asked) made the
+    coarsest search the most expensive part of a run; clipped peaks are still covered by auto-expansion.
+    """
+    return tuple(max(MIN_COARSE_RADIUS, -(-int(r) // fac) + COARSE_RADIUS_MARGIN) for r in radius)
 
 
 def auto_pyramid_levels(
@@ -558,7 +593,7 @@ def auto_pyramid_levels(
     for lv in range(1, max_levels + 1):
         fac = 2**lv
         fits = True
-        for n, w, r in zip(shape[::-1], subset, radius):
+        for n, w, r in zip(shape[::-1], subset, coarse_radius(radius, fac)):
             w_l = max(MIN_PYRAMID_SUBSET, (w // fac) // 2 * 2)
             need = w_l + 1 + 2 * max(r, 1) + 4  # search window + margin must fit
             if n // fac < need:
@@ -587,11 +622,17 @@ def pyramid_search(
     max_expand: int = 3,
     fine_radius: int = PYRAMID_FINE_RADIUS,
     backend: str = "numba",
+    valid: NDArray[np.bool_] | None = None,
 ) -> dict:
     """Coarse-to-fine NCC search. Returns ``disp`` (N, 3) in full-resolution voxels + info.
 
+    ``valid`` restricts the correlation to those nodes (the ones whose reference subset is
+    usable); the rest are inpainted from their neighbours at every level. Nodes outside the
+    region of interest have no texture to correlate, and their random peaks used to trigger
+    the expensive radius expansions.
+
     ``levels == 0`` selects the number of levels automatically. The coarsest
-    level uses the full ``radius``; finer levels refine with a small radius
+    level searches ``radius`` scaled to its voxels (:func:`coarse_radius`); finer levels refine with a small radius
     around the up-scaled estimate. The estimate is median-cleaned and
     inpainted between levels so every node has a usable prior.
     """
@@ -601,20 +642,24 @@ def pyramid_search(
         levels = auto_pyramid_levels(f.shape, subset, radius, f=f)
         logger.info("Pyramid: %d coarse level(s) selected automatically", levels)
     N = coords.shape[0]
+    active = np.arange(N) if valid is None else np.flatnonzero(np.asarray(valid, dtype=bool))
+    if active.size == 0:
+        active = np.arange(N)
     disp_full = np.zeros((N, 3), dtype=np.float64)
     if global_shift is not None:
         disp_full += np.asarray(global_shift, dtype=np.float64)[None, :]
-    info: dict = {"levels": levels, "per_level": [], "expansions": 0}
+    info: dict = {"levels": levels, "per_level": [], "expansions": 0, "n_searched": int(active.size)}
 
     for lv in range(levels, -1, -1):
         fac = 2**lv
         fl = block_downsample(f, fac) if fac > 1 else f
         gl = block_downsample(g, fac) if fac > 1 else g
         subset_l = tuple(max(MIN_PYRAMID_SUBSET, (w // fac) // 2 * 2) for w in subset)
-        rad_l = tuple(int(r) for r in radius) if lv == levels else (int(fine_radius),) * 3
-        coords_l = np.round(coords / fac).astype(np.int64)
-        shift_l = np.round(disp_full / fac).astype(np.int64)
-        res = ncc_search_expanding(fl, gl, coords_l, subset_l, rad_l, shift_l, auto_expand, max_expand, backend=backend)
+        rad_l = coarse_radius(radius, fac) if lv == levels else (int(fine_radius),) * 3
+        coords_l = np.round(coords[active] / fac).astype(np.int64)
+        shift_l = np.round(disp_full[active] / fac).astype(np.int64)
+        sub = ncc_search_expanding(fl, gl, coords_l, subset_l, rad_l, shift_l, auto_expand, max_expand, backend=backend)
+        res = _scatter_search(sub, active, N)
         rad_l = res["radius"]
         info["expansions"] += res["expansions"]
         d = res["disp"] * fac

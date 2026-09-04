@@ -31,7 +31,42 @@ All notable changes to pyALDVC are documented here. The format follows
 - `ListVolumeProvider` normalises frames on demand (LRU of three) instead of
   holding a float32 copy of every frame of a sequence.
 
+### Added
+- Strain post-processing window (`Analysis > Strain post-processing...`,
+  Ctrl+T, or the button of the results panel): strain method, measure,
+  plane-fit window and smoothing chosen after the run, computed on a worker
+  thread with cancel, shown on a private three-plane canvas with its own frame
+  navigation, colour range and layout; the result is written back so the main
+  viewer and the exports see it. The GUI run no longer computes strain inline
+  (`compute_strain=False`), like pyALDIC.
+- Export dialog (`Analysis > Export results...`, Ctrl+E): destination and base
+  name, formats (npz, mat, CSV, ParaView, PDF report, slice images), field and
+  frame selection, image layout / colormap / DPI, progress on a worker thread,
+  "Open folder". `al_dvc.export.slice_plots` draws the three planes for the
+  canvases and the PNG export alike.
+- Menu shortcuts: F5 run, Esc stop, Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S
+  sessions.
+- Volumes panel: drag and drop of files or folders, a placeholder in the empty
+  list, a hint line telling whether a region of interest crops the analysis.
+- Window layout is remembered between sessions (geometry and column widths,
+  QSettings); `View` menu toggles the data and results columns (Ctrl+1 / Ctrl+2)
+  and resets the layout; minimum window size 1100 x 680. Canvas fonts follow
+  the theme. Field lists show readable names (u, v, w, |u|, exx, von Mises...)
+  with frame previous / next buttons; the run status shows the elapsed time and
+  an estimate of the time left. Tooltips on tracking mode, global step,
+  gradient storage, initial guess, interpolation and threads.
+- `reports/postprocessing.pdf` (`scripts/make_postprocessing_report.py`):
+  strain window and export dialog screenshots, strain timings per method,
+  export timings.
+
 ### Changed
+- Initial guess: only nodes with a usable reference subset are correlated
+  (the others are inpainted), the coarsest pyramid level searches the
+  requested radius scaled to its voxels instead of the full radius in coarse
+  voxels, the sub-voxel peak neighbourhoods are gathered without a Python
+  loop, and on CUDA the direct kernel is used for any offset count when the
+  template fits in shared memory (no FFT fallback). Micro-CT example at step 8
+  with a partial mask on the RTX 5090: initial guess 95 s -> about 40 s.
 - Slice viewer: the three slices can be arranged as a row, a column or a
   2 x 2 grid (XY / XZ left, YZ top-right; remembered in the session); the
   colorbar has its own axes, so changing a slice no longer shrinks the images.

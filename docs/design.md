@@ -147,6 +147,18 @@ Only 3-4 ADMM iterations are needed in practice. The output is `u_hat`
 | Precision | volumes float32 in memory, all kernel accumulations float64 | halves RAM, no accuracy loss (verified in tests) |
 | Pre-processing | normalisation statistics and the 7-point gradient in parallel Numba kernels (`voi_mean_std`, `_gradient_stencil7`), NumPy/SciPy references kept for tests | the SciPy `correlate1d` path took 30 s on a 1024x1024x306 scan, more than the whole local step for 80k nodes |
 
+### What the pyramid search correlates
+
+`pyramid_search` correlates only the nodes whose reference subset is valid
+(`mesh.node_valid`, i.e. inside the mask and well conditioned); the rest are
+inpainted between levels like failed peaks. The coarsest level searches
+`coarse_radius(radius, factor)` = ceil(radius / factor) + 1 coarse voxels
+(at least 2), so the requested fine-voxel radius is covered once and the
+auto-expansion handles under-estimated motion; the former "full radius in
+coarse voxels" rule made that level the most expensive part of a run. On
+CUDA the direct ZNCC kernel handles any offset count when the template fits
+in shared memory, so the expansion re-searches never fall back to the CPU FFT.
+
 ### Coarse-lattice initial guess
 
 `coarse_init.py` (`init_coarse_factor = k > 1`) runs the NCC pyramid and the
@@ -504,6 +516,16 @@ Differences from pyALDIC, all consequences of the data being 3-D:
   the reference precompute marked invalid, for displacement as for strain:
   the solver inpaints those nodes only so that the global step has a complete
   lattice, and the overlay shows the region of interest alone;
+* strain is a post-processing step: the GUI runs the pipeline with
+  `compute_strain=False` and `StrainWindow` (an independent `QMainWindow`)
+  computes it on a worker thread from `result_disp` with its own parameters,
+  then publishes `replace(result, result_strain=...)` through
+  `AppState.set_results`; it draws on `FieldSliceCanvas`, a canvas with private
+  display state, so it never changes the main window's field or colour range
+  (pyALDIC's decoupling contract). `ExportDialog` gathers destination, formats,
+  fields and frames and runs `run_export` on a worker thread;
+  `export.slice_plots.draw_field_planes` is the one drawing routine behind the
+  canvases and the PNG export;
 * the 3-D tab shows only the controls of its mode, shares the slice positions
   with the slice viewer through `AppState.slice_index`, and offers a
   background colour with contrast-aware scalar-bar text (`foreground_for`);

@@ -120,7 +120,9 @@ range (memory and time scale with the region, not with the scan). Mask drawing
 through all slices, one slice or a range; add / cut; undo; `reports/mask_tools.pdf`), a
 3-D view (pyvista: field slices with their own position controls, node points,
 iso-surface, warped lattice, displacement arrows, volume slices, selectable
-background; `reports/view3d.pdf`), summary and exports,
+background; `reports/view3d.pdf`), a strain post-processing window (method,
+measure, smoothing chosen after the run, computed on demand; Ctrl+T) and an
+export dialog (npz, mat, CSV, ParaView, PDF report, slice images; Ctrl+E),
 and a batch dialog that runs several saved sessions one after another
 (`File > Batch run...`, the same as `al-dvc batch`; `reports/batch.pdf`). Sessions (`.aldvc`) keep volumes, parameters, export
 folder and display state; checkpoints (resume after an interruption) are an

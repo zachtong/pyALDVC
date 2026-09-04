@@ -76,9 +76,16 @@ def test_run_export_and_display(qapp, small_pair, tmp_path):
     assert res is not None and res.n_frames == 1
     assert np.mean(res.result_disp[0].status == STATUS_CONVERGED) > 0.9
     assert "ZNCC" in window.results_panel._summary.text()
-    fields = [window.results_panel.field.itemText(i) for i in range(window.results_panel.field.count())]
-    assert "exx" in fields and "disp_std" in fields
-    window.results_panel.field.setCurrentText("exx")
+    fields = window.results_panel.field_names()
+    assert "exx" not in fields and "disp_std" in fields  # strain is a post-processing step now
+    sw = window.open_strain_window()
+    sw.compute()
+    assert sw.wait(120_000)
+    qapp.processEvents()
+    fields = window.results_panel.field_names()
+    assert "exx" in fields
+    sw.close()
+    assert window.results_panel.select_field("exx")
     assert window.state.display_field == "exx"
     window.viewer.redraw()
     assert window.viewer._cbar is not None

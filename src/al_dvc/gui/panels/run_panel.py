@@ -108,11 +108,14 @@ class RunPanel(QWidget):
         if masks is not None:
             masks = [m if m is not None else np.ones(v.shape, dtype=bool) for m, v in zip(masks_list, volumes)]
         checkpoint = Path(self._state.output_dir) / CHECKPOINT_SUBDIR if self._state.write_checkpoints else None
-        self._worker = PipelineWorker(para, volumes, masks, checkpoint_dir=checkpoint, resume="auto", parent=self)
+        self._worker = PipelineWorker(
+            para, volumes, masks, checkpoint_dir=checkpoint, resume="auto", compute_strain=False, parent=self
+        )  # strain is computed on demand in the strain post-processing window
         self._worker.progress.connect(self._state.set_progress)
         self._worker.finished_result.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)
         self._started = time.perf_counter()
+        self._fraction = 0.0
         self._state.set_results(None)
         self._state.set_run_state(RunState.RUNNING)
         self._state.set_progress(0.0, self.tr("Starting..."))
@@ -156,13 +159,18 @@ class RunPanel(QWidget):
     def _on_progress(self, fraction: float, message: str) -> None:
         self._progress.setValue(int(round(1000 * fraction)))
         self._message.setText(message)
+        self._fraction = float(fraction)
 
     def _on_run_state(self, state: RunState) -> None:
         self._update_buttons()
 
     def _tick(self) -> None:
         elapsed = time.perf_counter() - self._started
-        self._elapsed.setText(self.tr("{s:.0f} s").format(s=elapsed))
+        text = self.tr("{s:.0f} s").format(s=elapsed)
+        frac = getattr(self, "_fraction", 0.0)
+        if 0.05 < frac < 0.999 and elapsed > 3.0:
+            text += self.tr("  (~{s:.0f} s left)").format(s=elapsed * (1.0 - frac) / frac)
+        self._elapsed.setText(text)
 
     def _update_buttons(self) -> None:
         running = self._state.run_state in (RunState.RUNNING, RunState.STOPPING)

@@ -13,6 +13,7 @@ from ..utils.inpaint import fill_nan_grid
 from ..utils.outlier_detection import universal_median_test
 from .integer_search import (
     DEFAULT_INIT_SUBSET,
+    _scatter_search,
     ncc_search_expanding,
     phase_correlation_shift,
     pyramid_search,
@@ -55,6 +56,7 @@ def compute_initial_guess(
         # the NCC only has to locate the integer peak; a 17^3 template is ample
         # for speckle and keeps the search cost independent of winsize
         subset = tuple(min(int(w), DEFAULT_INIT_SUBSET) for w in para.winsize)
+    valid = mesh.node_valid if mesh.node_valid.size == N else None  # search only nodes with a usable reference subset
     shift = None
     if para.global_shift:
         shift = phase_correlation_shift(f, g, para.voi)
@@ -75,6 +77,7 @@ def compute_initial_guess(
             max_expand=para.ncc_max_expand,
             fine_radius=int(getattr(para, "pyramid_fine_radius", 2)),
             backend=_ncc_backend(para),
+            valid=valid,
         )
         disp = info["disp"]
         ok = info.get("ok", np.ones(N, dtype=bool))
@@ -82,17 +85,19 @@ def compute_initial_guess(
         info["method"] = "pyramid"
     else:
         shift0 = None if shift is None else np.tile(np.round(shift).astype(np.int64), (N, 1))
+        active = np.arange(N) if valid is None or not valid.any() else np.flatnonzero(valid)
         res = ncc_search_expanding(
             f,
             g,
-            coords,
+            coords[active],
             subset,
             tuple(int(r) for r in para.search_radius),
-            shift0,
+            None if shift0 is None else shift0[active],
             para.ncc_auto_expand,
             para.ncc_max_expand,
             backend=_ncc_backend(para),
         )
+        res = _scatter_search(res, active, N)
         disp = res["disp"]
         ok = res["ok"]
         pce = res["pce"]

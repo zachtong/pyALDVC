@@ -353,6 +353,20 @@ class ParamPanel(QWidget):
             "subset_stride": self.tr("Sample every k-th voxel of the subset (k^3 times faster, slightly noisier)."),
             "init_coarse": self.tr("Search the initial guess on every k-th node and interpolate."),
             "backend": self.tr("auto: GPU when numba-cuda and an NVIDIA device are present, otherwise CPU."),
+            "reference_mode": self.tr(
+                "accumulative: every frame against the first; incremental: each frame against the previous one."
+            ),
+            "use_global": self.tr("Couple the subsets through a global finite-element step (ADMM). Off = local subsets only."),
+            "gradient_mode": self.tr(
+                "stored: precomputed gradient volumes (fast, 21-25 bytes/voxel); on_the_fly: per subset (9 bytes/voxel)."
+            ),
+            "init_method": self.tr(
+                "pyramid: coarse-to-fine NCC search; ncc: single-level; zero: no motion; previous: last frame's result."
+            ),
+            "interp": self.tr(
+                "Sub-voxel interpolation of the deformed volume: cubic (default), B-spline (smoother), linear (fastest)."
+            ),
+            "n_threads": self.tr("CPU threads for the Numba kernels; 0 uses every core."),
         }
         for key, tip in tips.items():
             self.labels[key].setToolTip(tip)
