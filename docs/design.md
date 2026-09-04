@@ -516,6 +516,11 @@ Differences from pyALDIC, all consequences of the data being 3-D:
   the reference precompute marked invalid, for displacement as for strain:
   the solver inpaints those nodes only so that the global step has a complete
   lattice, and the overlay shows the region of interest alone;
+* the left column is pyALDIC's sidebar: a volume table (frame, name, shape,
+  region status) with drag and drop and reordering (`AppState.move_volume`),
+  the region-of-interest tools as a compact form, and the folding parameter
+  sections; `File > Recent sessions` and the window layout live in `QSettings`
+  (`SETTINGS_ORG` / `SETTINGS_APP`), the status bar names the compute backend;
 * strain is a post-processing step: the GUI runs the pipeline with
   `compute_strain=False` and `StrainWindow` (an independent `QMainWindow`)
   computes it on a worker thread from `result_disp` with its own parameters,
