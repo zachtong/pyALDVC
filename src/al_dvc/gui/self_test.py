@@ -36,10 +36,10 @@ def check_qt() -> str:
 
 
 def check_numba() -> str:
-    from al_dvc._numba_compat import HAS_NUMBA, JIT_CACHE, get_num_threads
+    from al_dvc._numba_compat import HAS_NUMBA, JIT_CACHE, NUMBA_IMPORT_ERROR, get_num_threads
 
     if not HAS_NUMBA:
-        raise CheckFailed("numba is not installed")
+        raise CheckFailed(f"numba cannot be imported ({NUMBA_IMPORT_ERROR})")
     import numba
 
     return f"numba {numba.__version__}, {get_num_threads()} threads, cache {'on' if JIT_CACHE else 'off'}"

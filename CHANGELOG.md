@@ -6,6 +6,15 @@ All notable changes to pyALDVC are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-05
+
+### Fixed
+- The Windows bundle failed its self-test: PyInstaller left out numba's
+  compiled helpers `numba._devicearray` and `numba.mviewbuf`, so the frozen
+  application could not import numba and every kernel fell back to NumPy. They
+  are now listed as hidden imports, and the self-test reports the underlying
+  import error instead of "numba is not installed".
+
 ## [0.4.0] - 2026-09-05
 
 The application matured: readable parameters in seven languages, a node-lattice

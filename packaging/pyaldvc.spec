@@ -76,6 +76,10 @@ for _dist in ("numba", "llvmlite", "tifffile", "h5py"):
         pass
 
 hiddenimports = [
+    # compiled helpers numba imports lazily (numba/__init__ pulls them in through numba.misc / numba.core);
+    # without them the frozen app raises ImportError on "import numba" and every kernel falls back to NumPy
+    "numba._devicearray",
+    "numba.mviewbuf",
     # QSS references SVG arrows; without the SVG image plugin the spin boxes lose their arrows silently.
     "PySide6.QtSvg",
     # Numba's threading layers are imported by name inside functions.

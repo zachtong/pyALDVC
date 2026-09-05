@@ -23,9 +23,11 @@ try:  # pragma: no cover - exercised implicitly by every kernel test
     from numba import prange as _prange
 
     HAS_NUMBA = True
-except ImportError:  # pragma: no cover
+    NUMBA_IMPORT_ERROR: str | None = None
+except ImportError as _exc:  # pragma: no cover
     _numba = None
     HAS_NUMBA = False
+    NUMBA_IMPORT_ERROR = f"{type(_exc).__name__}: {_exc}"  # shown by the self-test: a broken install, not a missing one
 
     def _njit(*args, **kwargs):  # type: ignore[misc]
         if len(args) == 1 and callable(args[0]) and not kwargs:
