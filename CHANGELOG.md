@@ -36,7 +36,12 @@ All notable changes to pyALDVC are documented here. The format follows
   title bar and used by the Windows bundle), a README hero banner, screenshots
   and a workflow GIF, all rendered offscreen from synthetic data by
   `scripts/make_branding.py`; the README opens with the banner, badges, the
-  language list, "Why pyALDVC?" and the key features.
+  language list, "Why pyALDVC?" and the key features. The icon comes from the
+  hand-made master `assets/icon/pyALDVC-master.svg|png` when present (the
+  built-in SVG is only a fallback); the demo data is an open-cell foam with a
+  localised vortex under compression, whose displacement magnitude is a torus
+  (rings on the slices, a doughnut iso-surface in the 3-D view); the 3-D view's
+  colour bar is titled with the readable field name.
 - Readable names everywhere (`gui/names.py`): every choice shows a translated
   label and keeps the solver's key as item data (Cubic / B-spline / Linear,
   Pyramid search / Single-level search / Zero displacement / Previous frame,

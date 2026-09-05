@@ -103,10 +103,17 @@ def test_build_scene_modes(small_result, mode):
     res, ref = small_result
     pl = pv.Plotter(off_screen=True, window_size=(300, 240))
     opts = SceneOptions(
-        mode=mode, show_arrows=True, arrow_stride=2, show_volume_slices=True, slice_index={"z": 20, "y": 22, "x": 24}
+        mode=mode,
+        show_arrows=True,
+        arrow_stride=2,
+        show_volume_slices=True,
+        slice_index={"z": 20, "y": 22, "x": 24},
+        title="Displacement magnitude",
     )
     info = build_scene(pl, res, opts, volume=ref)
     assert info.n_nodes == res.dvc_mesh.n_nodes
+    if mode == "slices":  # the scalar bar carries the readable title, not the field key
+        assert any(k.startswith("Displacement magnitude") for k in pl.scalar_bars.keys())
     assert info.n_finite > 0
     assert "field" in info.actors
     assert info.n_arrows > 0

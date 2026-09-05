@@ -57,8 +57,11 @@ exports and the console on the right. Load volumes, draw or auto-segment the
 region of interest, set parameters, run, inspect, export: no code needed.
 
 <p align="center">
-  <img src="assets/pyALDVC_demo.gif" alt="pyALDVC workflow: load volumes, draw a region of interest, run, strain post-processing, 3-D view" width="90%"/>
+  <img src="assets/pyALDVC_demo.gif" alt="pyALDVC workflow: load volumes, draw a region of interest, run, strain post-processing, 3-D slices with arrows, deformed lattice" width="90%"/>
 </p>
+
+<p align="center"><sub>Synthetic open-cell foam under compression with a localised vortex; the displacement
+magnitude forms a torus. Regenerate every asset with <code>python scripts/make_branding.py</code>.</sub></p>
 
 <p align="center">
   <img src="assets/screenshot_main.png" alt="Main window with a displacement field on the three slices" width="90%"/>

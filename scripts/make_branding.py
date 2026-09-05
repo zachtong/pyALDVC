@@ -3,11 +3,14 @@
 
 Writes
     assets/icon/pyALDVC.svg, pyALDVC.ico, png/pyALDVC-<size>.png   (also copied into the package)
+        from assets/icon/pyALDVC-master.svg or pyALDVC-master.png when present (the hand-made icon),
+        otherwise from the built-in SVG below
     assets/banner.png                                              (1280 x 400, README hero)
     assets/screenshot_main.png, screenshot_strain.png, screenshot_3d.png
-    assets/pyALDVC_demo.gif                                        (workflow in six frames)
+    assets/pyALDVC_demo.gif                                        (workflow in seven frames)
 
-Everything is rendered offscreen from synthetic data, so the assets are reproducible.
+Everything is rendered offscreen from synthetic data (an open-cell foam with a localised vortex
+under compression), so the assets are reproducible.
 """
 
 from __future__ import annotations
@@ -63,29 +66,64 @@ ICON_SVG = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" wid
 """
 
 
-def make_icon() -> Path:
-    from PIL import Image
+ICON_SIZES = (16, 24, 32, 48, 64, 128, 256, 512)
+MASTER_CANDIDATES = ("pyALDVC-master.svg", "pyALDVC-master.png")
+
+
+def _icon_master(icon_dir: Path) -> Path | None:
+    """The hand-made icon master, if the designer dropped one in ``assets/icon``."""
+    for name in MASTER_CANDIDATES:
+        if (icon_dir / name).is_file():
+            return icon_dir / name
+    return None
+
+
+def _render_master(master: Path | None, size: int):
     from PySide6.QtCore import QByteArray, Qt
     from PySide6.QtGui import QImage, QPainter
     from PySide6.QtSvg import QSvgRenderer
+
+    if master is not None and master.suffix.lower() == ".png":
+        src = QImage(str(master))
+        if src.isNull():
+            raise ValueError(f"cannot read icon master {master}")
+        return src.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    svg = master.read_bytes() if master is not None else ICON_SVG.encode("utf-8")
+    renderer = QSvgRenderer(QByteArray(svg))
+    if not renderer.isValid():
+        raise ValueError(f"invalid SVG icon master {master}")
+    img = QImage(size, size, QImage.Format.Format_ARGB32)
+    img.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(img)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    renderer.render(painter)
+    painter.end()
+    return img
+
+
+def make_icon() -> Path:
+    """PNG sizes, the Windows ICO and the package copy, from the master or the built-in SVG."""
+    from PIL import Image
 
     from al_dvc.gui.app import create_application
 
     create_application([])  # the themed application: the screenshots must show the dark theme
     icon_dir = ASSETS / "icon"
     (icon_dir / "png").mkdir(parents=True, exist_ok=True)
-    (icon_dir / "pyALDVC.svg").write_text(ICON_SVG, encoding="utf-8", newline="\n")
-    renderer = QSvgRenderer(QByteArray(ICON_SVG.encode("utf-8")))
+    master = _icon_master(icon_dir)
+    print("icon master:", master if master else "built-in SVG")
+    svg_out = icon_dir / "pyALDVC.svg"
+    if master is None:
+        svg_out.write_text(ICON_SVG, encoding="utf-8", newline="\n")
+    elif master.suffix.lower() == ".svg":
+        shutil.copy(master, svg_out)
+    elif svg_out.is_file():
+        svg_out.unlink()  # a PNG master has no vector version
     pngs = []
-    for size in (16, 24, 32, 48, 64, 128, 256, 512):
-        img = QImage(size, size, QImage.Format.Format_ARGB32)
-        img.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(img)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        renderer.render(painter)
-        painter.end()
+    for size in ICON_SIZES:
         path = icon_dir / "png" / f"pyALDVC-{size}.png"
-        img.save(str(path))
+        _render_master(master, size).save(str(path))
         pngs.append(path)
     frames = [Image.open(p).convert("RGBA") for p in pngs if int(p.stem.split("-")[1]) <= 256]
     frames[-1].save(
@@ -93,29 +131,66 @@ def make_icon() -> Path:
     )
     PKG_ASSETS.mkdir(parents=True, exist_ok=True)
     shutil.copy(icon_dir / "png" / "pyALDVC-256.png", PKG_ASSETS / "pyALDVC.png")
-    shutil.copy(icon_dir / "pyALDVC.svg", PKG_ASSETS / "pyALDVC.svg")
+    pkg_svg = PKG_ASSETS / "pyALDVC.svg"
+    if svg_out.is_file():
+        shutil.copy(svg_out, pkg_svg)
+    elif pkg_svg.is_file():
+        pkg_svg.unlink()
     return icon_dir / "pyALDVC.ico"
 
 
 # --------------------------------------------------------------------------- synthetic result
+DEMO_SHAPE = (96, 104, 120)  # (nz, ny, nx)
+DEMO_PARAMS = dict(winsize=16, winstepsize=4, search_radius=6, admm_max_iter=3, verbose=False)
+DEMO_ARROWS = dict(stride=2, scale=2.0)  # arrow subsampling and length for the 3-D looks
+DEMO_WARP_SCALE = 6.0  # exaggeration of the deformed lattice in the gif finale
+LATTICE_RATE = (2, 2, 2)  # every second node in the banner lattice panel
+DEMO_MARGIN = (6, 8, 8)  # voxels left outside the region of interest on each side (z, y, x)
+
+
+def foam_volume(shape=DEMO_SHAPE, seed=7, strut_sigma=2.6, fill=0.55) -> np.ndarray:
+    """A micro-CT-like open-cell foam: thresholded Gaussian random field with textured struts."""
+    rng = np.random.default_rng(seed)
+    field = gaussian_filter(rng.standard_normal(shape), sigma=strut_sigma, mode="nearest")
+    struts = (field > np.quantile(field, 1 - fill)).astype(np.float32)
+    struts = gaussian_filter(struts, sigma=0.9, mode="nearest")
+    texture = gaussian_filter(rng.standard_normal(shape), sigma=1.2, mode="nearest")
+    texture = (texture - texture.min()) / (texture.max() - texture.min())
+    vol = 0.15 + 0.85 * struts * (0.7 + 0.3 * texture) + 0.08 * texture * (1 - struts)
+    vol += 0.01 * rng.standard_normal(shape)
+    return np.ascontiguousarray(np.clip(vol, 0, 1), dtype=np.float32)
+
+
+def vortex_displacement(shape=DEMO_SHAPE, angle_deg=18.0, radius=22.0, height=22.0, compress=0.012, poisson=0.35):
+    """A localised twist about the z axis that fades away from the centre, on top of uniaxial compression.
+
+    The displacement magnitude is a torus around the centre: rings on the xy planes, two lobes on
+    the xz and yz planes and a doughnut as an iso-surface.
+    """
+    nz, ny, nx = shape
+    cx, cy, cz = (nx - 1) / 2, (ny - 1) / 2, (nz - 1) / 2
+    theta0 = np.deg2rad(angle_deg)
+
+    def disp(x, y, z):
+        xr, yr, zr = x - cx, y - cy, z - cz
+        theta = theta0 * np.exp(-(xr**2 + yr**2) / (2 * radius**2)) * np.exp(-(zr**2) / (2 * height**2))
+        c, s = np.cos(theta), np.sin(theta)
+        u = xr * c - yr * s - xr + poisson * compress * xr
+        v = xr * s + yr * c - yr + poisson * compress * yr
+        w = -compress * zr
+        return u, v, w
+
+    return disp
+
+
 def _synthetic_result():
     from al_dvc.core.config import dvcpara_default
     from al_dvc.core.pipeline import run_aldvc
-    from al_dvc.synthetic import affine_displacement, generate_speckle_volume, warp_volume_lagrangian
+    from al_dvc.synthetic import warp_volume_lagrangian
 
-    shape = (72, 80, 88)
-    centre = tuple((s - 1) / 2 for s in shape[::-1])
-    ref = generate_speckle_volume(shape, sigma=2.0, seed=21)
-    affine = affine_displacement(np.diag([0.02, -0.008, 0.01]), (0.6, -0.4, 0.3), centre)
-
-    def disp(x, y, z):  # a smooth non-uniform field: stretch + a bulge, so the displacement picture has structure
-        u, v, w = affine(x, y, z)
-        bulge = 1.5 * np.exp(-(((x - 44) / 18) ** 2 + ((y - 40) / 16) ** 2 + ((z - 36) / 14) ** 2))
-        return u + bulge, v + 0.5 * bulge, w - 0.4 * bulge
-
-    dfm = warp_volume_lagrangian(ref, disp)
-    para = dvcpara_default(winsize=16, winstepsize=8, search_radius=5, admm_max_iter=2, verbose=False)
-    result = run_aldvc(para, [ref, dfm])
+    ref = foam_volume()
+    dfm = warp_volume_lagrangian(ref, vortex_displacement())
+    result = run_aldvc(dvcpara_default(**DEMO_PARAMS), [ref, dfm])
     return ref, dfm, result
 
 
@@ -137,13 +212,25 @@ def _render_3d(kind: str, ref, result, size=(520, 520)) -> np.ndarray:
     elif kind == "lattice":
         grid = node_grid(result, 0, ("disp_magnitude",))
         pl.add_mesh(grid.outline(), color=ACCENT_LIGHT, line_width=2)
+        nx, ny, nz = grid.dimensions
+        grid = grid.extract_subset((0, nx - 1, 0, ny - 1, 0, nz - 1), LATTICE_RATE)  # readable at the demo step
         pl.add_mesh(
             pv.PolyData(np.asarray(grid.points)), style="points", point_size=7.0, render_points_as_spheres=True, color=TEAL
         )
         edges = grid.extract_all_edges()
         pl.add_mesh(edges, color=ACCENT, line_width=1, opacity=0.35)
     else:
-        opts = SceneOptions(field="disp_magnitude", mode="slices", colormap="turbo", background=BG_PANEL, show_outline=True)
+        opts = SceneOptions(
+            field="disp_magnitude",
+            mode="slices",
+            show_arrows=True,
+            arrow_stride=DEMO_ARROWS["stride"],
+            arrow_scale=DEMO_ARROWS["scale"],
+            colormap="turbo",
+            background=BG_PANEL,
+            show_outline=True,
+            title="Displacement",
+        )
         build_scene(pl, result, opts, None)
         pl.remove_scalar_bar()
         pl.hide_axes()
@@ -218,6 +305,7 @@ def make_screens(ref, dfm) -> list[Path]:
     from PySide6.QtWidgets import QApplication
 
     from al_dvc.gui.app import MainWindow, create_application
+    from al_dvc.gui.names import select_key
 
     app = QApplication.instance() or create_application([])
     window = MainWindow()
@@ -238,13 +326,14 @@ def make_screens(ref, dfm) -> list[Path]:
     app.processEvents()
     grab("02_loaded")
     nz, ny, nx = ref.shape
+    mz, my, mx = DEMO_MARGIN
     mask = np.zeros(ref.shape, dtype=bool)
-    mask[6 : nz - 6, 8 : ny - 8, 8 : nx - 8] = True
+    mask[mz : nz - mz, my : ny - my, mx : nx - mx] = True
     window.state.set_mask(0, mask=mask)
     window.viewer.mask_tools.set_tool("rectangle")
     app.processEvents()
     grab("03_roi")
-    window.state.set_params(winsize=16, winstepsize=8, search_radius=5, admm_max_iter=2, verbose=False)
+    window.state.set_params(**DEMO_PARAMS)
     window.run_panel.start()
     window.run_panel.wait(600_000)
     app.processEvents()
@@ -255,8 +344,6 @@ def make_screens(ref, dfm) -> list[Path]:
     sw.compute()
     sw.wait(600_000)
     app.processEvents()
-    from al_dvc.gui.names import select_key
-
     select_key(sw.field, "von_mises")
     app.processEvents()
     strain_shot = tmp / "05_strain.png"
@@ -265,18 +352,27 @@ def make_screens(ref, dfm) -> list[Path]:
     shutil.copy(strain_shot, ASSETS / "screenshot_strain.png")
     sw.close()
     window.center_tabs.setCurrentIndex(1)
-    window.view3d.mode.setCurrentIndex(0)
+    select_key(window.view3d.mode, "slices")
+    window.view3d.arrows.setChecked(True)
+    window.view3d.stride.setValue(DEMO_ARROWS["stride"])
+    window.view3d.arrow_scale.setValue(DEMO_ARROWS["scale"])
     app.processEvents()
     window.view3d.refresh()
-    shot3d = grab("06_view3d")
+    shot3d = grab("06_view3d_slices")
     shutil.copy(shot3d, ASSETS / "screenshot_3d.png")
+    select_key(window.view3d.mode, "warped")
+    window.view3d.arrows.setChecked(False)
+    window.view3d.warp_scale.setValue(DEMO_WARP_SCALE)
+    app.processEvents()
+    window.view3d.refresh()
+    grab("07_view3d_warped")
     window.close()
     images = [Image.open(p).convert("RGB").resize((960, 600), Image.Resampling.LANCZOS) for p in frames]
     images[0].save(
         ASSETS / "pyALDVC_demo.gif",
         save_all=True,
         append_images=images[1:],
-        duration=[1200, 1500, 1500, 2500, 2500, 2500],
+        duration=[1200, 1500, 1500, 2500, 2500, 2200, 2800],
         loop=0,
         optimize=True,
     )

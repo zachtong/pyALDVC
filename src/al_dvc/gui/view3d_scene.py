@@ -77,6 +77,7 @@ class SceneOptions:
     iso_fraction: float = 0.5
     slice_index: dict[str, int | None] = dc_field(default_factory=dict)
     background: str = BACKGROUND
+    title: str | None = None  # scalar bar title; the field key when None
 
     def __post_init__(self) -> None:
         if self.mode not in MODES:
@@ -189,7 +190,7 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
     fg = foreground_for(opts.background)
     plotter.set_background(opts.background)
     scalar_bar = dict(  # a slim vertical bar centred on the right edge, plain sans-serif text
-        title=opts.field + chr(10),  # the newline keeps the title clear of the top label
+        title=(opts.title or opts.field) + chr(10),  # the newline keeps the title clear of the top label
         vertical=True,
         n_labels=5,
         fmt="%.3g",
@@ -226,7 +227,8 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
         filled.point_data[opts.field] = np.where(finite, values, lo - 1.0)
         surf = filled.contour(isosurfaces=[level], scalars=opts.field)
         if surf.n_points:
-            info.actors["field"] = plotter.add_mesh(surf, opacity=opts.opacity, **common)
+            surf = surf.compute_normals(auto_orient_normals=True, consistent_normals=True)
+            info.actors["field"] = plotter.add_mesh(surf, opacity=opts.opacity, smooth_shading=True, specular=0.3, **common)
         info.actors["iso_level"] = level
     else:  # warped: the lattice of the valid nodes moved by the displacement, drawn with its cell edges
         grid.point_data["_valid"] = finite.astype(np.float32)

@@ -283,6 +283,7 @@ class View3DPanel(QWidget):
             iso_fraction=float(self.iso.value()),
             slice_index=dict(st.slice_index),
             background=BACKGROUNDS.get(self.background_key(), BACKGROUND),
+            title=field_name(st.display_field),
         )
 
     def _volume_for_scene(self):
