@@ -50,3 +50,6 @@ build-exe/
 packaging/version_info.txt
 pyaldvc_self_test.txt
 aldvc_results/
+
+# third-party reference material kept locally, never published
+reference/

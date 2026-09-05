@@ -1,9 +1,0 @@
-# Core scientific computing
-numpy>=1.21.0
-scipy>=1.7.0
-matplotlib>=3.5.0
-scikit-image>=0.19.0
-
-# Image I/O and processing
-opencv-python>=4.5.0
-tifffile>=2021.7.2
