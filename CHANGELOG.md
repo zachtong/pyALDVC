@@ -6,6 +6,11 @@ All notable changes to pyALDVC are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- The README hero band is the designed `assets/banner-master.png` (volume,
+  node lattice, displacement, logo); `scripts/make_branding.py` copies it
+  and renders its own banner only when the master is missing.
+
 ## [0.4.1] - 2026-09-05
 
 ### Fixed

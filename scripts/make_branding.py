@@ -5,7 +5,8 @@ Writes
     assets/icon/pyALDVC.svg, pyALDVC.ico, png/pyALDVC-<size>.png   (also copied into the package)
         from assets/icon/pyALDVC-master.svg or pyALDVC-master.png when present (the hand-made icon),
         otherwise from the built-in SVG below
-    assets/banner.png                                              (1280 x 400, README hero)
+    assets/banner.png                                              (README hero; copied from the designed
+        assets/banner-master.png when present, else rendered 1280 x 400 from the demo data)
     assets/screenshot_main.png, screenshot_strain.png, screenshot_3d.png
     assets/pyALDVC_demo.gif                                        (workflow in seven frames)
 
@@ -68,6 +69,7 @@ ICON_SVG = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" wid
 
 ICON_SIZES = (16, 24, 32, 48, 64, 128, 256, 512)
 MASTER_CANDIDATES = ("pyALDVC-master.svg", "pyALDVC-master.png")
+BANNER_MASTER = "banner-master.png"  # the designed hero band, in assets/; rendered only when missing
 
 
 def _icon_master(icon_dir: Path) -> Path | None:
@@ -240,6 +242,13 @@ def _render_3d(kind: str, ref, result, size=(520, 520)) -> np.ndarray:
 
 
 def make_banner(ref, result) -> Path:
+    """The README hero: the designed master when it exists, otherwise three rendered panels and the logo."""
+    out = ASSETS / "banner.png"
+    master = ASSETS / BANNER_MASTER
+    if master.is_file():
+        shutil.copy(master, out)
+        print("banner master:", master)
+        return out
     fig = plt.figure(figsize=(16, 5), dpi=80, facecolor=BG_DARKEST)
     ax_bg = fig.add_axes([0, 0, 1, 1])
     ax_bg.set_xlim(0, 1)
@@ -293,7 +302,6 @@ def make_banner(ref, result) -> Path:
         linespacing=1.4,
     )
     ax_bg.plot([0.04, 0.96], [0.06, 0.06], color=ACCENT, lw=1.2, alpha=0.7)
-    out = ASSETS / "banner.png"
     fig.savefig(out, dpi=80, facecolor=BG_DARKEST)
     plt.close(fig)
     return out
