@@ -1,20 +1,95 @@
-# pyALDVC
+<p align="center">
+  <img src="assets/banner.png" alt="pyALDVC banner" width="100%"/>
+</p>
 
-**Augmented Lagrangian Digital Volume Correlation (AL-DVC) in Python.**
+<p align="center">
+  Full-field 3-D displacement and strain from volumetric images (micro-CT, confocal, MRI, OCT)<br/>
+  with a hybrid local-global solver, GPU acceleration and a complete desktop application.
+</p>
 
-Full-field 3D displacement and strain measurement from volumetric image
-pairs (micro-CT, confocal, MRI, OCT ...) with a hybrid local-global solver:
-subset-based 12-DOF inverse-compositional Gauss-Newton (IC-GN) correlation
-coupled to a global finite-element compatibility step through the
-Alternating Direction Method of Multipliers (ADMM).
+<p align="center">
+  <a href="https://github.com/zachtong/pyALDVC/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/zachtong/pyALDVC/ci.yml?style=flat-square&label=CI" alt="CI"/></a>
+  <img src="https://img.shields.io/badge/Python-3.10+-3776ab?style=flat-square&logo=python&logoColor=white" alt="Python"/>
+  <img src="https://img.shields.io/badge/GUI-PySide6-41cd52?style=flat-square" alt="PySide6"/>
+  <img src="https://img.shields.io/badge/GPU-CUDA%20optional-76b900?style=flat-square&logo=nvidia&logoColor=white" alt="CUDA"/>
+  <img src="https://img.shields.io/badge/License-BSD--3--Clause-22c55e?style=flat-square" alt="License"/>
+  <a href="https://pypi.org/project/al-dvc/"><img src="https://img.shields.io/pypi/v/al-dvc?style=flat-square&label=PyPI" alt="PyPI"/></a>
+</p>
+
+<p align="center">
+  <strong>Available in 7 languages</strong><br/>
+  <img src="https://img.shields.io/badge/English-✓-22c55e?style=flat-square" alt="English"/>
+  <img src="https://img.shields.io/badge/简体中文-✓-22c55e?style=flat-square" alt="Simplified Chinese"/>
+  <img src="https://img.shields.io/badge/繁體中文-✓-22c55e?style=flat-square" alt="Traditional Chinese"/>
+  <img src="https://img.shields.io/badge/日本語-✓-22c55e?style=flat-square" alt="Japanese"/>
+  <img src="https://img.shields.io/badge/Deutsch-✓-22c55e?style=flat-square" alt="German"/>
+  <img src="https://img.shields.io/badge/Français-✓-22c55e?style=flat-square" alt="French"/>
+  <img src="https://img.shields.io/badge/Español-✓-22c55e?style=flat-square" alt="Spanish"/>
+</p>
+
+---
+
+## Why pyALDVC?
+
+Subset-based DVC (IC-GN) solves every node on its own: accurate for small
+deformations, fragile where the field is steep, near boundaries and in noisy
+scans. pyALDVC couples the local 12-DOF subsets to a global finite-element
+compatibility step through the **Augmented Lagrangian (ADMM)** framework, so the
+field is smoother and more accurate while keeping sub-voxel precision.
 
 pyALDVC is the Python re-implementation of the MATLAB
 [ALDVC](https://github.com/FranckLab/ALDVC) code (Yang, Hazlett, Landauer,
 Franck, *Exp. Mech.* 2020) and the volumetric sibling of
-[pyALDIC](https://github.com/zachtong/pyALDIC). It keeps the algorithm and
-adds the engineering the MATLAB code lacks: no interactive prompts, masks,
-a coarse-to-fine initial guess, Numba-compiled kernels, streaming I/O,
-ParaView export, tests against analytic ground truth and a command line.
+[pyALDIC](https://github.com/zachtong/pyALDIC). It keeps the algorithm and adds
+the engineering: masks and regions of interest, a coarse-to-fine initial guess,
+Numba and CUDA kernels, streaming I/O, ParaView export, tests against analytic
+ground truth, a command line and a desktop application.
+
+---
+
+## Key features
+
+### Desktop application
+
+Three columns like pyALDIC: volumes, region of interest and parameters on the
+left, the slice viewer and the 3-D view in the middle, run controls, results,
+exports and the console on the right. Load volumes, draw or auto-segment the
+region of interest, set parameters, run, inspect, export: no code needed.
+
+<p align="center">
+  <img src="assets/pyALDVC_demo.gif" alt="pyALDVC workflow: load volumes, draw a region of interest, run, strain post-processing, 3-D view" width="90%"/>
+</p>
+
+<p align="center">
+  <img src="assets/screenshot_main.png" alt="Main window with a displacement field on the three slices" width="90%"/>
+</p>
+
+### Local DVC or AL-DVC
+
+Run independent subsets (local DVC) or the full ADMM global-local coupling
+(AL-DVC) with one switch; same window, same workflow. The penalty `beta` is
+tuned automatically with an L-curve.
+
+### Strain post-processing and 3-D view
+
+Strain is a post-processing step with its own window: plane fitting, finite
+elements, finite differences or the solver's gradient; infinitesimal,
+Green-Lagrange, Euler-Almansi or Hencky measures; smoothing and edge trimming.
+The 3-D view shows field slices, node points, iso-surfaces, the deformed
+lattice and displacement arrows.
+
+<p align="center">
+  <img src="assets/screenshot_strain.png" alt="Strain post-processing window" width="46%"/>
+  <img src="assets/screenshot_3d.png" alt="3-D view of the displacement field" width="46%"/>
+</p>
+
+### Fast on a laptop, faster on a GPU
+
+Numba kernels read subsets in place (about 21 bytes per voxel resident, 9 with
+on-the-fly gradients); with `pip install "al-dvc[gpu]"` the local solvers run as
+CUDA kernels compiled for the installed NVIDIA card. The micro-CT example of the
+MATLAB code (1024 x 1024 x 306 voxels, 79 200 nodes) takes 23 s on an RTX 5090
+and 3.6 min on a 24-core CPU, with results within 0.01 voxel of MATLAB.
 
 ---
 

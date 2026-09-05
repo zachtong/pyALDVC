@@ -11,10 +11,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
 from al_dvc.export.export_utils import field_array
-from al_dvc.export.slice_plots import apply_equal_scale, build_axes, restore_cells
+from al_dvc.export.slice_plots import DISPLACEMENT_LIKE, apply_equal_scale, build_axes, restore_cells
 
 from ..app_state import AppState
 from ..mask_editor import MaskOp
+from ..names import field_name
 from ..theme import COLORS
 from .mask_tools import MaskToolbar
 
@@ -286,7 +287,9 @@ class SliceViewer(QWidget):
                 )
             self.cax.set_visible(True)
             self._cbar = self.figure.colorbar(mappable, cax=self.cax)
-            self._cbar.set_label(label, color=COLORS.TEXT_SECONDARY, fontsize=8)
+            units = getattr(self._state.para, "units", "voxel")
+            text = field_name(label) + (f" [{units}]" if label in DISPLACEMENT_LIKE else "")
+            self._cbar.set_label(text, color=COLORS.TEXT_SECONDARY, fontsize=8)
             self._cbar.ax.tick_params(colors=COLORS.TEXT_SECONDARY, labelsize=7)
         # cursor lines showing the other two slice positions
         self.axes[0].axhline(iy, color=COLORS.ACCENT, lw=0.5, alpha=0.6)

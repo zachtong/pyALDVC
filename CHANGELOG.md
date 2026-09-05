@@ -32,6 +32,11 @@ All notable changes to pyALDVC are documented here. The format follows
   holding a float32 copy of every frame of a sequence.
 
 ### Added
+- Branding: application icon (`assets/icon`, SVG / PNG / ICO, shown in the window
+  title bar and used by the Windows bundle), a README hero banner, screenshots
+  and a workflow GIF, all rendered offscreen from synthetic data by
+  `scripts/make_branding.py`; the README opens with the banner, badges, the
+  language list, "Why pyALDVC?" and the key features.
 - Readable names everywhere (`gui/names.py`): every choice shows a translated
   label and keeps the solver's key as item data (Cubic / B-spline / Linear,
   Pyramid search / Single-level search / Zero displacement / Previous frame,

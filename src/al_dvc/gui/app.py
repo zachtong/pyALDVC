@@ -615,6 +615,11 @@ def create_application(argv: list[str] | None = None) -> QApplication:
     app = QApplication.instance() or QApplication(argv if argv is not None else sys.argv)
     app.setOrganizationName("pyALDVC")
     app.setApplicationName("pyALDVC")
+    icon_path = Path(__file__).parent / "assets" / "pyALDVC.png"
+    if icon_path.is_file():
+        from PySide6.QtGui import QIcon
+
+        app.setWindowIcon(QIcon(str(icon_path)))
     app.setStyle("Fusion")
     app.setStyleSheet(build_stylesheet())
     if getattr(app, "_pyaldvc_lang_mgr", None) is None:

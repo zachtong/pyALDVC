@@ -314,3 +314,13 @@ def test_sticky_headers_follow_the_scroll(qapp):
     qapp.processEvents()
     assert bar.value() == 0 and overlay.pinned_titles() == []
     window.close()
+
+
+def test_application_icon_is_shipped(qapp):
+    from pathlib import Path as _Path
+
+    import al_dvc.gui as gui_pkg
+
+    icon = _Path(gui_pkg.__file__).parent / "assets" / "pyALDVC.png"
+    assert icon.is_file() and icon.stat().st_size > 1000
+    assert not qapp.windowIcon().isNull()
