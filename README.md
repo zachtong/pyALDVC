@@ -90,6 +90,15 @@ lattice and displacement arrows.
   <img src="assets/screenshot_3d.png" alt="3-D view of the displacement field" width="46%"/>
 </p>
 
+### Texture analysis before the run
+
+How big should the subset be? The texture analysis window (Analysis menu) computes
+the autocorrelation of the reference volume inside the region of interest, reports
+the correlation lengths along x, y and z and over spherical shells, checks how
+stable they are against the sampled volume, and suggests a subset and step per
+axis that one click writes into the parameters. The same numbers come from
+`al-dvc texture VOLUME` on the command line.
+
 ### Fast on a laptop, faster on a GPU
 
 Numba kernels read subsets in place (about 21 bytes per voxel resident, 9 with

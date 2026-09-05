@@ -240,6 +240,7 @@ class MainWindow(QMainWindow):
             ("run", self.run_panel.start, "F5"),
             ("stop", self.run_panel.stop, "Esc"),
             ("strain", self._on_strain, "Ctrl+T"),
+            ("texture", self._on_texture, "Ctrl+X"),
             ("export", self._on_export_requested, "Ctrl+E"),
         ]:
             act = QAction(self)
@@ -415,6 +416,22 @@ class MainWindow(QMainWindow):
     def _on_strain(self) -> None:
         self.open_strain_window()
 
+    def open_texture_window(self):
+        """The (single) texture analysis window, created on first use and raised afterwards."""
+        from .texture_window import TextureWindow
+
+        window = getattr(self, "texture_window", None)
+        if window is None:
+            window = TextureWindow(self.state, self)
+            self.texture_window = window
+        window.show()
+        window.raise_()
+        window.activateWindow()
+        return window
+
+    def _on_texture(self) -> None:
+        self.open_texture_window()
+
     def open_export_dialog(self, preselect_strain: bool = False):
         """The (single) export dialog, created on first use and raised afterwards."""
         from .dialogs.export_dialog import ExportDialog
@@ -500,6 +517,9 @@ class MainWindow(QMainWindow):
             window = getattr(self, "strain_window", None)
             if window is not None:
                 window.retranslate_ui()
+            texture = getattr(self, "texture_window", None)
+            if texture is not None:
+                texture.retranslate_ui()
             dialog = getattr(self, "export_dialog", None)
             if dialog is not None:
                 dialog.retranslate_ui()
@@ -547,6 +567,7 @@ class MainWindow(QMainWindow):
             "run": self.tr("Run AL-DVC"),
             "stop": self.tr("Stop"),
             "strain": self.tr("Strain post-processing..."),
+            "texture": self.tr("Texture analysis..."),
             "export": self.tr("Export results..."),
             "self_test": self.tr("Run self-test"),
             "about": self.tr("About pyALDVC"),

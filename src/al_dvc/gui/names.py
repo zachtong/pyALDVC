@@ -63,6 +63,10 @@ CHOICES: dict[str, dict[str, str]] = {
         "surface": tr_noop("Iso-surface"),
         "warped": tr_noop("Deformed lattice"),
     },
+    "estimator": {
+        "overlap": tr_noop("Overlap-corrected"),
+        "window": tr_noop("Finite window"),
+    },
     "camera": {
         "iso": tr_noop("Isometric"),
         "xy": "XY",

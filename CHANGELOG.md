@@ -6,6 +6,22 @@ All notable changes to pyALDVC are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Texture analysis (`al_dvc.texture`, the "Texture analysis" window under
+  Analysis / Ctrl+X, and `al-dvc texture`): the autocorrelation of the
+  reference volume inside the region of interest, profiles along x, y, z and
+  over spherical shells with physical distances, correlation lengths at 1/e,
+  0.1 and 0.01 with a status per threshold, the noise floor, a periodicity
+  check, a size sweep that analyses several positions per sub-volume size and
+  decides a plateau against the largest sizes, and a subset / step suggestion
+  per axis with "Apply to parameters". The estimator divides every lag by its
+  overlap count (the finite-window estimate of the DVC Challenge scripts is
+  kept for comparison), the inverse FFT is shifted before the lags are cut
+  (the scripts cut first and mislabelled the negative lags whenever the FFT
+  length exceeded 2N-1), negative correlations are kept, and a Boolean sphere
+  model with its closed-form correlation validates the lengths to about 2 %
+  (`reports/texture.pdf`, `docs/texture_analysis_plan.md`).
+
 ### Changed
 - Slices: the node grid follows pyALDIC's toggles. "Show grid" (on by default)
   draws a thin, pale grid instead of the thick yellow one: before a run the
