@@ -345,7 +345,7 @@ class VolumePanel(QWidget):
         self._btn_down.setText("\u25bc")
         self._btn_up.setToolTip(self.tr("Move the frame up (frame 0 is the reference)"))
         self._btn_down.setToolTip(self.tr("Move the frame down"))
-        self._list.setHorizontalHeaderLabels(["", self.tr("#"), self.tr("Volume"), self.tr("Shape"), self.tr("Region")])
+        self._list.setHorizontalHeaderLabels(["", self.tr("#"), self.tr("Volume"), self.tr("Shape"), self.tr("ROI")])
         self._placeholder.setText(self.tr("Drop volume files or a folder here\n(TIFF, npy, npz, mat)"))
         self._update_roi_hint()
         self.refresh()

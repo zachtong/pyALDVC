@@ -551,6 +551,15 @@ Differences from pyALDIC, all consequences of the data being 3-D:
 
 ### Mask drawing
 
+The toolbar lives in the "Region of interest" section as icon buttons
+(`gui/icons.py`: inline SVG rendered through `QSvgRenderer` in the theme
+colours, so no bitmap assets ship). Shape tools are exclusive toggles (click the
+active one to stop drawing); a shape combines with the mask as `replace`,
+`add` or `cut`. A `threshold` operation (`otsu_threshold`, `threshold_region`:
+Otsu level, holes filled, largest component) is the "automatic mask"; it is
+replayed from the frame's intensities, which `MaskEditor.volume` carries and the
+session loader supplies when such an operation is present.
+
 `mask_editor.py` (no Qt) represents a drawn mask as a base volume plus a
 replayable list of `MaskOp`: a 2-D shape (rectangle, ellipse, polygon,
 brush) on the XY, XZ or YZ plane, extruded along the plane's normal through

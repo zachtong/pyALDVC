@@ -88,6 +88,28 @@ QWidget#rightSidebar {{
    Panel / Card sections
    ============================================================ */
 QFrame[frameShape="1"],
+QToolButton#tool {{
+    background: {c.BG_INPUT};
+    border: 1px solid {c.BORDER};
+    border-radius: 4px;
+    padding: 2px;
+}}
+
+QToolButton#tool:hover {{
+    background: {c.BG_HOVER};
+    border-color: {c.TEXT_MUTED};
+}}
+
+QToolButton#tool:checked {{
+    background: {c.ACCENT};
+    border-color: {c.ACCENT};
+}}
+
+QToolButton#tool:disabled {{
+    background: {c.BG_PANEL};
+    border-color: {c.BORDER};
+}}
+
 QLabel#placeholder {{
     color: {c.TEXT_MUTED};
     font-size: 12px;

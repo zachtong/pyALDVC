@@ -1,9 +1,12 @@
-"""Toolbar for drawing masks on the slice viewer.
+"""Region-of-interest tools: an icon toolbar for drawing masks on the slice viewer.
 
-The toolbar owns the drawing settings (tool, add/cut, depth rule, brush
-radius) and the edit buttons (undo, redo, invert, fill, clear, save); the
-viewer reads :meth:`MaskToolbar.settings` when the mouse touches a slice
-and turns the gesture into a :class:`~al_dvc.gui.mask_editor.MaskOp`.
+Row 1: shape tools (rectangle, ellipse, polygon, brush; click the active one again to stop
+drawing) and the brush size. Row 2: how a shape combines with the mask (replace, add, cut) and
+which slices it reaches (depth). Row 3: automatic mask from the intensity, undo / redo, invert,
+fill, clear, remove, save. Row 4: which frames receive the mask, visibility, coverage.
+
+The toolbar owns the drawing settings; the viewer reads :meth:`MaskToolbar.settings` when the
+mouse touches a slice and turns the gesture into a :class:`~al_dvc.gui.mask_editor.MaskOp`.
 """
 
 from __future__ import annotations
@@ -11,28 +14,28 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QFileDialog,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from ..app_state import AppState
+from ..icons import tool_button
 from ..mask_editor import MaskOp
-from ..widgets import COMBO_WIDTH, guard_wheel, make_form
-
-ROI_LABEL_WIDTH = 96  # px: room for the longer German and Japanese labels in a 420 px column
+from ..widgets import guard_wheel
 
 TOOLS = ("none", "rectangle", "ellipse", "polygon", "brush")
+MODES = ("add", "cut", "replace")  # combo order kept for callers that address modes by index
 DEPTHS = ("all", "current", "range")
 TARGETS = ("current", "all")
 MASK_FILTER = "Mask volumes (*.tif *.tiff *.npy);;All files (*)"
+EDIT_BUTTONS = ("auto", "undo", "redo", "invert", "fill", "clear", "remove", "save")
 
 
 @dataclass(frozen=True)
@@ -45,77 +48,102 @@ class DrawSettings:
 
 
 class MaskToolbar(QWidget):
-    """Tool / mode / depth selection and the edit buttons."""
+    """Tool / mode / depth selection and the edit buttons (icons)."""
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._state = state
+        # hidden combos hold the current tool and mode so that callers can address them by name / index
         self.tool = QComboBox()
         for key in TOOLS:
             self.tool.addItem(key, key)
         self.mode = QComboBox()
-        for key in ("add", "cut"):
+        for key in MODES:
             self.mode.addItem(key, key)
+        self.tool.hide()
+        self.mode.hide()
+        self.tool_buttons = {k: tool_button(k, checkable=True) for k in TOOLS if k != "none"}
+        self.mode_buttons = {k: tool_button(k, checkable=True) for k in MODES}
+        self._tool_group = QButtonGroup(self)
+        self._tool_group.setExclusive(False)  # exclusivity with "none" is handled by hand
+        for k, b in self.tool_buttons.items():
+            self._tool_group.addButton(b)
+            b.clicked.connect(lambda checked, key=k: self._on_tool_button(key, checked))
+        self._mode_group = QButtonGroup(self)
+        self._mode_group.setExclusive(True)
+        for k, b in self.mode_buttons.items():
+            self._mode_group.addButton(b)
+            b.clicked.connect(lambda _c, key=k: self.mode.setCurrentIndex(MODES.index(key)))
+        self.mode_buttons["add"].setChecked(True)
         self.depth = QComboBox()
         for key in DEPTHS:
             self.depth.addItem(key, key)
+        self.depth.setMinimumWidth(110)
         self.depth_from = QSpinBox()
         self.depth_to = QSpinBox()
         for s in (self.depth_from, self.depth_to):
             s.setRange(0, 100000)
+            s.setFixedWidth(56)
         self.radius = QSpinBox()
         self.radius.setRange(1, 200)
         self.radius.setValue(4)
+        self.radius.setFixedWidth(56)
         self.target = QComboBox()
         for key in TARGETS:
             self.target.addItem(key, key)
+        self.target.setMinimumWidth(110)
         self.show_mask = QCheckBox()
         self.show_mask.setChecked(state.show_mask)
-        self._btn = {k: QPushButton() for k in ("undo", "redo", "invert", "fill", "clear", "remove", "save")}
+        self._btn = {k: tool_button(k) for k in EDIT_BUTTONS}
         self._labels = {k: QLabel() for k in ("tool", "mode", "depth", "to", "radius", "target")}
+        self._labels["to"].setText("-")
         self._status = QLabel()
         self._status.setObjectName("hint")
 
-        # compact vertical form (the section lives in the left column, pyALDIC style)
-        form = make_form()
-        for key, w in [("tool", self.tool), ("mode", self.mode)]:
-            form.addRow(self._labels[key], w)
-        depth_widget = QWidget()
-        depth_row = QHBoxLayout(depth_widget)
-        depth_row.setContentsMargins(0, 0, 0, 0)
-        depth_row.setSpacing(4)
-        depth_row.addWidget(self.depth)
-        depth_row.addWidget(self.depth_from)
-        depth_row.addWidget(self._labels["to"])
-        depth_row.addWidget(self.depth_to)
-        form.addRow(self._labels["depth"], depth_widget)
-        form.addRow(self._labels["radius"], self.radius)
-        form.addRow(self._labels["target"], self.target)
-        for w in (self.tool, self.mode, self.target):
-            w.setMinimumWidth(COMBO_WIDTH)
-        self.depth.setMinimumWidth(100)
-        for w in (self.depth_from, self.depth_to, self.radius):
-            w.setFixedWidth(56)
-        for key, label in self._labels.items():
-            if key != "to":
-                label.setFixedWidth(ROI_LABEL_WIDTH)
-        buttons = QGridLayout()
-        buttons.setSpacing(4)
-        for i, key in enumerate(("undo", "redo", "invert", "fill", "clear", "remove")):
-            self._btn[key].setMinimumWidth(0)
-            buttons.addWidget(self._btn[key], i // 2, i % 2)
-        buttons.addWidget(self._btn["save"], 3, 0, 1, 2)
-        status_row = QHBoxLayout()
-        status_row.addWidget(self.show_mask)
-        status_row.addWidget(self._status, 1)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
-        layout.addLayout(form)
-        layout.addLayout(buttons)
-        layout.addLayout(status_row)
+        row1 = QHBoxLayout()
+        row1.setSpacing(2)
+        row1.addWidget(self._labels["tool"])
+        for k in ("rectangle", "ellipse", "polygon", "brush"):
+            row1.addWidget(self.tool_buttons[k])
+        row1.addSpacing(8)
+        row1.addWidget(self._labels["radius"])
+        row1.addWidget(self.radius)
+        row1.addStretch(1)
+        row2 = QHBoxLayout()
+        row2.setSpacing(2)
+        row2.addWidget(self._labels["mode"])
+        for k in ("replace", "add", "cut"):
+            row2.addWidget(self.mode_buttons[k])
+        row2.addSpacing(8)
+        row2.addWidget(self._labels["depth"])
+        row2.addWidget(self.depth)
+        row2.addWidget(self.depth_from)
+        row2.addWidget(self._labels["to"])
+        row2.addWidget(self.depth_to)
+        row2.addStretch(1)
+        row3 = QHBoxLayout()
+        row3.setSpacing(2)
+        for k in EDIT_BUTTONS:
+            row3.addWidget(self._btn[k])
+            if k in ("auto", "redo", "clear"):
+                row3.addSpacing(8)
+        row3.addStretch(1)
+        row4 = QHBoxLayout()
+        row4.setSpacing(6)
+        row4.addWidget(self._labels["target"])
+        row4.addWidget(self.target)
+        row4.addWidget(self.show_mask)
+        row4.addWidget(self._status, 1)
+        for row in (row1, row2, row3, row4):
+            layout.addLayout(row)
+        for key in ("tool", "mode", "depth", "target"):
+            self._labels[key].setFixedWidth(48)
         guard_wheel(self)
 
+        self._btn["auto"].clicked.connect(self._on_auto)
         self._btn["undo"].clicked.connect(self._state.undo_mask)
         self._btn["redo"].clicked.connect(self._state.redo_mask)
         self._btn["invert"].clicked.connect(lambda: self._state.apply_mask_op(MaskOp("invert")))
@@ -126,7 +154,8 @@ class MaskToolbar(QWidget):
         self.target.currentIndexChanged.connect(lambda i: self._state.set_mask_display(target=TARGETS[i]))
         self.show_mask.toggled.connect(lambda v: self._state.set_mask_display(show=bool(v)))
         self.depth.currentIndexChanged.connect(lambda _i: self._update_enabled())
-        self.tool.currentIndexChanged.connect(lambda _i: self._update_enabled())
+        self.tool.currentIndexChanged.connect(self._on_tool_index)
+        self.mode.currentIndexChanged.connect(self._on_mode_index)
         self._state.mask_changed.connect(self.refresh)
         self._state.volumes_changed.connect(self.refresh)
         self._state.current_frame_changed.connect(lambda _i: self.refresh())
@@ -148,6 +177,11 @@ class MaskToolbar(QWidget):
             raise ValueError(f"tool must be one of {TOOLS}, got {tool!r}")
         self.tool.setCurrentIndex(TOOLS.index(tool))
 
+    def set_mode(self, mode: str) -> None:
+        if mode not in MODES:
+            raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
+        self.mode.setCurrentIndex(MODES.index(mode))
+
     def set_depth(self, kind: str, first: int | None = None, last: int | None = None) -> None:
         if kind not in DEPTHS:
             raise ValueError(f"depth must be one of {DEPTHS}, got {kind!r}")
@@ -157,7 +191,38 @@ class MaskToolbar(QWidget):
         if last is not None:
             self.depth_to.setValue(int(last))
 
+    def _on_tool_button(self, key: str, checked: bool) -> None:
+        self.set_tool(key if checked else "none")
+
+    def _on_tool_index(self, index: int) -> None:
+        current = TOOLS[index]
+        for k, b in self.tool_buttons.items():
+            b.blockSignals(True)
+            b.setChecked(k == current)
+            b.blockSignals(False)
+        self._update_enabled()
+
+    def _on_mode_index(self, index: int) -> None:
+        current = MODES[index]
+        for k, b in self.mode_buttons.items():
+            b.blockSignals(True)
+            b.setChecked(k == current)
+            b.blockSignals(False)
+
     # ------------------------------------------------------------------ actions
+    def _on_auto(self) -> None:
+        """Mask from the intensity of the current frame: Otsu threshold, holes filled, largest component kept."""
+        if not self._state.volumes:
+            return
+        try:
+            self._state.apply_mask_op(MaskOp("threshold", mode="replace"))
+        except Exception as exc:
+            self._state.log(self.tr("Automatic mask failed: {error}").format(error=exc), "error")
+            return
+        mask = self._state.current_mask()
+        if mask is not None:
+            self._state.log(self.tr("Automatic mask: material {pct:.1f}% of the volume").format(pct=100.0 * float(mask.mean())))
+
     def _on_save(self) -> None:
         if self._state.current_mask() is None:
             return
@@ -178,7 +243,7 @@ class MaskToolbar(QWidget):
         has_volume = bool(self._state.volumes)
         self._btn["undo"].setEnabled(ed is not None and ed.can_undo)
         self._btn["redo"].setEnabled(ed is not None and ed.can_redo)
-        for key in ("invert", "fill", "clear"):
+        for key in ("auto", "invert", "fill", "clear"):
             self._btn[key].setEnabled(has_volume)
         mask = self._state.current_mask() if has_volume else None
         self._btn["save"].setEnabled(mask is not None)
@@ -194,20 +259,25 @@ class MaskToolbar(QWidget):
     def _update_enabled(self) -> None:
         has_volume = bool(self._state.volumes)
         drawing = has_volume and self.tool.currentData() != "none"
-        for w in (self.tool, self.target, self.show_mask):
+        for b in self.tool_buttons.values():
+            b.setEnabled(has_volume)
+        for w in (self.target, self.show_mask):
             w.setEnabled(has_volume)
-        self.mode.setEnabled(drawing)
+        for b in self.mode_buttons.values():
+            b.setEnabled(drawing)
         self.depth.setEnabled(drawing)
         rng = drawing and self.depth.currentData() == "range"
         self.depth_from.setEnabled(rng)
         self.depth_to.setEnabled(rng)
-        self.radius.setEnabled(drawing and self.tool.currentData() == "brush")
+        brush = drawing and self.tool.currentData() == "brush"
+        self.radius.setEnabled(brush)
+        self.radius.setVisible(brush)
+        self._labels["radius"].setVisible(brush)
 
     def retranslate_ui(self) -> None:
         self._labels["tool"].setText(self.tr("Draw"))
         self._labels["mode"].setText(self.tr("Mode"))
         self._labels["depth"].setText(self.tr("Depth"))
-        self._labels["to"].setText(self.tr("to"))
         self._labels["radius"].setText(self.tr("Brush"))
         self._labels["target"].setText(self.tr("Mask for"))
         self.target.setToolTip(
@@ -218,22 +288,28 @@ class MaskToolbar(QWidget):
             )
         )
         tools = {
-            "none": self.tr("(off)"),
             "rectangle": self.tr("Rectangle"),
             "ellipse": self.tr("Ellipse"),
             "polygon": self.tr("Polygon"),
             "brush": self.tr("Brush"),
         }
-        for i, key in enumerate(TOOLS):
-            self.tool.setItemText(i, tools[key])
-        self.mode.setItemText(0, self.tr("Add"))
-        self.mode.setItemText(1, self.tr("Cut"))
+        for k, b in self.tool_buttons.items():
+            b.setToolTip(tools[k] + self.tr(" (click again to stop drawing)"))
+        modes = {
+            "replace": self.tr("Replace: the shape becomes the mask"),
+            "add": self.tr("Add: the shape joins the mask"),
+            "cut": self.tr("Cut: the shape is removed from the mask"),
+        }
+        for k, b in self.mode_buttons.items():
+            b.setToolTip(modes[k])
         depths = {"all": self.tr("All slices"), "current": self.tr("Current slice"), "range": self.tr("Range")}
         for i, key in enumerate(DEPTHS):
             self.depth.setItemText(i, depths[key])
+        self.depth.setToolTip(self.tr("Slices along the normal of the plane you draw on that the shape is applied to"))
         self.target.setItemText(0, self.tr("This frame"))
         self.target.setItemText(1, self.tr("All frames"))
-        texts = {
+        tips = {
+            "auto": self.tr("Automatic mask: Otsu threshold on the intensity, holes filled, largest component kept"),
             "undo": self.tr("Undo"),
             "redo": self.tr("Redo"),
             "invert": self.tr("Invert"),
@@ -242,14 +318,7 @@ class MaskToolbar(QWidget):
             "remove": self.tr("Remove mask"),
             "save": self.tr("Save mask..."),
         }
-        for key, text in texts.items():
-            self._btn[key].setText(text)
+        for key, text in tips.items():
+            self._btn[key].setToolTip(text)
         self.show_mask.setText(self.tr("Show mask"))
-        self.tool.setToolTip(
-            self.tr(
-                "Draw on any of the three slices. Rectangle / ellipse: drag. Polygon: click the vertices, "
-                "right-click to close, Esc to cancel. Brush: drag. True (material) is kept; the excluded region is tinted red."
-            )
-        )
-        self.depth.setToolTip(self.tr("Slices along the normal of the plane you draw on that the shape is applied to"))
         self.refresh()

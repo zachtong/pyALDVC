@@ -145,7 +145,13 @@ def _rebuild_drawn_masks(state: AppState) -> None:
             continue
         try:
             base = entry.load_mask() if entry.mask_path else None
-            entry.mask = MaskEditor.from_dict(entry.mask_ops, base=base).mask
+            entry.mask = MaskEditor.from_dict(
+                entry.mask_ops,
+                base=base,
+                volume=entry.load()
+                if any(o.get("shape") == "threshold" for o in (entry.mask_ops or {}).get("ops", []))
+                else None,
+            ).mask
         except Exception as exc:
             state.log(f"{entry.name}: drawn mask could not be rebuilt ({exc})", "warning")
             entry.mask_ops = None

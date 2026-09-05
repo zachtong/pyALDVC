@@ -21,8 +21,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 PLANES = ("xy", "xz", "yz")
-SHAPES = ("rectangle", "ellipse", "polygon", "brush", "invert", "fill", "empty")
-MODES = ("add", "cut")
+SHAPES = ("rectangle", "ellipse", "polygon", "brush", "threshold", "invert", "fill", "empty")
+MODES = ("add", "cut", "replace")
 # in-plane (horizontal, vertical) axes and the normal of each plane, as (nz, ny, nx) array axes
 PLANE_AXES = {"xy": ("x", "y", "z"), "xz": ("x", "z", "y"), "yz": ("y", "z", "x")}
 AXIS_INDEX = {"z": 0, "y": 1, "x": 2}
@@ -42,8 +42,10 @@ class MaskOp:
             rectangle / ellipse, >= 3 for polygon, the stroke for brush).
         depth: inclusive ``(first, last)`` slice range along the plane's normal;
             ``None`` extrudes through the whole volume.
-        mode: ``add`` or ``cut``.
+        mode: ``add``, ``cut`` or ``replace`` (the shape becomes the mask).
         radius: brush radius in voxels.
+        level: intensity threshold of a ``threshold`` op (``None`` = Otsu on the volume).
+        keep_largest / fill_holes: clean-up of a ``threshold`` op.
     """
 
     shape: str
@@ -52,6 +54,9 @@ class MaskOp:
     depth: tuple[int, int] | None = None
     mode: str = "add"
     radius: float = 1.0
+    level: float | None = None
+    keep_largest: bool = True
+    fill_holes: bool = True
 
     def __post_init__(self) -> None:
         if self.shape not in SHAPES:
@@ -75,6 +80,9 @@ class MaskOp:
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["points"] = [list(p) for p in self.points]
+        if self.shape != "threshold":
+            for key in ("level", "keep_largest", "fill_holes"):
+                d.pop(key, None)
         d["depth"] = None if self.depth is None else list(self.depth)
         return d
 
@@ -87,7 +95,54 @@ class MaskOp:
             depth=None if d.get("depth") is None else tuple(d["depth"]),
             mode=str(d.get("mode", "add")),
             radius=float(d.get("radius", 1.0)),
+            level=None if d.get("level") is None else float(d["level"]),
+            keep_largest=bool(d.get("keep_largest", True)),
+            fill_holes=bool(d.get("fill_holes", True)),
         )
+
+
+# ----------------------------------------------------------------------------- intensity threshold
+def otsu_threshold(values, bins: int = 256) -> float:
+    """Otsu's threshold of the finite values (the level that best separates two intensity classes)."""
+    v = np.asarray(values, dtype=np.float64).ravel()
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return 0.0
+    lo, hi = float(v.min()), float(v.max())
+    if hi <= lo:
+        return lo
+    hist, edges = np.histogram(v, bins=bins, range=(lo, hi))
+    hist = hist.astype(np.float64)
+    centres = 0.5 * (edges[:-1] + edges[1:])
+    w0 = np.cumsum(hist)
+    w1 = w0[-1] - w0
+    m0 = np.cumsum(hist * centres) / np.maximum(w0, 1e-300)
+    m1 = (np.cumsum((hist * centres)[::-1])[::-1] - hist * centres) / np.maximum(w1, 1e-300)
+    between = w0[:-1] * w1[:-1] * (m0[:-1] - m1[:-1]) ** 2  # threshold after bin k: classes <= k and > k
+    top = np.flatnonzero(between >= between.max() * (1.0 - 1e-9))  # a plateau when the classes are separated by a gap
+    k = int((top[0] + top[-1]) // 2)  # its middle keeps the level away from both classes
+    return float(edges[k + 1])
+
+
+def threshold_region(volume, level: float | None = None, keep_largest: bool = True, fill_holes: bool = True):
+    """Boolean volume of the voxels above ``level`` (Otsu when ``None``), optionally cleaned up."""
+    from scipy import ndimage
+
+    vol = np.asarray(volume)
+    if vol.ndim != 3:
+        raise ValueError(f"threshold needs a 3-D volume, got shape {vol.shape}")
+    if level is None:
+        step = max(1, int(round(vol.size / 2_000_000)))  # sample large volumes for the histogram
+        level = otsu_threshold(vol.ravel()[::step])
+    region = vol > level
+    if fill_holes and region.any():
+        region = ndimage.binary_fill_holes(region)
+    if keep_largest and region.any():
+        labels, n = ndimage.label(region)
+        if n > 1:
+            sizes = ndimage.sum(region, labels, index=np.arange(1, n + 1))
+            region = labels == (int(np.argmax(sizes)) + 1)
+    return np.asarray(region, dtype=bool)
 
 
 # ----------------------------------------------------------------------------- 2-D rasterisation
@@ -182,6 +237,7 @@ class MaskEditor:
     shape: tuple[int, int, int]
     base: NDArray[np.bool_] | None = None
     ops: list[MaskOp] = field(default_factory=list)
+    volume: NDArray | None = field(default=None, repr=False)  # intensities for ``threshold`` ops
     mask: NDArray[np.bool_] = field(init=False)
     _redo: list[MaskOp] = field(default_factory=list, init=False, repr=False)
 
@@ -211,8 +267,15 @@ class MaskEditor:
         elif op.shape == "empty":
             self.mask[...] = False
         else:
-            region = rasterise(op, self.shape)
-            if op.mode == "add":
+            if op.shape == "threshold":
+                if self.volume is None:
+                    raise ValueError("a threshold operation needs the volume intensities (MaskEditor.volume)")
+                region = threshold_region(self.volume, op.level, op.keep_largest, op.fill_holes)
+            else:
+                region = rasterise(op, self.shape)
+            if op.mode == "replace":
+                self.mask[...] = region
+            elif op.mode == "add":
                 self.mask |= region
             else:
                 self.mask &= ~region
@@ -281,6 +344,6 @@ class MaskEditor:
         return {"shape": list(self.shape), "ops": [op.to_dict() for op in self.ops]}
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any], base: NDArray[np.bool_] | None = None) -> "MaskEditor":
+    def from_dict(cls, d: dict[str, Any], base: NDArray[np.bool_] | None = None, volume: NDArray | None = None) -> "MaskEditor":
         shape = tuple(int(s) for s in d["shape"])
-        return cls(shape=shape, base=base, ops=[MaskOp.from_dict(o) for o in d.get("ops", [])])  # type: ignore[arg-type]
+        return cls(volume=volume, shape=shape, base=base, ops=[MaskOp.from_dict(o) for o in d.get("ops", [])])  # type: ignore[arg-type]

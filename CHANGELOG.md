@@ -32,6 +32,18 @@ All notable changes to pyALDVC are documented here. The format follows
   holding a float32 copy of every frame of a sequence.
 
 ### Added
+- Region of interest: an icon toolbar (vector icons rendered from inline SVG in
+  the theme colours) replaces the combos and the four rows of text buttons;
+  shape tools are toggles, modes are Replace / Add / Cut, the edit actions are
+  one row of icons. "Automatic mask" segments the material in one click (Otsu
+  threshold, holes filled, largest connected component) as a replayable
+  `threshold` operation that sessions restore. `MaskOp` gained the `replace`
+  mode.
+- 3-D view: three slice sliders under the view (shared with the Slices tab);
+  the "Warped grid" mode is now "Deformed lattice": only cells whose nodes are
+  valid are warped and they are drawn with their edges, so a region of interest
+  no longer produces an empty or two-faced picture.
+### Added
 - Languages: Traditional Chinese, Japanese, German, French and Spanish join
   English and Simplified Chinese (`View > Language`; the system locale picks
   the closest shipped language, e.g. `de_AT` -> German, `zh_HK` -> Traditional

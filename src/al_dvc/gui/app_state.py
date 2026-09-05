@@ -217,7 +217,12 @@ class AppState(QObject):
                 base_mask = None
         elif base == "full":
             base_mask = np.ones(shape, dtype=bool)
-        self.mask_editor = MaskEditor(shape, base=base_mask)
+        volume = None
+        try:
+            volume = self.volume_array(self.current_frame)
+        except Exception as exc:  # the editor still works for geometric shapes
+            self.log(f"mask editor: cannot load the frame for threshold operations: {exc}", "warning")
+        self.mask_editor = MaskEditor(shape, base=base_mask, volume=volume)
         return self.mask_editor
 
     def _target_frames(self) -> list[int]:

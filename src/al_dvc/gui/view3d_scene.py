@@ -228,9 +228,14 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
         if surf.n_points:
             info.actors["field"] = plotter.add_mesh(surf, opacity=opts.opacity, **common)
         info.actors["iso_level"] = level
-    else:  # warped
-        warped = grid.warp_by_vector(DISPLACEMENT_ARRAY, factor=opts.warp_scale)
-        info.actors["field"] = plotter.add_mesh(warped, opacity=opts.opacity, **common)
+    else:  # warped: the lattice of the valid nodes moved by the displacement, drawn with its cell edges
+        grid.point_data["_valid"] = finite.astype(np.float32)
+        cells = grid.threshold(0.5, scalars="_valid", preference="point")  # cells whose 8 nodes are valid
+        if cells.n_cells:
+            warped = cells.warp_by_vector(DISPLACEMENT_ARRAY, factor=opts.warp_scale)
+            info.actors["field"] = plotter.add_mesh(
+                warped, opacity=opts.opacity, show_edges=True, edge_color=fg, line_width=1, **common
+            )
         if opts.show_outline:
             info.actors["original"] = plotter.add_mesh(grid.outline(), color="gray", line_width=1)
 

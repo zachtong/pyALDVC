@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
-    QPushButton,
+    QSlider,
     QSpinBox,
     QStackedWidget,
     QVBoxLayout,
@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..app_state import AppState
+from ..icons import tool_button
 from ..view3d_scene import (
     BACKGROUND,
     BACKGROUNDS,
@@ -85,7 +86,7 @@ class View3DPanel(QWidget):
         for axis in SLICE_AXES:
             s = QSpinBox()
             s.setRange(0, 0)
-            s.setFixedWidth(80)
+            s.setFixedWidth(64)
             self.slice_spins[axis] = s
         self.iso = QDoubleSpinBox()
         self.iso.setRange(0.0, 1.0)
@@ -99,10 +100,12 @@ class View3DPanel(QWidget):
         self.stride = QSpinBox()
         self.stride.setRange(1, 20)
         self.stride.setValue(2)
+        self.stride.setFixedWidth(56)
         self.arrow_scale = QDoubleSpinBox()
         self.arrow_scale.setRange(0.05, 100.0)
         self.arrow_scale.setValue(1.0)
         self.arrow_scale.setSingleStep(0.5)
+        self.arrow_scale.setFixedWidth(72)
         self.volume_slices = QCheckBox()
         self.outline = QCheckBox()
         self.outline.setChecked(True)
@@ -112,8 +115,8 @@ class View3DPanel(QWidget):
         self.camera = QComboBox()
         for key in CAMERAS:
             self.camera.addItem(key, key)
-        self._btn_refresh = QPushButton()
-        self._btn_shot = QPushButton()
+        self._btn_refresh = tool_button("refresh")
+        self._btn_shot = tool_button("camera")
         self._labels: dict[str, QLabel] = {
             k: QLabel()
             for k in (
@@ -141,23 +144,31 @@ class View3DPanel(QWidget):
         top.addWidget(self.iso)
         top.addWidget(self._labels["warp_scale"])
         top.addWidget(self.warp_scale)
-        top.addWidget(self.arrows)
-        top.addWidget(self._labels["stride"])
-        top.addWidget(self.stride)
-        top.addWidget(self._labels["arrow_scale"])
-        top.addWidget(self.arrow_scale)
         top.addStretch(1)
-        # row 2: scene-wide options
+        # row 2: scene-wide options; row 3: toggles and actions (icons), so the rows fit a narrow centre column
         bottom = QHBoxLayout()
-        bottom.addWidget(self.volume_slices)
-        bottom.addWidget(self.outline)
         bottom.addWidget(self._labels["background"])
         bottom.addWidget(self.background)
+        bottom.addSpacing(8)
         bottom.addWidget(self._labels["camera"])
         bottom.addWidget(self.camera)
-        bottom.addWidget(self._btn_refresh)
-        bottom.addWidget(self._btn_shot)
         bottom.addStretch(1)
+        actions = QHBoxLayout()
+        actions.addWidget(self.volume_slices)
+        actions.addWidget(self.outline)
+        actions.addWidget(self.arrows)
+        actions.addStretch(1)
+        actions.addWidget(self._btn_refresh)
+        actions.addWidget(self._btn_shot)
+        self._arrow_row = QWidget()
+        arrow_row = QHBoxLayout(self._arrow_row)
+        arrow_row.setContentsMargins(0, 0, 0, 0)
+        arrow_row.addWidget(self._labels["stride"])
+        arrow_row.addWidget(self.stride)
+        arrow_row.addSpacing(8)
+        arrow_row.addWidget(self._labels["arrow_scale"])
+        arrow_row.addWidget(self.arrow_scale)
+        arrow_row.addStretch(1)
 
         # body -----------------------------------------------------------
         self._stack = QStackedWidget()
@@ -179,7 +190,26 @@ class View3DPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(top)
         layout.addLayout(bottom)
+        layout.addLayout(actions)
+        layout.addWidget(self._arrow_row)
         layout.addWidget(self._stack, stretch=1)
+        self.slice_sliders: dict[str, QSlider] = {}
+        self._slider_labels: dict[str, QLabel] = {}
+        sliders = QHBoxLayout()
+        for axis in SLICE_AXES:
+            col = QVBoxLayout()
+            lab = QLabel(f"{axis} = -")
+            s = QSlider(Qt.Orientation.Horizontal)
+            s.setRange(0, 0)
+            s.valueChanged.connect(lambda v, a=axis: self._on_slice_spin(a, v))
+            col.addWidget(lab)
+            col.addWidget(s)
+            sliders.addLayout(col)
+            self.slice_sliders[axis] = s
+            self._slider_labels[axis] = lab
+        self._slider_box = QWidget()
+        self._slider_box.setLayout(sliders)
+        layout.addWidget(self._slider_box)
         layout.addWidget(self._status)
 
         self._init_backend()
@@ -270,10 +300,12 @@ class View3DPanel(QWidget):
         self._updating = True
         try:
             for axis, n in zip(SLICE_AXES, shape if shape is not None else (1, 1, 1)):
-                s = self.slice_spins[axis]
-                s.setRange(0, max(0, int(n) - 1))
                 cur = self._state.slice_index.get(axis)
-                s.setValue(int(cur) if cur is not None else int(n) // 2)
+                value = int(cur) if cur is not None else int(n) // 2
+                for w in (self.slice_spins[axis], self.slice_sliders[axis]):
+                    w.setRange(0, max(0, int(n) - 1))
+                    w.setValue(value)
+                self._slider_labels[axis].setText(f"{axis} = {value}")
         finally:
             self._updating = False
 
@@ -430,9 +462,12 @@ class View3DPanel(QWidget):
         ):
             w.setEnabled(has)
         show_slices = mode == "slices"
+        self._slider_box.setVisible(show_slices or self.volume_slices.isChecked())
+        for s in self.slice_sliders.values():
+            s.setEnabled(has)
         for axis in SLICE_AXES:
-            self._labels[f"slice_{axis}"].setVisible(show_slices)
-            self.slice_spins[axis].setVisible(show_slices)
+            self._labels[f"slice_{axis}"].setVisible(False)
+            self.slice_spins[axis].setVisible(False)
             self.slice_spins[axis].setEnabled(has)
         self._labels["iso"].setVisible(mode == "surface")
         self.iso.setVisible(mode == "surface")
@@ -441,14 +476,14 @@ class View3DPanel(QWidget):
         self.warp_scale.setVisible(mode == "warped")
         self.warp_scale.setEnabled(has)
         arrows_on = has and self.arrows.isChecked()
-        for w in (self._labels["stride"], self.stride, self._labels["arrow_scale"], self.arrow_scale):
-            w.setVisible(self.arrows.isChecked())
+        self._arrow_row.setVisible(self.arrows.isChecked())
+        for w in (self.stride, self.arrow_scale):
             w.setEnabled(arrows_on)
 
     def visible_controls(self) -> set[str]:
         """Names of the mode-specific controls currently shown (tests)."""
         names = set()
-        if self.slice_spins["z"].isVisibleTo(self):
+        if self._slider_box.isVisibleTo(self) and self.mode_key() == "slices":
             names.add("slices")
         if self.iso.isVisibleTo(self):
             names.add("iso")
@@ -480,13 +515,13 @@ class View3DPanel(QWidget):
         self.arrows.setText(self.tr("Arrows"))
         self.volume_slices.setText(self.tr("Volume slices"))
         self.outline.setText(self.tr("Outline"))
-        self._btn_refresh.setText(self.tr("Refresh"))
-        self._btn_shot.setText(self.tr("Screenshot..."))
+        self._btn_refresh.setToolTip(self.tr("Refresh"))
+        self._btn_shot.setToolTip(self.tr("Screenshot..."))
         names = {
             "slices": self.tr("Slices"),
             "points": self.tr("Points"),
             "surface": self.tr("Iso-surface"),
-            "warped": self.tr("Warped grid"),
+            "warped": self.tr("Deformed lattice"),
         }
         for i, key in enumerate(MODES):
             self.mode.setItemText(i, names[key])
@@ -497,7 +532,10 @@ class View3DPanel(QWidget):
         for i, key in enumerate(BACKGROUNDS):
             self.background.setItemText(i, bgs[key])
         self.mode.setToolTip(
-            self.tr("Orthogonal slices of the field, node points, an iso-surface, or the grid warped by the displacement")
+            self.tr(
+                "Orthogonal slices of the field, node points, an iso-surface, "
+                "or the node lattice moved by the displacement (valid cells only)"
+            )
         )
         for axis in SLICE_AXES:
             self.slice_spins[axis].setToolTip(self.tr("Position of the three field slices (shared with the Slices tab)"))
