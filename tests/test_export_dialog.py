@@ -84,7 +84,7 @@ def test_export_dialog_end_to_end(qapp, pair, result, tmp_path):
     dialog.checks["images"].setChecked(True)
     dialog.all_frames.setChecked(False)
     cfg = dialog.config()
-    assert cfg.frames == [0] and cfg.basename == "run1" and cfg.images and cfg.image_layout == "row"
+    assert cfg.frames == [0] and cfg.basename == "run1" and cfg.images and cfg.image_layout == "grid"
     dialog.start()
     assert dialog.wait(300_000)
     qapp.processEvents()

@@ -37,7 +37,7 @@ class FieldSliceCanvas(QWidget):
         self._cmap = "turbo"
         self._clim: tuple[float, float] | None = None
         self._alpha = 0.85
-        self._layout = "row"
+        self._layout = "grid"
         self._equal_scale = False
         self._indices: dict[str, int | None] = {"z": None, "y": None, "x": None}
         self.last_clim: tuple[float, float] | None = None

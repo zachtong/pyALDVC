@@ -32,6 +32,8 @@ All notable changes to pyALDVC are documented here. The format follows
   holding a float32 copy of every frame of a sequence.
 
 ### Added
+- The 2 x 2 arrangement (XY / XZ left, YZ top-right) is the default layout of
+  the slice viewer, the strain window and the exported slice images.
 - Region of interest: an icon toolbar (vector icons rendered from inline SVG in
   the theme colours) replaces the combos and the four rows of text buttons;
   shape tools are toggles, modes are Replace / Add / Cut, the edit actions are

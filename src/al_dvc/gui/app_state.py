@@ -102,7 +102,7 @@ class AppState(QObject):
         self.overlay_alpha: float = 0.75
         self.show_overlay: bool = True
         self.slice_index: dict[str, int | None] = {"z": None, "y": None, "x": None}
-        self.slice_layout: str = "row"  # arrangement of the three slices ("row", "column", "grid")
+        self.slice_layout: str = "grid"  # arrangement of the three slices: "grid" (XY / XZ left, YZ top-right), "row", "column"
         self.slice_equal_scale: bool = False  # same voxels-per-pixel scale on the three planes
         # mask drawing
         self.mask_editor: MaskEditor | None = None

@@ -59,7 +59,7 @@ class ExportConfig:
     images: bool = False
     fields: list[str] = field(default_factory=lambda: ["disp_u", "disp_v", "disp_w"])
     frames: list[int] | None = None  # None = all
-    image_layout: str = "row"
+    image_layout: str = "grid"
     image_cmap: str = "turbo"
     image_dpi: int = 150
     image_light: bool = True
@@ -252,6 +252,7 @@ class ExportDialog(QDialog):
         self.image_layout = combo([], width=100)
         for key in LAYOUTS:
             self.image_layout.addItem(key, key)
+        self.image_layout.setCurrentIndex(LAYOUTS.index("grid"))
         self._cmap_label = QLabel()
         self.image_cmap = combo(["turbo", "viridis", "plasma", "inferno", "coolwarm", "RdBu_r", "jet", "gray"], width=100)
         self._dpi_label = QLabel()
@@ -381,7 +382,7 @@ class ExportDialog(QDialog):
             images=self.checks["images"].isChecked(),
             fields=self.selected_fields(),
             frames=frames,
-            image_layout=str(self.image_layout.currentData() or "row"),
+            image_layout=str(self.image_layout.currentData() or "grid"),
             image_cmap=self.image_cmap.currentText(),
             image_dpi=int(self.image_dpi.value()),
             image_light=self.image_light.isChecked(),

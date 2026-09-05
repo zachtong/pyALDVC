@@ -79,8 +79,8 @@ def test_axes_keep_their_size_when_slices_change(qapp, window_with_result):
 def test_layouts_switch_and_persist(qapp, window_with_result):
     window = window_with_result
     viewer = window.viewer
-    assert viewer.layout_key == "row" and window.state.slice_layout == "row"
-    for key in ("column", "grid", "row"):
+    assert viewer.layout_key == "grid" and window.state.slice_layout == "grid"  # 2 x 2 is the default
+    for key in ("column", "row", "grid"):
         viewer.set_layout(key)
         qapp.processEvents()
         assert viewer.layout_key == key and window.state.slice_layout == key

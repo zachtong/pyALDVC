@@ -195,6 +195,7 @@ class StrainWindow(QMainWindow):
         self.layout_combo = combo([])
         for key in LAYOUTS:
             self.layout_combo.addItem(key, key)
+        self.layout_combo.setCurrentIndex(LAYOUTS.index("grid"))
         self.show_volume = QCheckBox()
         self.show_volume.setChecked(True)
         self.equal_scale = QCheckBox()
@@ -446,7 +447,7 @@ class StrainWindow(QMainWindow):
             return
         field = self.field.currentData() or "disp_magnitude"
         clim = None if self.auto_range.isChecked() else (float(self.vmin.value()), float(self.vmax.value()))
-        layout = str(self.layout_combo.currentData() or "row")
+        layout = str(self.layout_combo.currentData() or "grid")
         self.canvas.set_view(
             frame=int(self.frame_slider.value()),
             field=field,

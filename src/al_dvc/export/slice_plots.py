@@ -278,7 +278,7 @@ def export_field_images(
     out_dir,
     fields: list[str],
     frames: list[int] | None = None,
-    layout: str = "row",
+    layout: str = "grid",
     cmap: str = "turbo",
     clim: tuple[float, float] | None = None,
     indices: dict[str, int | None] | None = None,
