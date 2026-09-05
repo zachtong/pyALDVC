@@ -31,6 +31,7 @@ ARROW_SCALE_FRACTION = 0.6  # longest arrow = this fraction of the node spacing 
 VOLUME_SLICE_MAX_PIXELS = 4_000_000  # subsample larger image slices before turning them into textures
 CAMERAS = ("iso", "xy", "xz", "yz")
 VIEW_UPS = {"z": (0.0, 0.0, 1.0), "y": (0.0, 1.0, 0.0), "x": (1.0, 0.0, 0.0)}
+SCENE_COLUMNS = (6, 1)  # relative widths of the scene renderer and the colour-bar renderer
 BACKGROUND = "#1b1d23"
 BACKGROUNDS = {"dark": BACKGROUND, "black": "#000000", "grey": "#808080", "white": "#ffffff"}
 
@@ -59,6 +60,94 @@ class CameraSpec:
             raise ValueError("zoom must be positive")
 
 
+@dataclass(frozen=True)
+class CameraState:
+    """A camera as it is: position, focal point, view-up and projection (what a mouse drag leaves behind).
+
+    Animations rotate it about its focal point and recordings start from it, so a recording begins
+    exactly where the user turned the view to.
+    """
+
+    position: tuple[float, float, float]
+    focal_point: tuple[float, float, float]
+    view_up: tuple[float, float, float]
+    view_angle: float = 30.0
+    parallel_scale: float = 1.0
+    parallel: bool = False
+
+    @classmethod
+    def from_camera(cls, cam) -> "CameraState":
+        return cls(
+            tuple(float(v) for v in cam.position),
+            tuple(float(v) for v in cam.focal_point),
+            tuple(float(v) for v in cam.up),
+            float(cam.view_angle),
+            float(cam.parallel_scale),
+            bool(cam.parallel_projection),
+        )
+
+    def apply_to(self, cam) -> None:
+        cam.position = self.position
+        cam.focal_point = self.focal_point
+        cam.up = self.view_up
+        cam.view_angle = self.view_angle
+        cam.parallel_projection = self.parallel
+        cam.parallel_scale = self.parallel_scale
+
+    def rotated(
+        self, azimuth: float = 0.0, elevation: float = 0.0, view_up: str | None = None, dolly: float = 1.0
+    ) -> "CameraState":
+        """The same camera turned about its focal point (``view_up`` names the axis kept vertical)."""
+        from vtkmodules.vtkRenderingCore import vtkCamera
+
+        cam = vtkCamera()
+        cam.SetPosition(*self.position)
+        cam.SetFocalPoint(*self.focal_point)
+        cam.SetViewUp(*(VIEW_UPS[view_up] if view_up is not None else self.view_up))
+        cam.SetViewAngle(self.view_angle)
+        cam.SetParallelProjection(self.parallel)
+        cam.SetParallelScale(self.parallel_scale)
+        if azimuth:
+            cam.Azimuth(float(azimuth))
+        if elevation:
+            cam.Elevation(float(elevation))
+            cam.OrthogonalizeViewUp()
+        if dolly != 1.0:
+            cam.Dolly(float(dolly))
+        return CameraState(
+            tuple(cam.GetPosition()),
+            tuple(cam.GetFocalPoint()),
+            tuple(cam.GetViewUp()),
+            float(cam.GetViewAngle()),
+            float(cam.GetParallelScale()),
+            bool(cam.GetParallelProjection()),
+        )
+
+    def relative_to(self, preset: "CameraState") -> tuple[float, float, float]:
+        """``(azimuth, elevation, zoom)`` that turn ``preset`` into this camera (roll is ignored).
+
+        Used to show a mouse-dragged camera in the Turn / Tilt / Zoom boxes.
+        """
+        up = np.asarray(preset.view_up, dtype=float)
+        up /= np.linalg.norm(up) or 1.0
+        d0 = np.asarray(preset.position) - np.asarray(preset.focal_point)
+        d1 = np.asarray(self.position) - np.asarray(self.focal_point)
+        n0, n1 = np.linalg.norm(d0), np.linalg.norm(d1)
+        if n0 == 0 or n1 == 0:
+            return 0.0, 0.0, 1.0
+        e0 = float(np.degrees(np.arcsin(np.clip(np.dot(d0, up) / n0, -1.0, 1.0))))
+        e1 = float(np.degrees(np.arcsin(np.clip(np.dot(d1, up) / n1, -1.0, 1.0))))
+        a0 = d0 - np.dot(d0, up) * up
+        a1 = d1 - np.dot(d1, up) * up
+        azimuth = 0.0
+        if np.linalg.norm(a0) > 1e-9 and np.linalg.norm(a1) > 1e-9:
+            a0 /= np.linalg.norm(a0)
+            a1 /= np.linalg.norm(a1)
+            azimuth = float(np.degrees(np.arctan2(np.dot(np.cross(a0, a1), up), np.dot(a0, a1))))
+        zoom = float(preset.parallel_scale / self.parallel_scale) if self.parallel and self.parallel_scale else float(n0 / n1)
+        return azimuth, e1 - e0, zoom
+
+
 def ui_font_file() -> str | None:
     """A TrueType file of the interface font for VTK text (VTK's built-in "arial" is not the system font).
 
@@ -83,6 +172,30 @@ def ui_font_file() -> str | None:
         if os.path.isfile(path):
             return path
     return None
+
+
+BAR_TITLE_WIDTH = 13  # characters per line of the colour bar title
+
+
+def _wrap_title(title: str) -> str:
+    """Break a long title at spaces so it fits over the narrow colour bar."""
+    words = str(title).split()
+    lines: list[str] = []
+    for word in words:
+        if lines and len(lines[-1]) + 1 + len(word) <= BAR_TITLE_WIDTH:
+            lines[-1] += " " + word
+        else:
+            lines.append(word)
+    return chr(10).join(lines) if lines else str(title)
+
+
+def scene_plotter(window_size: tuple[int, int], off_screen: bool = True):
+    """An off-screen plotter with the scene renderer and the narrow colour-bar renderer side by side."""
+    import pyvista as pv
+
+    pl = pv.Plotter(off_screen=off_screen, shape=(1, 2), col_weights=list(SCENE_COLUMNS), border=False, window_size=window_size)
+    pl.subplot(0, 0)
+    return pl
 
 
 def _use_ui_font(text_property, font_file: str | None) -> None:
@@ -250,21 +363,20 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
     common = dict(scalars=opts.field, cmap=opts.colormap, clim=clim, nan_opacity=0.0, show_scalar_bar=False)
     fg = foreground_for(opts.background)
     plotter.set_background(opts.background)
-    title = opts.title or opts.field
-    # a slim vertical bar near the right edge, plain sans-serif text; the title is centred over the bar, so
-    # the bar moves left as the title gets longer or it would run out of the viewport
-    bar_x = min(0.90, max(0.60, 1.0 - 0.035 - 0.0085 * len(title)))
+    title = _wrap_title(opts.title or opts.field)
+    own_renderer = len(plotter.renderers) > 1  # the bar lives in the narrow right renderer: it never overlaps the scene
+    bar_x = 0.18 if own_renderer else min(0.90, max(0.60, 1.0 - 0.035 - 0.0085 * len(title)))
     scalar_bar = dict(
         title=title + chr(10),  # the newline keeps the title clear of the top label
         vertical=True,
         n_labels=5,
         fmt="%.3g",
-        width=0.07,
-        height=0.55,
+        width=0.34 if own_renderer else 0.07,
+        height=0.62 if own_renderer else 0.55,
         position_x=bar_x,
-        position_y=0.22,
-        title_font_size=13,
-        label_font_size=11,
+        position_y=0.16,
+        title_font_size=12,
+        label_font_size=10,
         unconstrained_font_size=True,
         font_family="arial",
         color=fg,
@@ -329,10 +441,14 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
             )
     if "field" in info.actors:
         # bind the bar to the field's mapper explicitly: by default pyvista takes the last added mesh (outline, arrows)
+        if own_renderer:
+            plotter.subplot(0, 1)
         bar = plotter.add_scalar_bar(mapper=info.actors["field"].mapper, **scalar_bar)
         font_file = ui_font_file()
         _use_ui_font(bar.GetTitleTextProperty(), font_file)
         _use_ui_font(bar.GetLabelTextProperty(), font_file)
+        if own_renderer:
+            plotter.subplot(0, 0)
     plotter.add_axes(color=fg)
     return info
 
@@ -399,11 +515,9 @@ def render_image(
 
     ``camera`` is a preset name or a :class:`CameraSpec`.
     """
-    import pyvista as pv
-
-    pl = pv.Plotter(off_screen=True, window_size=window_size)
+    pl = scene_plotter(window_size)
     opts = opts or SceneOptions()
-    pl.set_background(opts.background)
+    pl.set_background(opts.background, all_renderers=True)
     info = build_scene(pl, result, opts, volume)
     _apply_camera(pl, camera)
     img = np.asarray(pl.screenshot(str(path) if path is not None else None, return_img=True))
@@ -423,8 +537,16 @@ def render_png(
     return render_image(result, opts, volume, window_size, camera, path=path)[1]
 
 
-def apply_camera(plotter, camera: str | CameraSpec) -> None:
-    """Point ``plotter``'s camera as ``camera`` says: the preset, the view-up axis, then azimuth, elevation, zoom."""
+def apply_camera(plotter, camera) -> None:
+    """Point ``plotter``'s camera as ``camera`` says.
+
+    A preset name or a :class:`CameraSpec` starts from the preset and turns, tilts and dollies it; a
+    :class:`CameraState` is restored as it is.
+    """
+    if isinstance(camera, CameraState):
+        camera.apply_to(plotter.camera)
+        plotter.renderer.ResetCameraClippingRange()
+        return
     spec = camera if isinstance(camera, CameraSpec) else CameraSpec(preset=str(camera))
     if spec.preset == "iso":
         plotter.view_isometric()
@@ -432,7 +554,7 @@ def apply_camera(plotter, camera: str | CameraSpec) -> None:
         getattr(plotter, f"view_{spec.preset}")()
     plotter.reset_camera()
     cam = plotter.camera
-    if spec.preset == "iso" or spec.view_up != "z":
+    if spec.view_up != "z":
         cam.up = VIEW_UPS[spec.view_up]
     if spec.azimuth:
         cam.Azimuth(float(spec.azimuth))
@@ -440,7 +562,8 @@ def apply_camera(plotter, camera: str | CameraSpec) -> None:
         cam.Elevation(float(spec.elevation))
         cam.OrthogonalizeViewUp()
     if spec.zoom != 1.0:
-        cam.Zoom(float(spec.zoom))
+        cam.Dolly(float(spec.zoom))  # what the mouse wheel does: move the camera, not the view angle
+    plotter.renderer.ResetCameraClippingRange()
 
 
 _apply_camera = apply_camera  # the old private name

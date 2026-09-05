@@ -152,7 +152,7 @@ def form_label(text: str = "") -> QLabel:
 
 # --------------------------------------------------------------------------- collapsible section
 class CollapsibleSection(QWidget):
-    """A header that folds its content on click (arrow + uppercase title), like pyALDIC's sidebar sections."""
+    """A header that folds its content on click (arrow + title), like pyALDIC's sidebar sections."""
 
     toggled = Signal(bool)
 
@@ -181,7 +181,7 @@ class CollapsibleSection(QWidget):
     def set_title(self, title: str) -> None:
         self._title = title
         arrow = "▼" if self._expanded else "▶"  # black down / right triangle: present in the CJK fonts too
-        self._header.setText(f"{arrow}  {title.upper()}".replace("&", "&&"))  # a bare & would be a mnemonic
+        self._header.setText(f"{arrow}  {title}".replace("&", "&&"))  # sentence case; a bare & would be a mnemonic
 
     def add_widget(self, widget: QWidget) -> None:
         self._content_layout.addWidget(widget)

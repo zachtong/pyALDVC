@@ -83,7 +83,10 @@ Strain is a post-processing step with its own window: plane fitting, finite
 elements, finite differences or the solver's gradient; infinitesimal,
 Green-Lagrange, Euler-Almansi or Hencky measures; smoothing and edge trimming.
 The 3-D view shows field slices, node points, iso-surfaces, the deformed
-lattice and displacement arrows.
+lattice and displacement arrows. Its camera row (azimuth, elevation, zoom) follows
+the mouse, and the animation row plays an orbit about any axis, a frame sequence,
+a slice sweep or a growing warp, at a chosen speed and direction; Record writes
+the animation as GIF, MP4 or PNG frames.
 
 <p align="center">
   <img src="assets/screenshot_strain.png" alt="Strain post-processing window" width="46%"/>
@@ -92,7 +95,8 @@ lattice and displacement arrows.
 
 ### Texture analysis before the run
 
-How big should the subset be? The texture analysis window (Analysis menu) computes
+How big should the subset be? The texture analysis window (Post-processing box or
+Analysis menu) computes
 the autocorrelation of the reference volume inside the region of interest, reports
 the correlation lengths along x, y and z and over spherical shells, checks how
 stable they are against the sampled volume, and suggests a subset and step per
@@ -211,7 +215,8 @@ range (memory and time scale with the region, not with the scan). Mask drawing
 through all slices, one slice or a range; add / cut; undo; `reports/mask_tools.pdf`), a
 3-D view (pyvista: field slices with their own position controls, node points,
 iso-surface, warped lattice, displacement arrows, volume slices, selectable
-background; `reports/view3d.pdf`), a strain post-processing window (method,
+background, camera controls, orbit / frames / slice / warp animations recorded
+as GIF, MP4 or PNG; `reports/view3d.pdf`), a strain post-processing window (method,
 measure, smoothing chosen after the run, computed on demand; Ctrl+T) and an
 export dialog (npz, mat, CSV, ParaView, PDF report, slice images; Ctrl+E),
 and a batch dialog that runs several saved sessions one after another

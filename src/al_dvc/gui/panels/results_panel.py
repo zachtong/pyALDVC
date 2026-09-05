@@ -85,10 +85,12 @@ class ResultsPanel(QWidget):
         self._btn_prev = QPushButton("<")
         self._btn_next = QPushButton(">")
         for b in (self._btn_prev, self._btn_next):
-            b.setFixedWidth(32)
-            b.setStyleSheet("padding: 4px 2px;")
+            b.setFixedSize(32, 26)
+            b.setStyleSheet("padding: 2px 2px;")
+        self.frame.setFixedHeight(26)
         frame_widget = QWidget()
         frame_widget.setStyleSheet("background: transparent;")
+        frame_widget.setMinimumHeight(28)  # the row is as tall as its buttons: nothing is clipped by the group's title
         frame_row = QHBoxLayout(frame_widget)
         frame_row.setContentsMargins(0, 0, 0, 0)
         frame_row.setSpacing(4)
@@ -174,6 +176,10 @@ class ResultsPanel(QWidget):
         self._state.volumes_changed.connect(self.refresh)
         self.retranslate_ui()
         self.refresh()
+
+    def minimumSizeHint(self):  # noqa: N802
+        """The scroll area must scroll rather than squeeze the rows into each other."""
+        return self.sizeHint()
 
     # ------------------------------------------------------------------ binding
     def _set(self, **values) -> None:

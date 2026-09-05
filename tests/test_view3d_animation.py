@@ -20,7 +20,15 @@ from al_dvc.gui.view3d_animation import (  # noqa: E402
     mp4_available,
     record_animation,
 )
-from al_dvc.gui.view3d_scene import CameraSpec, SceneOptions, apply_camera, build_scene, render_image, ui_font_file  # noqa: E402
+from al_dvc.gui.view3d_scene import (  # noqa: E402
+    CameraSpec,
+    CameraState,
+    SceneOptions,
+    apply_camera,
+    build_scene,
+    render_image,
+    ui_font_file,
+)
 from al_dvc.synthetic import affine_displacement, generate_speckle_volume, warp_volume_lagrangian  # noqa: E402
 
 
@@ -162,9 +170,10 @@ def _pump(n=10):
 
 
 def test_panel_camera_controls_playback_and_recording(result, tmp_path):
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QPushButton
 
     from al_dvc.gui.app import MainWindow, create_application
+    from al_dvc.gui.names import select_key
 
     create_application(["pytest"])
     res, ref = result
@@ -178,6 +187,8 @@ def test_panel_camera_controls_playback_and_recording(result, tmp_path):
     _pump()
     assert panel.backend == "static" and panel._last_image is not None
     before = panel._last_image.copy()
+    # the leading labels of the control rows share one column
+    assert panel._labels["mode"].width() == panel._labels["background"].width() == panel._labels["anim_kind"].width()
     # the camera row turns the static render
     panel.azimuth.setValue(60)
     _pump()
@@ -188,8 +199,6 @@ def test_panel_camera_controls_playback_and_recording(result, tmp_path):
     assert panel.camera_spec() == CameraSpec(preset="iso")
     assert np.array_equal(panel._last_image, before)
     # animation controls follow the kind
-    from al_dvc.gui.names import select_key
-
     assert select_key(panel.anim_kind, "orbit") and panel.anim_axis.isVisibleTo(panel)
     spec = panel.animation_spec()
     assert spec.kind == "orbit" and spec.duration == pytest.approx(360.0 / spec.speed)
@@ -206,13 +215,35 @@ def test_panel_camera_controls_playback_and_recording(result, tmp_path):
     panel._on_play_tick()
     _pump()
     assert np.abs(panel._last_image.astype(int) - before.astype(int)).mean() > 0.5
+    # controls changed while playing are picked up by the next tick (mode, arrows, volume slices)
+    select_key(panel.mode, "points")
+    panel.arrows.setChecked(True)
+    _pump()
+    assert panel.playing and panel._play_frame(0.5).options.mode == "points" and panel._play_frame(0.5).options.show_arrows
+    select_key(panel.mode, "slices")
+    panel.arrows.setChecked(False)
     panel.toggle_play()
     assert not panel.playing and panel.play_time >= 0.5
     panel.stop_animation()
     _pump()
     assert not panel.playing and panel.play_time == 0.0 and panel._play_base is None
     assert np.array_equal(panel._last_image, before)
+    # the frames animation moves the application's current frame, and stop brings it back
+    select_key(panel.anim_kind, "frames")
+    panel.anim_speed.setValue(2.0)
+    start_frame = window.state.current_frame
+    panel.toggle_play()
+    panel._play_timer.stop()
+    panel._play_offset = 0.6  # 2 frames per second: one frame on
+    panel._on_play_tick()
+    _pump()
+    assert window.state.current_frame == start_frame + 1 and window.results_panel.frame.value() == start_frame + 1
+    panel.stop_animation()
+    _pump()
+    assert window.state.current_frame == start_frame
+    select_key(panel.anim_kind, "orbit")
     # recording (headless: no dialogs, default path) writes a GIF of the requested length
+    assert isinstance(panel._btn_record, QPushButton) and panel._btn_record.text()
     worker = panel.record(tmp_path / "turn", format="gif", fps=4, duration=1.0, size="view")
     assert worker is not None and panel.wait_recording(300_000)
     _pump()
@@ -227,3 +258,19 @@ def test_panel_camera_controls_playback_and_recording(result, tmp_path):
     _pump()
     assert any(p.suffix == ".gif" and p.name.startswith("view3d_orbit") for p in tmp_path.iterdir())
     window.close()
+
+
+def test_camera_state_round_trip_and_read_back(result):
+    res, _ref = result
+    pl = pv.Plotter(off_screen=True, window_size=(160, 120))
+    build_scene(pl, res, SceneOptions(mode="points"), None)
+    apply_camera(pl, CameraSpec(preset="iso"))
+    preset = CameraState.from_camera(pl.camera)
+    turned = preset.rotated(azimuth=40.0, elevation=15.0, dolly=1.5)
+    az, el, zoom = turned.relative_to(preset)
+    assert az == pytest.approx(40.0, abs=0.5) and el == pytest.approx(15.0, abs=0.5) and zoom == pytest.approx(1.5, rel=0.02)
+    apply_camera(pl, turned)
+    assert CameraState.from_camera(pl.camera) == turned
+    same = preset.rotated()
+    assert same.relative_to(preset) == pytest.approx((0.0, 0.0, 1.0))
+    pl.close()

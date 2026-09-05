@@ -42,6 +42,7 @@ SVG: dict[str, str] = {
     "camera": f'<path d="M3 7 H7 L8.5 5 H11.5 L13 7 H17 V16 H3 Z" {_STROKE}/><circle cx="10" cy="11.5" r="2.8" {_STROKE}/>',
     "play": f'<polygon points="6,4 16,10 6,16" {_STROKE}/>',
     "stop": f'<rect x="5" y="5" width="10" height="10" rx="1" {_STROKE}/>',
+    "pause": f'<rect x="5" y="4" width="3.5" height="12" rx="1" {_STROKE}/><rect x="11.5" y="4" width="3.5" height="12" rx="1" {_STROKE}/>',
     "record": f'<circle cx="10" cy="10" r="6" {_STROKE}/><circle cx="10" cy="10" r="2.5" fill="{{c}}" stroke="none"/>',
     "eye": f'<path d="M2.5 10 C5 6 8 4.5 10 4.5 C12 4.5 15 6 17.5 10 C15 14 12 15.5 10 15.5 C8 15.5 5 14 2.5 10 Z" {_STROKE}/><circle cx="10" cy="10" r="2.5" {_STROKE}/>',
 }

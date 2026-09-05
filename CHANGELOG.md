@@ -7,6 +7,35 @@ All notable changes to pyALDVC are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Completion notifications: a finished run, strain, texture analysis, export or
+  recording flashes the taskbar and opens a non-modal message (View menu,
+  "Notify when a task finishes", remembered).
+- 3-D view: Space plays / pauses, Home resets the camera; a mouse drag or wheel
+  is written back into the Turn / Tilt / Zoom boxes, and animations, recordings
+  and screenshots start from the camera on screen.
+
+### Fixed
+- 3-D view: the colour bar has its own narrow renderer beside the scene, so it
+  never overlaps the volume; its title wraps to the bar's width.
+- 3-D view animations read the controls on every tick: changing the mode, the
+  arrows, the volume slices or the field while an animation plays takes effect
+  at once (the old playback kept the options it started with, so a frames
+  animation stayed on the deformed lattice). The frames animation moves the
+  application's current frame, so the Slices tab and the Frame box follow, and
+  stop returns to the starting frame. Rebuilding the scene no longer resets a
+  camera the user has turned; changing the mode keeps the camera too.
+- 3-D view: the record control is a labelled button; while frames are rendered
+  the status says the view resumes afterwards.
+
+### Changed
+- Typography: three levels, sentence case throughout. Column and box titles
+  (Volumes, Region of interest, Parameters, Run, Post-processing, Display,
+  Export, Summary) are 12 px bold in the primary colour; the folding
+  sub-sections (Subset & search, Solver, ...) are 11 px bold in the secondary
+  colour; field labels are regular; hints are 11 px muted. The upper-case
+  sub-section titles and letter spacing are gone.
+- 3-D view: the control rows share a label column, so Mode, Background and
+  Animate line up.
 - 3-D view: a camera row (turn, tilt, zoom, reset on top of the presets) and an
   animation row. Orbit about x, y or z, the result frames in sequence, a slice
   sweep along an axis, or the deformed lattice growing to its warp scale and

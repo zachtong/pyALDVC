@@ -113,7 +113,7 @@ def test_build_scene_modes(small_result, mode):
     info = build_scene(pl, res, opts, volume=ref)
     assert info.n_nodes == res.dvc_mesh.n_nodes
     if mode == "slices":  # the scalar bar carries the readable title, not the field key
-        assert any(k.startswith("Displacement magnitude") for k in pl.scalar_bars.keys())
+        assert any(k.replace(chr(10), " ").startswith("Displacement magnitude") for k in pl.scalar_bars.keys())
     assert info.n_finite > 0
     assert "field" in info.actors
     assert info.n_arrows > 0

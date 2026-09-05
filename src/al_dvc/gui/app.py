@@ -225,6 +225,13 @@ class MainWindow(QMainWindow):
             self._actions[key] = act
             self._menus["view"].addAction(act)
         self._menus["view"].addSeparator()
+        act = QAction(self)
+        act.setCheckable(True)
+        act.setChecked(self.notifications_enabled)
+        act.toggled.connect(self.set_notifications_enabled)
+        self._actions["notify"] = act
+        self._menus["view"].addAction(act)
+        self._menus["view"].addSeparator()
         self._menus["language"] = self._menus["view"].addMenu("")
         group = QActionGroup(self)
         group.setExclusive(True)
@@ -501,6 +508,37 @@ class MainWindow(QMainWindow):
     def _on_log_message(self, message: str, level: str) -> None:
         if level == "error":
             self.statusBar().showMessage(message, 10000)
+        elif level == "success":
+            self.statusBar().showMessage(message, 15000)
+            self.notify(message)
+
+    def notify(self, message: str) -> None:
+        """A finished task: flash the taskbar and, when the user wants it, show a non-modal message box."""
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.alert(self)
+        if not self.notifications_enabled or self.headless:
+            return
+        from PySide6.QtWidgets import QMessageBox
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle(self.tr("pyALDVC: task finished"))
+        box.setText(message)
+        box.setWindowModality(Qt.WindowModality.NonModal)
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        box.show()
+        self._last_notification = box
+
+    @property
+    def notifications_enabled(self) -> bool:
+        return bool(QSettings(SETTINGS_ORG, SETTINGS_APP).value("ui/notify", True, type=bool))
+
+    def set_notifications_enabled(self, enabled: bool) -> None:
+        QSettings(SETTINGS_ORG, SETTINGS_APP).setValue("ui/notify", bool(enabled))
+        act = self._actions.get("notify")
+        if act is not None and act.isChecked() != bool(enabled):
+            act.setChecked(bool(enabled))
 
     def changeEvent(self, event) -> None:  # noqa: N802
         if event.type() == QEvent.Type.LanguageChange:
@@ -565,6 +603,7 @@ class MainWindow(QMainWindow):
             "left_column": self.tr("Data and parameters column"),
             "right_column": self.tr("Results column"),
             "reset_layout": self.tr("Reset window layout"),
+            "notify": self.tr("Notify when a task finishes"),
             "run": self.tr("Run AL-DVC"),
             "stop": self.tr("Stop"),
             "strain": self.tr("Strain post-processing..."),

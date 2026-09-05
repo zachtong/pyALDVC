@@ -123,11 +123,12 @@ QLabel#hint {{
     font-size: 11px;
 }}
 
+/* Typography, three levels: sectionTitle and QGroupBox titles (level 1, 12 px bold primary), sectionHeader of the
+   folding sub-sections (level 2, 11 px bold secondary), field labels 12 px regular, hints 11 px muted. */
 QLabel#sectionTitle {{
-    color: {c.TEXT_SECONDARY};
-    font-size: 11px;
+    color: {c.TEXT_PRIMARY};
+    font-size: 12px;
     font-weight: bold;
-    letter-spacing: 1px;
 }}
 
 QPushButton#sectionHeader {{
@@ -136,7 +137,6 @@ QPushButton#sectionHeader {{
     color: {c.TEXT_SECONDARY};
     font-size: 11px;
     font-weight: bold;
-    letter-spacing: 1px;
     background: transparent;
     border: none;
     border-bottom: 1px solid {c.BORDER};
@@ -162,8 +162,8 @@ QGroupBox {{
     background: {c.BG_PANEL};
     border: 1px solid {c.BORDER};
     border-radius: 6px;
-    padding: 10px;
-    margin: 4px 0px;
+    padding: 16px 10px 10px 10px;  /* the title sits in the top padding, clear of the first row */
+    margin: 6px 0px 4px 0px;
 }}
 
 QGroupBox#analysisBox {{
@@ -176,10 +176,9 @@ QGroupBox::title {{
     subcontrol-origin: margin;
     subcontrol-position: top left;
     padding: 2px 8px;
+    color: {c.TEXT_PRIMARY};
     font-weight: bold;
     font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
 }}
 
 /* ============================================================

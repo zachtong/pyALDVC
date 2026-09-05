@@ -24,7 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .view3d_scene import CameraSpec, SceneOptions, render_image
+from .view3d_scene import CameraState, SceneOptions, render_image
 
 KINDS = ("orbit", "frames", "slice", "warp")
 FORMATS = ("gif", "mp4", "png")
@@ -88,14 +88,13 @@ class Frame:
 
     index: int
     time: float
-    camera: CameraSpec
+    camera: object  # CameraSpec or CameraState
     options: SceneOptions
 
 
-def frame_at(
-    spec: AnimationSpec, t: float, base_camera: CameraSpec, base_options: SceneOptions, n_result_frames: int, shape
-) -> Frame:
-    """The frame of ``spec`` at time ``t`` (seconds), starting from ``base_camera`` / ``base_options``.
+def frame_at(spec: AnimationSpec, t: float, base_camera, base_options: SceneOptions, n_result_frames: int, shape) -> Frame:
+    """The frame of ``spec`` at time ``t`` (seconds), starting from ``base_camera`` (a :class:`CameraSpec` or the
+    live :class:`CameraState`) and ``base_options``.
 
     ``shape`` is the volume shape ``(nz, ny, nx)`` for slice sweeps; ``n_result_frames`` bounds the
     frame animation. Everything wraps, so playback can run for as long as the user likes.
@@ -104,7 +103,10 @@ def frame_at(
     options = base_options
     if spec.kind == "orbit":
         angle = spec.direction * spec.speed * t
-        camera = replace(base_camera, view_up=spec.axis, azimuth=(base_camera.azimuth + angle) % 360.0)
+        if isinstance(base_camera, CameraState):
+            camera = base_camera.rotated(azimuth=angle, view_up=spec.axis)
+        else:
+            camera = replace(base_camera, view_up=spec.axis, azimuth=(base_camera.azimuth + angle) % 360.0)
     elif spec.kind == "frames":
         n = max(1, int(n_result_frames))
         k = int(np.floor(spec.speed * t)) % n
@@ -123,9 +125,7 @@ def frame_at(
     return Frame(int(round(t * spec.fps)), float(t), camera, options)
 
 
-def frames(
-    spec: AnimationSpec, base_camera: CameraSpec, base_options: SceneOptions, n_result_frames: int, shape
-) -> Iterator[Frame]:
+def frames(spec: AnimationSpec, base_camera, base_options: SceneOptions, n_result_frames: int, shape) -> Iterator[Frame]:
     """The recorded sequence: ``n_frames`` frames from ``t = 0`` to just before ``duration``."""
     n = spec.n_frames
     for i in range(n):
@@ -136,7 +136,7 @@ def record_animation(
     result,
     volume,
     spec: AnimationSpec,
-    base_camera: CameraSpec,
+    base_camera,
     base_options: SceneOptions,
     path: str | Path,
     window_size: tuple[int, int] = (900, 700),

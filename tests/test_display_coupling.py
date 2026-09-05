@@ -111,24 +111,24 @@ def test_deformed_lattice_falls_back_to_nodes_when_no_cell_is_complete(triple):
 
 
 def test_scalar_bar_is_plain_and_inside_the_viewport(triple):
+    """The bar lives in its own narrow renderer: it never overlaps the scene, whatever the title length."""
     from al_dvc.core.config import dvcpara_default
     from al_dvc.core.pipeline import run_aldvc
 
     ref, f1, _f2 = triple
     para = dvcpara_default(winsize=12, winstepsize=6, search_radius=3, admm_max_iter=1, verbose=False)
     res = run_aldvc(para, [ref, f1], compute_strain=False)
-    pl = pv.Plotter(off_screen=True, window_size=(640, 480))
-    build_scene(pl, res, SceneOptions(mode="slices", title="Displacement magnitude"), None)
-    (name, bar), *_ = pl.scalar_bars.items()
-    assert name.startswith("Displacement magnitude")
-    title_prop = bar.GetTitleTextProperty()
-    assert not title_prop.GetBold() and not title_prop.GetItalic()
-    x, _y = bar.GetPosition()
-    assert 0.7 <= x <= 0.85, "a long title moves the bar left so it stays inside the viewport"
-    pl.close()
-    pl = pv.Plotter(off_screen=True, window_size=(640, 480))
-    build_scene(pl, res, SceneOptions(mode="slices", title="u"), None)
-    (_name, bar), *_ = pl.scalar_bars.items()
-    x, _y = bar.GetPosition()
-    assert x >= 0.88, "a short title keeps the bar at the right edge"
-    pl.close()
+    for title in ("Displacement magnitude", "u"):
+        pl = pv.Plotter(off_screen=True, window_size=(640, 480), shape=(1, 2), col_weights=[6, 1], border=False)
+        pl.subplot(0, 0)
+        build_scene(pl, res, SceneOptions(mode="slices", title=title), None)
+        (name, bar), *_ = pl.scalar_bars.items()
+        assert name.replace(chr(10), " ").strip() == title
+        title_prop = bar.GetTitleTextProperty()
+        assert not title_prop.GetBold() and not title_prop.GetItalic()
+        assert len(name.splitlines()[0]) <= 13  # wrapped to the bar's width
+        x, _y = bar.GetPosition()
+        assert x == pytest.approx(0.18)  # inside the bar's renderer, left of its own viewport
+        # the scene renderer ends where the bar renderer starts
+        assert pl.renderers[0].GetViewport()[2] == pytest.approx(6 / 7)
+        pl.close()
