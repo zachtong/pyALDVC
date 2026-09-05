@@ -60,8 +60,9 @@ region of interest, set parameters, run, inspect, export: no code needed.
   <img src="assets/pyALDVC_demo.gif" alt="pyALDVC workflow: load volumes, draw a region of interest, run, strain post-processing, 3-D slices with arrows, deformed lattice" width="90%"/>
 </p>
 
-<p align="center"><sub>Synthetic open-cell foam under compression with a localised vortex; the displacement
-magnitude forms a torus. Regenerate every asset with <code>python scripts/make_branding.py</code>.</sub></p>
+<p align="center"><sub>Synthetic open-cell foam (200 x 224 x 256 voxels) under compression with a localised vortex;
+the displacement magnitude forms a torus. Subset 24, step 8, 14 112 nodes, 11 s on an RTX 5090.
+Regenerate every asset with <code>python scripts/make_branding.py</code>.</sub></p>
 
 <p align="center">
   <img src="assets/screenshot_main.png" alt="Main window with a displacement field on the three slices" width="90%"/>

@@ -140,28 +140,28 @@ def make_icon() -> Path:
 
 
 # --------------------------------------------------------------------------- synthetic result
-DEMO_SHAPE = (96, 104, 120)  # (nz, ny, nx)
-DEMO_PARAMS = dict(winsize=16, winstepsize=4, search_radius=6, admm_max_iter=3, verbose=False)
+DEMO_SHAPE = (200, 224, 256)  # (nz, ny, nx)
+DEMO_PARAMS = dict(winsize=24, winstepsize=8, search_radius=10, admm_max_iter=3, verbose=False)
 DEMO_ARROWS = dict(stride=2, scale=2.0)  # arrow subsampling and length for the 3-D looks
 DEMO_WARP_SCALE = 6.0  # exaggeration of the deformed lattice in the gif finale
 LATTICE_RATE = (2, 2, 2)  # every second node in the banner lattice panel
-DEMO_MARGIN = (6, 8, 8)  # voxels left outside the region of interest on each side (z, y, x)
+DEMO_MARGIN = (12, 16, 16)  # voxels outside the region of interest per side (z, y, x)
 
 
-def foam_volume(shape=DEMO_SHAPE, seed=7, strut_sigma=2.6, fill=0.55) -> np.ndarray:
+def foam_volume(shape=DEMO_SHAPE, seed=7, strut_sigma=4.0, fill=0.55) -> np.ndarray:
     """A micro-CT-like open-cell foam: thresholded Gaussian random field with textured struts."""
     rng = np.random.default_rng(seed)
     field = gaussian_filter(rng.standard_normal(shape), sigma=strut_sigma, mode="nearest")
     struts = (field > np.quantile(field, 1 - fill)).astype(np.float32)
-    struts = gaussian_filter(struts, sigma=0.9, mode="nearest")
-    texture = gaussian_filter(rng.standard_normal(shape), sigma=1.2, mode="nearest")
+    struts = gaussian_filter(struts, sigma=1.2, mode="nearest")
+    texture = gaussian_filter(rng.standard_normal(shape), sigma=1.6, mode="nearest")
     texture = (texture - texture.min()) / (texture.max() - texture.min())
     vol = 0.15 + 0.85 * struts * (0.7 + 0.3 * texture) + 0.08 * texture * (1 - struts)
     vol += 0.01 * rng.standard_normal(shape)
     return np.ascontiguousarray(np.clip(vol, 0, 1), dtype=np.float32)
 
 
-def vortex_displacement(shape=DEMO_SHAPE, angle_deg=18.0, radius=22.0, height=22.0, compress=0.012, poisson=0.35):
+def vortex_displacement(shape=DEMO_SHAPE, angle_deg=18.0, radius=45.0, height=45.0, compress=0.012, poisson=0.35):
     """A localised twist about the z axis that fades away from the centre, on top of uniaxial compression.
 
     The displacement magnitude is a torus around the centre: rings on the xy planes, two lobes on
