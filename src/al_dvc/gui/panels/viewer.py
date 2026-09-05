@@ -383,9 +383,9 @@ class SliceViewer(QWidget):
         g = self._gesture
         if g is None or g["shape"] == "polygon":
             return
-        if self._plane_at(event) != g["plane"]:
+        p = self._gesture_point(event)
+        if p is None:
             return
-        p = _voxel_point(event)
         if g["shape"] == "brush":
             last = g["points"][-1]
             if abs(p[0] - last[0]) + abs(p[1] - last[1]) >= BRUSH_MIN_MOVE:
@@ -398,13 +398,39 @@ class SliceViewer(QWidget):
         g = self._gesture
         if g is None or g["shape"] == "polygon" or event.button != LEFT:
             return
-        if self._plane_at(event) == g["plane"]:
-            p = _voxel_point(event)
+        p = self._gesture_point(event)
+        if p is not None:
             if g["shape"] == "brush":
                 g["points"].append(p)
             else:
                 g["points"] = [g["points"][0], p]
         self._commit_gesture()
+
+    def _plane_extent(self, plane: str) -> tuple[int, int]:
+        """``(width, height)`` in voxels of the slice shown on ``plane``."""
+        nz, ny, nx = self._volume.shape if self._volume is not None else (1, 1, 1)
+        return {"xy": (nx, ny), "xz": (nx, nz), "yz": (ny, nz)}[plane]
+
+    def _gesture_point(self, event) -> tuple[float, float] | None:
+        """Voxel coordinates of the pointer for the gesture in progress, even outside its axes.
+
+        A drag that leaves the image is clamped to the slice edge, so a rectangle can be made to
+        hug the border without aiming at the last voxel; an event on another plane's axes is
+        still mapped onto the gesture's plane through its pixel position.
+        """
+        g = self._gesture
+        if g is None:
+            return None
+        ax = self.axes[PLANE_OF_AXIS.index(g["plane"])]
+        if event.inaxes is ax and event.xdata is not None and event.ydata is not None:
+            h, v = _voxel_point(event)
+        else:
+            if event.x is None or event.y is None:
+                return None
+            x, y = ax.transData.inverted().transform((float(event.x), float(event.y)))
+            h, v = round(float(x), POINT_DECIMALS), round(float(y), POINT_DECIMALS)
+        w, hgt = self._plane_extent(g["plane"])
+        return (min(max(h, -0.5), w - 0.5), min(max(v, -0.5), hgt - 0.5))
 
     def _on_key(self, event) -> None:
         if event.key == "escape":

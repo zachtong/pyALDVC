@@ -32,6 +32,9 @@ All notable changes to pyALDVC are documented here. The format follows
   holding a float32 copy of every frame of a sequence.
 
 ### Added
+- Drawing a shape may leave the image: the pointer is clamped to the slice
+  edge, so a rectangle that hugs the border no longer needs the last voxel
+  to be hit exactly.
 - The 2 x 2 arrangement (XY / XZ left, YZ top-right) is the default layout of
   the slice viewer, the strain window and the exported slice images.
 - Region of interest: an icon toolbar (vector icons rendered from inline SVG in

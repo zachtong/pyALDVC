@@ -219,3 +219,18 @@ def test_pipeline_uses_the_drawn_mask(qapp, pair, tmp_path):
     inside = mesh.node_valid & (x < 19)
     assert np.isfinite(fr.U[inside]).all()
     window.close()
+
+
+def test_drag_beyond_the_image_edge_hugs_the_border(qapp, pair):
+    window = _window(qapp, pair)
+    viewer, state = window.viewer, window.state
+    viewer.mask_tools.set_tool("rectangle")
+    nz, ny, nx = pair[0].shape
+    drag(viewer, 0, (10, 12), (nx + 40, ny + 30))  # the pointer leaves the axes: clamped to the far corner
+    mask = state.current_mask()
+    assert mask[:, 12:, 10:].all() and not mask[:, :12, :].any() and not mask[:, :, :10].any()
+    viewer.mask_tools.set_mode("replace")
+    drag(viewer, 1, (nx // 2, nz // 2), (-50, -50))  # ends beyond the origin: clamped to voxel 0
+    mask = state.current_mask()
+    assert mask[: nz // 2 + 1, :, : nx // 2 + 1].all() and not mask[nz // 2 + 1 :, :, :].any()
+    window.close()
