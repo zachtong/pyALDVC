@@ -289,7 +289,7 @@
   "Shear strain exy": "剪应变 exy",
   "Shear strain exz": "剪应变 exz",
   "Shear strain eyz": "剪应变 eyz",
-  "Show mask": "显示 mask",
+  "Show mask": "显示掩膜",
   "Show overlay": "显示叠加",
   "Show the current volume's XY / XZ / YZ slices at the slider positions": "在滑块位置显示当前体数据的 XY / XZ / YZ 切片",
   "Show the reference volume under the field": "在场下方显示参考体数据",

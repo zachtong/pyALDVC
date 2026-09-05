@@ -180,7 +180,7 @@ class CollapsibleSection(QWidget):
 
     def set_title(self, title: str) -> None:
         self._title = title
-        arrow = "▾" if self._expanded else "▸"  # small down / right triangle
+        arrow = "▼" if self._expanded else "▶"  # black down / right triangle: present in the CJK fonts too
         self._header.setText(f"{arrow}  {title.upper()}".replace("&", "&&"))  # a bare & would be a mnemonic
 
     def add_widget(self, widget: QWidget) -> None:

@@ -140,7 +140,7 @@ class MaskToolbar(QWidget):
         for row in (row1, row2, row3, row4):
             layout.addLayout(row)
         for key in ("tool", "mode", "depth", "target"):
-            self._labels[key].setFixedWidth(48)
+            self._labels[key].setFixedWidth(58)
         guard_wheel(self)
 
         self._btn["auto"].clicked.connect(self._on_auto)
