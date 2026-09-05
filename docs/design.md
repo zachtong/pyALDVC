@@ -540,6 +540,9 @@ Differences from pyALDIC, all consequences of the data being 3-D:
 * masks are loaded as volumes or drawn on the slices (see below);
 * translations are JSON dictionaries answered by a `QTranslator` subclass,
   which removes the Qt Linguist tool chain (pyALDIC ships `.qm` catalogs);
+  `gui/names.py` holds the user-facing names of every choice value and result
+  field (`tr_noop`-marked so the tables know them); combos store the solver key
+  as item data and show `names.label`, never a backend identifier;
   seven languages ship (`i18n.SUPPORTED_LANGUAGES`), the system locale maps
   onto the closest one (`LanguageManager.base_language`), and
   `i18n_tools.extract_sources` reads the `tr()` literals out of the code so

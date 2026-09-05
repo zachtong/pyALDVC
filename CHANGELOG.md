@@ -32,6 +32,21 @@ All notable changes to pyALDVC are documented here. The format follows
   holding a float32 copy of every frame of a sequence.
 
 ### Added
+- Readable names everywhere (`gui/names.py`): every choice shows a translated
+  label and keeps the solver's key as item data (Cubic / B-spline / Linear,
+  Pyramid search / Single-level search / Zero displacement / Previous frame,
+  Accumulative / Incremental, Local DVC / AL-DVC, Precomputed / On the fly,
+  Automatic / GPU (CUDA) / CPU, Plane fitting / Finite elements / Finite
+  differences / Solver gradient, Infinitesimal / Green-Lagrange / Euler-Almansi /
+  Hencky); result fields are named in words (Displacement magnitude, Von Mises
+  strain...) and node statuses too. The parameter panel is regrouped: Subset &
+  search, Solver (tracking mode, solver Local DVC / AL-DVC), Units, Performance
+  (compute backend, CPU threads, gradient memory) and Advanced (global step
+  discretisation, sampling stride, coarse lattice, pre-smoothing, ADMM and
+  IC-GN settings), every row with a tooltip; strain settings live in the strain
+  window only. Combo items of every panel, the 3-D view included, follow a
+  language switch. `PYALDVC_LANGUAGE` pins the language; tests keep their
+  settings in a temporary folder.
 - Drawing a shape may leave the image: the pointer is clamped to the slice
   edge, so a rectangle that hugs the border no longer needs the last voxel
   to be hit exactly.

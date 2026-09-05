@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Final
 
@@ -23,6 +24,7 @@ from PySide6.QtCore import QCoreApplication, QLocale, QObject, QSettings, QTrans
 logger = logging.getLogger(__name__)
 
 SETTINGS_KEY: Final[str] = "pyaldvc/language"
+ENV_LANGUAGE: Final[str] = "PYALDVC_LANGUAGE"  # environment override (tests, batch scripts)
 TRANSLATIONS_DIR: Final[Path] = Path(__file__).parent / "translations"
 SUPPORTED_LANGUAGES: Final[dict[str, str]] = {
     "en": "English",
@@ -98,6 +100,9 @@ class LanguageManager(QObject):
     @staticmethod
     def resolve_language() -> str:
         """Persisted choice, else the system locale mapped onto a shipped language, else English."""
+        forced = os.environ.get(ENV_LANGUAGE, "")
+        if forced in SUPPORTED_LANGUAGES:  # tests and scripts pin the language regardless of the saved choice
+            return forced
         saved = QSettings().value(SETTINGS_KEY, "", type=str)
         if saved in SUPPORTED_LANGUAGES:
             return saved
@@ -116,6 +121,11 @@ class LanguageManager(QObject):
         self._code = code
         QSettings().setValue(SETTINGS_KEY, code)
         self.language_changed.emit(code)
+
+
+def tr_noop(source: str) -> str:
+    """Mark a string for the translation tables without translating it (translate later with :func:`tr`)."""
+    return source
 
 
 def tr(source: str) -> str:

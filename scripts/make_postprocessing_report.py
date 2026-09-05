@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from al_dvc import __version__  # noqa: E402
+from al_dvc.gui.names import select_key  # noqa: E402
 from al_dvc.synthetic import affine_displacement, generate_speckle_volume, warp_volume_lagrangian  # noqa: E402
 
 REPORT = ROOT / "reports" / "postprocessing.pdf"
@@ -103,7 +104,7 @@ def main(argv=None) -> int:
     app.processEvents()
     shots = []
     for method in ("plane_fit", "fd", "fem", "direct"):
-        sw.method.setCurrentText(method)
+        select_key(sw.method, method)
         t0 = time.perf_counter()
         sw.compute()
         sw.wait(600_000)
@@ -114,7 +115,7 @@ def main(argv=None) -> int:
         med = float(np.nanmedian(exx)) if np.isfinite(exx).any() else float("nan")
         n_valid = int(np.sum(sr.strain_valid))
         lines.append(f"  {method:10s} {dt:6.2f} s   median exx frame 1 = {med:+.4f} (truth +0.0100), valid {n_valid}")
-    sw.method.setCurrentText("plane_fit")
+    select_key(sw.method, "plane_fit")
     sw.compute()
     sw.wait(600_000)
     app.processEvents()

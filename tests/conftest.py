@@ -62,3 +62,20 @@ def gt_at(mesh, disp):
 
 def interior_mask(mesh):
     return ~np.isin(np.arange(mesh.n_nodes), mesh.boundary_nodes)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolated_qsettings(tmp_path_factory):
+    """Tests never touch the user's settings: QSettings go to a temporary ini folder, the language is English."""
+    import os
+
+    os.environ["PYALDVC_LANGUAGE"] = "en"
+    try:
+        from PySide6.QtCore import QSettings
+    except ImportError:
+        yield
+        return
+    folder = str(tmp_path_factory.mktemp("qsettings"))
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, folder)
+    yield

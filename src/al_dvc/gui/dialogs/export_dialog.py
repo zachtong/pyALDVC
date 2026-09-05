@@ -35,9 +35,10 @@ from PySide6.QtWidgets import (
 
 from al_dvc.core.data_structures import PipelineResult
 from al_dvc.export.export_utils import DISP_FIELDS, STD_FIELDS, STRAIN_FIELDS
-from al_dvc.export.slice_plots import FIELD_LABELS, LAYOUTS
+from al_dvc.export.slice_plots import LAYOUTS
 
 from ..app_state import AppState
+from ..names import field_name
 from ..widgets import combo, guard_wheel, headless, spin
 
 logger = logging.getLogger(__name__)
@@ -330,7 +331,7 @@ class ExportDialog(QDialog):
             if res.result_strain:
                 names += list(STRAIN_FIELDS)
         for name in names:
-            item = QListWidgetItem(FIELD_LABELS.get(name, name))
+            item = QListWidgetItem(field_name(name))
             item.setData(Qt.ItemDataRole.UserRole, name)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             default = name in ("disp_u", "disp_v", "disp_w") if not checked else name in checked

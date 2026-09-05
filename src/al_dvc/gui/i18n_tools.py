@@ -39,7 +39,7 @@ class _TrVisitor(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:  # noqa: N802 - ast API
         func = node.func
         name = func.attr if isinstance(func, ast.Attribute) else (func.id if isinstance(func, ast.Name) else "")
-        if name == "tr" and node.args:
+        if name in ("tr", "tr_noop") and node.args:
             text = _string_of(node.args[0])
             if text:
                 self.sources.setdefault(text, set()).add(self.file)

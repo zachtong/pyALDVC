@@ -1,29 +1,24 @@
 """Parameter editor bound to ``AppState.para`` (a ``DVCPara``).
 
-Five folding sections, pyALDIC style (fixed-width labels and inputs, wheel only when focused):
-subset & search, solver, strain & units, performance, advanced. The analysed box is not a
-parameter: it follows the region of interest drawn on the slices (see ``AppState.effective_voi``).
+Folding sections, pyALDIC style (fixed-width labels and inputs, wheel only when focused):
+subset & search, solver, units, performance, advanced. Strain settings live in the strain
+post-processing window; the analysed box follows the region of interest drawn on the slices
+(``AppState.effective_voi``). Every choice shows a readable, translated name and keeps the
+solver's key as item data (:mod:`al_dvc.gui.names`).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
 
 from al_dvc.io.volume_ops import memory_model
 
 from ..app_state import AppState
-from ..widgets import COMBO_WIDTH, CollapsibleSection, combo, dspin, form_label, guard_wheel, make_form, spin
+from ..names import fill_combo, retranslate_combo, select_key
+from ..widgets import COMBO_WIDTH, CollapsibleSection, dspin, form_label, guard_wheel, make_form, spin
 
-INTERP_METHODS = ["cubic", "bspline", "linear"]
-INIT_METHODS = ["pyramid", "ncc", "zero", "previous"]
-STRAIN_METHODS = ["plane_fit", "fem", "fd", "direct"]
-STRAIN_TYPES = ["infinitesimal", "green_lagrange", "euler_almansi", "hencky"]
-REFERENCE_MODES = ["accumulative", "incremental"]
-SUBPB2_METHODS = ["fem", "fd"]
-GRADIENT_MODES = ["stored", "on_the_fly"]
-BACKENDS = ["auto", "cuda", "numba"]
 VOXEL_FIELD_WIDTH = 72
 
 
@@ -36,6 +31,7 @@ class ParamPanel(QWidget):
         self._updating = False
         self.labels: dict[str, QLabel] = {}
         self.sections: dict[str, CollapsibleSection] = {}
+        self.combos: dict[QComboBox, str] = {}  # combo -> names.CHOICES group
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -44,8 +40,8 @@ class ParamPanel(QWidget):
         self.winsize = spin(5, 257, 2)  # the odd voxel span 2h+1; stored as the even winsize = 2h
         self.winstepsize = spin(1, 128, 1)
         self.search_radius = spin(1, 128, 1)
-        self.init_method = combo(INIT_METHODS)
-        self.interp = combo(INTERP_METHODS)
+        self.init_method = self._choice("init")
+        self.interp = self._choice("interp")
         self._add_section(
             "subset",
             layout,
@@ -59,18 +55,11 @@ class ParamPanel(QWidget):
         )
 
         # ---- solver
-        self.reference_mode = combo(REFERENCE_MODES)
-        self.use_global = QCheckBox()
-        self.subpb2 = combo(SUBPB2_METHODS)
-        self._add_section(
-            "solver",
-            layout,
-            [("reference_mode", self.reference_mode), ("use_global", self.use_global), ("subpb2", self.subpb2)],
-        )
+        self.reference_mode = self._choice("tracking")
+        self.solver = self._choice("solver")
+        self._add_section("solver", layout, [("reference_mode", self.reference_mode), ("solver", self.solver)])
 
-        # ---- strain & units
-        self.strain_method = combo(STRAIN_METHODS)
-        self.strain_type = combo(STRAIN_TYPES)
+        # ---- units
         self.voxel = [dspin(1e-6, 1e6, 4, width=VOXEL_FIELD_WIDTH) for _ in range(3)]
         voxel_widget = QWidget()
         voxel_row = QHBoxLayout(voxel_widget)
@@ -80,41 +69,19 @@ class ParamPanel(QWidget):
             voxel_row.addWidget(w)
         self.units = QLineEdit()
         self.units.setFixedWidth(COMBO_WIDTH)
-        self._add_section(
-            "strain",
-            layout,
-            [
-                ("strain_method", self.strain_method),
-                ("strain_type", self.strain_type),
-                ("voxel", voxel_widget),
-                ("units", self.units),
-            ],
-        )
+        self._add_section("units", layout, [("voxel", voxel_widget), ("units", self.units)])
 
         # ---- performance
-        self.backend = combo(BACKENDS)
-        self.backend.clear()
-        for key in BACKENDS:
-            self.backend.addItem(key, key)
+        self.backend = self._choice("backend")
         self.backend_status = QLabel()
         self.backend_status.setObjectName("hint")
         self.backend_status.setWordWrap(True)
         self.n_threads = spin(0, 512, 1)
-        self.gradient_mode = combo(GRADIENT_MODES)
-        self.subset_stride = spin(1, 8, 1)
-        self.init_coarse = spin(1, 8, 1)
-        self.prefilter = dspin(0.0, 10.0, 2)
+        self.gradient_mode = self._choice("gradient")
         perf = self._add_section(
             "performance",
             layout,
-            [
-                ("backend", self.backend),
-                ("n_threads", self.n_threads),
-                ("gradient_mode", self.gradient_mode),
-                ("subset_stride", self.subset_stride),
-                ("init_coarse", self.init_coarse),
-                ("prefilter", self.prefilter),
-            ],
+            [("backend", self.backend), ("n_threads", self.n_threads), ("gradient_mode", self.gradient_mode)],
         )
         perf.add_widget(self.backend_status)
         self._memory = QLabel()
@@ -123,6 +90,10 @@ class ParamPanel(QWidget):
         perf.add_widget(self._memory)
 
         # ---- advanced (folded)
+        self.subpb2 = self._choice("discretisation")
+        self.subset_stride = spin(1, 8, 1)
+        self.init_coarse = spin(1, 8, 1)
+        self.prefilter = dspin(0.0, 10.0, 2)
         self.mu = dspin(1e-8, 1e3, 6)
         self.beta_auto = QCheckBox()
         self.beta = dspin(1e-8, 1e6, 6)
@@ -147,6 +118,10 @@ class ParamPanel(QWidget):
             "advanced",
             layout,
             [
+                ("subpb2", self.subpb2),
+                ("subset_stride", self.subset_stride),
+                ("init_coarse", self.init_coarse),
+                ("prefilter", self.prefilter),
                 ("mu", self.mu),
                 ("beta", beta_widget),
                 ("admm_max_iter", self.admm_max_iter),
@@ -173,6 +148,14 @@ class ParamPanel(QWidget):
         self.refresh()
 
     # ------------------------------------------------------------------ construction helpers
+    def _choice(self, group: str) -> QComboBox:
+        combo = QComboBox()
+        combo.setMinimumWidth(COMBO_WIDTH)
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        fill_combo(combo, group)
+        self.combos[combo] = group
+        return combo
+
     def _add_section(self, key: str, layout, rows, expanded: bool = True) -> CollapsibleSection:
         section = CollapsibleSection(expanded=expanded)
         form = make_form()
@@ -190,18 +173,16 @@ class ParamPanel(QWidget):
         self.winsize.valueChanged.connect(self._on_winsize)
         self.winstepsize.valueChanged.connect(lambda v: self._set("winstepsize", int(v)))
         self.search_radius.valueChanged.connect(lambda v: self._set("search_radius", int(v)))
-        self.interp.currentTextChanged.connect(lambda v: self._set("interp_method", v))
-        self.init_method.currentTextChanged.connect(lambda v: self._set("init_guess_method", v))
-        self.use_global.toggled.connect(lambda v: self._set("use_global_step", bool(v)))
-        self.subpb2.currentTextChanged.connect(lambda v: self._set("subpb2_method", v))
-        self.reference_mode.currentTextChanged.connect(lambda v: self._set("reference_mode", v))
-        self.strain_method.currentTextChanged.connect(lambda v: self._set("strain_method", v))
-        self.strain_type.currentTextChanged.connect(lambda v: self._set("strain_type", v))
+        self.interp.currentIndexChanged.connect(lambda _i: self._set("interp_method", self.interp.currentData()))
+        self.init_method.currentIndexChanged.connect(lambda _i: self._set("init_guess_method", self.init_method.currentData()))
+        self.reference_mode.currentIndexChanged.connect(lambda _i: self._set("reference_mode", self.reference_mode.currentData()))
+        self.solver.currentIndexChanged.connect(lambda _i: self._set("use_global_step", self.solver.currentData() == "aldvc"))
+        self.subpb2.currentIndexChanged.connect(lambda _i: self._set("subpb2_method", self.subpb2.currentData()))
         for w in self.voxel:
             w.valueChanged.connect(lambda _v: self._set("voxel_size", tuple(x.value() for x in self.voxel)))
         self.units.editingFinished.connect(lambda: self._set("units", self.units.text() or "voxel"))
         self.prefilter.valueChanged.connect(lambda v: self._set("prefilter_sigma", float(v)))
-        self.gradient_mode.currentTextChanged.connect(lambda v: self._set("gradient_mode", v))
+        self.gradient_mode.currentIndexChanged.connect(lambda _i: self._set("gradient_mode", self.gradient_mode.currentData()))
         self.n_threads.valueChanged.connect(lambda v: self._set("n_threads", int(v)))
         self.mu.valueChanged.connect(lambda v: self._set("mu", float(v)))
         self.beta_auto.toggled.connect(self._on_beta_auto)
@@ -213,7 +194,7 @@ class ParamPanel(QWidget):
         self.icgn_patience.valueChanged.connect(lambda v: self._set("icgn_patience", int(v)))
         self.subset_stride.valueChanged.connect(lambda v: self._set("subset_stride", int(v)))
         self.init_coarse.valueChanged.connect(lambda v: self._set("init_coarse_factor", int(v)))
-        self.backend.currentIndexChanged.connect(lambda i: self._set("backend", str(self.backend.itemData(i))))
+        self.backend.currentIndexChanged.connect(lambda _i: self._set("backend", self.backend.currentData()))
         self.local_outlier.valueChanged.connect(lambda v: self._set("local_outlier_threshold", float(v)))
         self.init_outlier.valueChanged.connect(lambda v: self._set("init_outlier_threshold", float(v)))
         self.hessian_cond.valueChanged.connect(lambda v: self._set("hessian_cond_max", float(v)))
@@ -221,7 +202,7 @@ class ParamPanel(QWidget):
         self.checkpoint.toggled.connect(lambda v: setattr(self._state, "write_checkpoints", bool(v)))
 
     def _set(self, name: str, value: Any) -> None:
-        if self._updating:
+        if self._updating or (value is None and name != "beta"):
             return
         try:
             self._state.set_param(name, value)
@@ -249,18 +230,16 @@ class ParamPanel(QWidget):
             self.winsize.setValue(int(p.winsize[0]) + 1)
             self.winstepsize.setValue(int(p.winstepsize[0]))
             self.search_radius.setValue(int(p.search_radius[0]))
-            self.interp.setCurrentText(p.interp_method)
-            self.init_method.setCurrentText(p.init_guess_method)
-            self.use_global.setChecked(bool(p.use_global_step))
-            self.subpb2.setCurrentText(p.subpb2_method)
-            self.reference_mode.setCurrentText(p.reference_mode)
-            self.strain_method.setCurrentText(p.strain_method)
-            self.strain_type.setCurrentText(p.strain_type)
+            select_key(self.interp, p.interp_method)
+            select_key(self.init_method, p.init_guess_method)
+            select_key(self.reference_mode, p.reference_mode)
+            select_key(self.solver, "aldvc" if p.use_global_step else "local")
+            select_key(self.subpb2, p.subpb2_method)
             for w, v in zip(self.voxel, p.voxel_size):
                 w.setValue(float(v))
             self.units.setText(p.units)
             self.prefilter.setValue(float(p.prefilter_sigma))
-            self.gradient_mode.setCurrentText(p.gradient_mode)
+            select_key(self.gradient_mode, p.gradient_mode)
             self.n_threads.setValue(int(p.n_threads))
             self.mu.setValue(float(p.mu))
             self.beta_auto.setChecked(p.beta is None)
@@ -274,8 +253,8 @@ class ParamPanel(QWidget):
             self.icgn_patience.setValue(int(p.icgn_patience))
             self.subset_stride.setValue(int(p.subset_stride))
             self.init_coarse.setValue(int(p.init_coarse_factor))
-            i = self.backend.findData(p.backend)
-            self.backend.setCurrentIndex(i if i >= 0 else 0)
+            if not select_key(self.backend, p.backend):
+                self.backend.setCurrentIndex(0)
             self.local_outlier.setValue(float(p.local_outlier_threshold))
             self.init_outlier.setValue(float(p.init_outlier_threshold))
             self.hessian_cond.setValue(float(p.hessian_cond_max))
@@ -304,7 +283,7 @@ class ParamPanel(QWidget):
         self._memory.setText(text)
 
     def refresh_backend_status(self) -> None:
-        """Describe the compute backend that ``backend=auto`` would pick (CUDA device name or CPU)."""
+        """Describe the compute backend that the automatic choice would pick (CUDA device name or CPU)."""
         from al_dvc.solver.cuda_kernels import cuda_available, device_name, unavailable_reason
 
         if cuda_available():
@@ -320,18 +299,16 @@ class ParamPanel(QWidget):
             "init_method": self.tr("Initial guess"),
             "interp": self.tr("Interpolation"),
             "reference_mode": self.tr("Tracking mode"),
-            "use_global": self.tr("Global step (ADMM)"),
-            "subpb2": self.tr("Global discretisation"),
-            "strain_method": self.tr("Strain method"),
-            "strain_type": self.tr("Strain measure"),
+            "solver": self.tr("Solver"),
             "voxel": self.tr("Voxel size (x, y, z)"),
             "units": self.tr("Length unit"),
             "backend": self.tr("Compute backend"),
             "n_threads": self.tr("CPU threads (0 = all)"),
-            "gradient_mode": self.tr("Gradient storage"),
+            "gradient_mode": self.tr("Gradient memory"),
+            "subpb2": self.tr("Global step discretisation"),
             "subset_stride": self.tr("Subset sampling stride"),
             "init_coarse": self.tr("Coarse initial-guess lattice"),
-            "prefilter": self.tr("Pre-smoothing sigma"),
+            "prefilter": self.tr("Pre-smoothing sigma [voxel]"),
             "mu": self.tr("ADMM penalty mu"),
             "beta": self.tr("Regularisation beta"),
             "admm_max_iter": self.tr("ADMM iterations"),
@@ -350,34 +327,69 @@ class ParamPanel(QWidget):
             "winsize": self.tr("Edge of the cubic subset in voxels (odd: 2h+1 centred on the node)."),
             "winstepsize": self.tr("Distance between neighbouring nodes in voxels."),
             "search_radius": self.tr("Largest displacement the initial guess can find, in voxels."),
-            "subset_stride": self.tr("Sample every k-th voxel of the subset (k^3 times faster, slightly noisier)."),
-            "init_coarse": self.tr("Search the initial guess on every k-th node and interpolate."),
-            "backend": self.tr("auto: GPU when numba-cuda and an NVIDIA device are present, otherwise CPU."),
-            "reference_mode": self.tr(
-                "accumulative: every frame against the first; incremental: each frame against the previous one."
-            ),
-            "use_global": self.tr("Couple the subsets through a global finite-element step (ADMM). Off = local subsets only."),
-            "gradient_mode": self.tr(
-                "stored: precomputed gradient volumes (fast, 21-25 bytes/voxel); on_the_fly: per subset (9 bytes/voxel)."
-            ),
             "init_method": self.tr(
-                "pyramid: coarse-to-fine NCC search; ncc: single-level; zero: no motion; previous: last frame's result."
+                "Pyramid: coarse-to-fine correlation search (robust to large motion). Single-level: one search at "
+                "full resolution. Zero: start from no displacement. Previous frame: reuse the last frame's result."
             ),
             "interp": self.tr(
                 "Sub-voxel interpolation of the deformed volume: cubic (default), B-spline (smoother), linear (fastest)."
             ),
+            "reference_mode": self.tr(
+                "Accumulative: every frame is correlated with the first (total displacement). "
+                "Incremental: with the previous frame, then summed (large deformations)."
+            ),
+            "solver": self.tr(
+                "Local DVC: independent subsets. AL-DVC: the subsets are coupled through a global finite-element "
+                "step (ADMM), which smooths the field and improves accuracy at the cost of a few extra passes."
+            ),
+            "voxel": self.tr("Physical size of one voxel along x, y, z; displacements and strains are reported in these units."),
+            "units": self.tr("Name of the length unit used in exports and labels (e.g. mm, um)."),
+            "backend": self.tr("Automatic: GPU when numba-cuda and an NVIDIA device are present, otherwise CPU."),
             "n_threads": self.tr("CPU threads for the Numba kernels; 0 uses every core."),
+            "gradient_mode": self.tr(
+                "Precomputed: the three gradient volumes are stored once (fast, 21-25 bytes per voxel). "
+                "On the fly: gradients are recomputed for every subset (slower, 9 bytes per voxel), for large scans."
+            ),
+            "subpb2": self.tr(
+                "How the global step of AL-DVC is discretised: finite elements (hexahedral mesh, default) or finite "
+                "differences on the node grid. pyALDIC uses finite elements only."
+            ),
+            "subset_stride": self.tr(
+                "Sample every k-th voxel of the subset (k^3 times faster, slightly noisier). 1 = every voxel."
+            ),
+            "init_coarse": self.tr(
+                "Search the initial guess on every k-th node only and interpolate to the others (faster on dense grids)."
+            ),
+            "prefilter": self.tr("Gaussian smoothing applied to every volume before the analysis (0 = off); reduces noise."),
+            "mu": self.tr("Penalty weight of the ADMM coupling between the local subsets and the global field."),
+            "beta": self.tr("Weight of the global regularisation; automatic picks it with an L-curve, a value fixes it."),
+            "admm_max_iter": self.tr("Maximum number of ADMM passes (local + global) per frame."),
+            "icgn_tol": self.tr("Stop the subset iterations when the gradient norm falls below this value."),
+            "icgn_dp_tol": self.tr("Stop the subset iterations when the parameter update falls below this value (voxels)."),
+            "icgn_max_iter": self.tr("Maximum number of Gauss-Newton iterations per subset."),
+            "icgn_patience": self.tr("Iterations without improvement before a subset is declared stalled."),
+            "local_outlier": self.tr(
+                "Median-test threshold for the subset results; nodes above it are replaced by their neighbours (0 = off)."
+            ),
+            "init_outlier": self.tr("Median-test threshold for the initial guess (0 = off)."),
+            "hessian_cond": self.tr("Subsets whose Hessian is worse conditioned than this are skipped (no texture)."),
+            "min_valid_ratio": self.tr("Minimum fraction of a subset inside the region of interest for the node to be solved."),
         }
         for key, tip in tips.items():
             self.labels[key].setToolTip(tip)
+        for combo, group in self.combos.items():
+            retranslate_combo(combo, group)
         for key, title in {
             "subset": self.tr("Subset & search"),
             "solver": self.tr("Solver"),
-            "strain": self.tr("Strain & units"),
+            "units": self.tr("Units"),
             "performance": self.tr("Performance"),
             "advanced": self.tr("Advanced"),
         }.items():
             self.sections[key].set_title(title)
-        self.beta_auto.setText(self.tr("auto"))
+        self.beta_auto.setText(self.tr("Auto"))
         self.checkpoint.setText(self.tr("Keep checkpoints (resume interrupted runs)"))
+        self.checkpoint.setToolTip(
+            self.tr("Write every finished frame to disk so an interrupted run can continue; usually unnecessary.")
+        )
         self._update_memory()

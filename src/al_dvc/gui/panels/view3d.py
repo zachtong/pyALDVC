@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
 
 from ..app_state import AppState
 from ..icons import tool_button
+from ..names import field_name, retranslate_combo
 from ..view3d_scene import (
     BACKGROUND,
     BACKGROUNDS,
@@ -384,7 +385,7 @@ class View3DPanel(QWidget):
             return
         self._last_info = info
         lo, hi = info.clim
-        parts = [f"{info.field}: {info.n_finite}/{info.n_nodes} nodes, [{lo:.4g}, {hi:.4g}]"]
+        parts = [f"{field_name(info.field)}: {info.n_finite}/{info.n_nodes} nodes, [{lo:.4g}, {hi:.4g}]"]
         if info.n_arrows:
             parts.append(self.tr("{n} arrows").format(n=info.n_arrows))
         if self.backend == "static":
@@ -517,20 +518,9 @@ class View3DPanel(QWidget):
         self.outline.setText(self.tr("Outline"))
         self._btn_refresh.setToolTip(self.tr("Refresh"))
         self._btn_shot.setToolTip(self.tr("Screenshot..."))
-        names = {
-            "slices": self.tr("Slices"),
-            "points": self.tr("Points"),
-            "surface": self.tr("Iso-surface"),
-            "warped": self.tr("Deformed lattice"),
-        }
-        for i, key in enumerate(MODES):
-            self.mode.setItemText(i, names[key])
-        cams = {"iso": self.tr("Isometric"), "xy": "XY", "xz": "XZ", "yz": "YZ"}
-        for i, key in enumerate(CAMERAS):
-            self.camera.setItemText(i, cams[key])
-        bgs = {"dark": self.tr("Dark"), "black": self.tr("Black"), "grey": self.tr("Grey"), "white": self.tr("White")}
-        for i, key in enumerate(BACKGROUNDS):
-            self.background.setItemText(i, bgs[key])
+        retranslate_combo(self.mode, "view3d_mode")
+        retranslate_combo(self.camera, "camera")
+        retranslate_combo(self.background, "background")
         self.mode.setToolTip(
             self.tr(
                 "Orthogonal slices of the field, node points, an iso-surface, "

@@ -14,6 +14,7 @@ pytest.importorskip("PySide6")
 from al_dvc.core.config import dvcpara_default  # noqa: E402
 from al_dvc.core.pipeline import run_aldvc  # noqa: E402
 from al_dvc.export.slice_plots import build_axes, draw_field_planes, export_field_images, field_label  # noqa: E402
+from al_dvc.gui.names import select_key  # noqa: E402
 from al_dvc.synthetic import affine_displacement, generate_speckle_volume, warp_volume_lagrangian  # noqa: E402
 
 
@@ -76,8 +77,7 @@ def test_strain_window_computes_and_publishes(qapp, pair):
     fields = [sw.field.itemData(i) for i in range(sw.field.count())]
     assert "disp_magnitude" in fields and "exx" not in fields
     assert sw.canvas.last_clim is not None  # displacement is drawn before any strain exists
-    sw.method.setCurrentText("plane_fit")
-    sw.measure.setCurrentText("infinitesimal")
+    assert select_key(sw.method, "plane_fit") and select_key(sw.measure, "infinitesimal")
     sw.compute()
     assert sw.wait(120_000)
     qapp.processEvents()

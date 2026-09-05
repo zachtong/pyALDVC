@@ -31,11 +31,12 @@ from PySide6.QtWidgets import (
 
 from al_dvc.core.data_structures import PipelineResult
 from al_dvc.export.export_utils import DISP_FIELDS, STD_FIELDS, STRAIN_FIELDS
-from al_dvc.export.slice_plots import FIELD_LABELS, LAYOUTS
+from al_dvc.export.slice_plots import LAYOUTS
 from al_dvc.strain.compute_strain import compute_strain
 
 from .app_state import AppState
 from .field_canvas import FieldSliceCanvas
+from .names import field_name, fill_combo, label, retranslate_combo, select_key
 from .widgets import CollapsibleSection, combo, dspin, form_label, guard_wheel, headless, make_form, spin
 
 logger = logging.getLogger(__name__)
@@ -144,8 +145,10 @@ class StrainWindow(QMainWindow):
 
         params = CollapsibleSection()
         form = make_form()
-        self.method = combo(list(STRAIN_METHODS))
-        self.measure = combo(list(STRAIN_TYPES))
+        self.method = combo([])
+        fill_combo(self.method, "strain_method")
+        self.measure = combo([])
+        fill_combo(self.measure, "strain_type")
         self.halfwidth = spin(1, 4, 1)
         self.disp_smoothing = dspin(0.0, 10.0, 2)
         self.strain_smoothing = dspin(0.0, 10.0, 2)
@@ -265,8 +268,8 @@ class StrainWindow(QMainWindow):
         p = self._state.para
         self._updating = True
         try:
-            self.method.setCurrentText(p.strain_method)
-            self.measure.setCurrentText(p.strain_type)
+            select_key(self.method, p.strain_method)
+            select_key(self.measure, p.strain_type)
             self.halfwidth.setValue(int(p.strain_plane_fit_halfwidth[0]))
             self.disp_smoothing.setValue(float(p.disp_smoothing))
             self.strain_smoothing.setValue(float(p.strain_smoothing))
@@ -279,8 +282,8 @@ class StrainWindow(QMainWindow):
         hw = int(self.halfwidth.value())
         return replace(
             self._state.para,
-            strain_method=self.method.currentText(),
-            strain_type=self.measure.currentText(),
+            strain_method=str(self.method.currentData()),
+            strain_type=str(self.measure.currentData()),
             strain_plane_fit_halfwidth=(hw, hw, hw),
             disp_smoothing=float(self.disp_smoothing.value()),
             strain_smoothing=float(self.strain_smoothing.value()),
@@ -319,7 +322,9 @@ class StrainWindow(QMainWindow):
         self._status.setText(self.tr("Computing strain..."))
         self._state.log(
             self.tr("Strain: {method}, {measure}, window {w}").format(
-                method=para.strain_method, measure=para.strain_type, w=2 * int(self.halfwidth.value()) + 1
+                method=label("strain_method", para.strain_method),
+                measure=label("strain_type", para.strain_type),
+                w=2 * int(self.halfwidth.value()) + 1,
             )
         )
         self._worker.start()
@@ -410,7 +415,7 @@ class StrainWindow(QMainWindow):
         try:
             self.field.clear()
             for name in fields:
-                self.field.addItem(FIELD_LABELS.get(name, name), name)
+                self.field.addItem(field_name(name), name)
             idx = self.field.findData(current) if current else -1
             self.field.setCurrentIndex(idx if idx >= 0 else 0)
             n = len(res.result_disp) if res is not None else 0
@@ -474,7 +479,7 @@ class StrainWindow(QMainWindow):
             valid = int(np.asarray(sr.strain_valid).sum()) if getattr(sr, "strain_valid", None) is not None else 0
             self._status.setText(
                 self.tr("Strain: {method}, {measure}; {n} valid nodes in frame 1").format(
-                    method=sr.method, measure=sr.strain_type, n=valid
+                    method=label("strain_method", sr.method), measure=label("strain_type", sr.strain_type), n=valid
                 )
             )
 
@@ -508,13 +513,17 @@ class StrainWindow(QMainWindow):
             "vmax": self.tr("Max"),
             "layout": self.tr("Layout"),
         }
-        for key, label in self.labels.items():
-            label.setText(texts[key])
+        for key, widget_label in self.labels.items():
+            widget_label.setText(texts[key])
+        retranslate_combo(self.method, "strain_method")
+        retranslate_combo(self.measure, "strain_type")
+        for i in range(self.field.count()):
+            self.field.setItemText(i, field_name(self.field.itemData(i)))
         self.labels["method"].setToolTip(
             self.tr(
-                "plane_fit: least-squares gradient over a window of nodes (robust, smooth);\n"
-                "fem: shape-function gradient of the hex mesh; fd: central differences;\n"
-                "direct: the gradient the ADMM solver produced (reference frame 0 only)."
+                "Plane fitting: least-squares gradient over a window of nodes (robust, smooth).\n"
+                "Finite elements: shape-function gradient of the hexahedral mesh. Finite differences: central differences.\n"
+                "Solver gradient: the gradient the AL-DVC solver produced (reference frame 0 only)."
             )
         )
         self.edge_trim.setText(self.tr("Trim nodes with an incomplete fitting window"))

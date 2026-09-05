@@ -487,7 +487,15 @@ class MainWindow(QMainWindow):
     def changeEvent(self, event) -> None:  # noqa: N802
         if event.type() == QEvent.Type.LanguageChange:
             self.retranslate_ui()
-            for panel in (self.volume_panel, self.param_panel, self.run_panel, self.viewer, self.results_panel, self.console):
+            for panel in (
+                self.volume_panel,
+                self.param_panel,
+                self.run_panel,
+                self.viewer,
+                self.view3d,
+                self.results_panel,
+                self.console,
+            ):
                 panel.retranslate_ui()
             window = getattr(self, "strain_window", None)
             if window is not None:

@@ -16,6 +16,7 @@ from al_dvc.core.data_structures import STATUS_CONVERGED  # noqa: E402
 from al_dvc.gui.app import MainWindow, create_application  # noqa: E402
 from al_dvc.gui.app_state import RunState  # noqa: E402
 from al_dvc.gui.i18n import SUPPORTED_LANGUAGES, load_table  # noqa: E402
+from al_dvc.gui.names import select_key  # noqa: E402
 from al_dvc.gui.session import SessionError, load_session, save_session  # noqa: E402
 from al_dvc.io.volume_io import save_volume  # noqa: E402
 from al_dvc.synthetic import affine_displacement, generate_speckle_volume, warp_volume_lagrangian  # noqa: E402
@@ -55,7 +56,7 @@ def test_window_builds_and_reacts_to_parameters(qapp, small_pair):
     assert window.state.results is None
     window.param_panel.winsize.setValue(24)
     assert window.state.para.winsize == (24, 24, 24)
-    window.param_panel.interp.setCurrentText("bspline")
+    assert select_key(window.param_panel.interp, "bspline")
     assert window.state.para.interp_method == "bspline"
     # an invalid value is refused by the parameter validation and the state is unchanged
     before = window.state.para

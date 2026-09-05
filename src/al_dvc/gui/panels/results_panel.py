@@ -27,9 +27,9 @@ from PySide6.QtWidgets import (
 
 from al_dvc.core.data_structures import STATUS_NAMES
 from al_dvc.export.export_utils import DISP_FIELDS, STD_FIELDS, STRAIN_FIELDS
-from al_dvc.export.slice_plots import FIELD_LABELS
 
 from ..app_state import AppState
+from ..names import field_name, status_name
 from ..widgets import guard_wheel, headless
 
 COLORMAPS = ["turbo", "viridis", "plasma", "inferno", "magma", "coolwarm", "RdBu_r", "jet", "gray"]
@@ -184,7 +184,7 @@ class ResultsPanel(QWidget):
                 if res.result_strain:
                     fields += list(STRAIN_FIELDS)
                 for name in fields:
-                    self.field.addItem(FIELD_LABELS.get(name, name), name)
+                    self.field.addItem(field_name(name), name)
                 if self._state.display_field in fields:
                     self.field.setCurrentIndex(self.field.findData(self._state.display_field))
                 else:
@@ -202,7 +202,7 @@ class ResultsPanel(QWidget):
         lines = [self.tr("Nodes: {n} on a {g} grid, spacing {s}").format(n=mesh.n_nodes, g=mesh.grid_shape, s=mesh.spacing)]
         for k, fr in enumerate(res.result_disp):
             codes, counts = np.unique(fr.status, return_counts=True) if fr.status is not None else ([], [])
-            status = ", ".join(f"{STATUS_NAMES.get(int(c), c)} {int(n)}" for c, n in zip(codes, counts))
+            status = ", ".join(f"{status_name(STATUS_NAMES.get(int(c), c))} {int(n)}" for c, n in zip(codes, counts))
             z = np.nanmedian(fr.zncc) if fr.zncc is not None and np.isfinite(fr.zncc).any() else float("nan")
             beta = f", beta {fr.admm.beta:.3g}, ADMM {fr.admm.n_steps}" if fr.admm is not None else ""
             std = ""
@@ -290,6 +290,8 @@ class ResultsPanel(QWidget):
 
     def retranslate_ui(self) -> None:
         self._display_group.setTitle(self.tr("Display"))
+        for i in range(self.field.count()):
+            self.field.setItemText(i, field_name(self.field.itemData(i)))
         self._summary_group.setTitle(self.tr("Summary"))
         self._export_group.setTitle(self.tr("Export"))
         self._btn_strain.setText(self.tr("Strain post-processing..."))
