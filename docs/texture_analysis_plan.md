@@ -125,7 +125,9 @@ not a material RVE; the ACF describes the image, not the structure).
    depends on them).
 2. `rve.py` and `recommend.py` with tests; the report script.
 3. The GUI window, the CLI, translations, the GUI report, README and CHANGELOG.
-4. Batch recomputation of the DVC Challenge datasets with the CLI, keeping the old and new
-   numbers side by side.
+4. Not now: the DVC Challenge 2.0 analysis is in revision with its data and scripts already
+   packaged, so those numbers are not recomputed before publication. The CLI makes a later
+   recomputation a batch job, and an erratum can state that the original scripts carried the
+   defects listed in section 1.
 
-Estimated effort: about a day for each of steps 1 to 3, half a day for step 4.
+Estimated effort: about a day for each of steps 1 to 3.
