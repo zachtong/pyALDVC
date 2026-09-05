@@ -6,6 +6,11 @@ All notable changes to pyALDVC are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-05
+
+The application matured: readable parameters in seven languages, a node-lattice
+preview and per-axis subsets, strain and export windows, the 3-D view, branding.
+
 ### Fixed
 - Starting a second GUI run with checkpoints enabled failed with
   `CheckpointMismatch`; the GUI now uses `resume="auto"`.
