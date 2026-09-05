@@ -117,13 +117,15 @@ class MaskToolbar(QWidget):
         row2.addWidget(self._labels["mode"])
         for k in ("replace", "add", "cut"):
             row2.addWidget(self.mode_buttons[k])
-        row2.addSpacing(8)
-        row2.addWidget(self._labels["depth"])
-        row2.addWidget(self.depth)
-        row2.addWidget(self.depth_from)
-        row2.addWidget(self._labels["to"])
-        row2.addWidget(self.depth_to)
         row2.addStretch(1)
+        row_depth = QHBoxLayout()  # its own row: the depth controls are wider than the mode buttons
+        row_depth.setSpacing(2)
+        row_depth.addWidget(self._labels["depth"])
+        row_depth.addWidget(self.depth)
+        row_depth.addWidget(self.depth_from)
+        row_depth.addWidget(self._labels["to"])
+        row_depth.addWidget(self.depth_to)
+        row_depth.addStretch(1)
         row3 = QHBoxLayout()
         row3.setSpacing(2)
         for k in EDIT_BUTTONS:
@@ -137,7 +139,7 @@ class MaskToolbar(QWidget):
         row4.addWidget(self.target)
         row4.addWidget(self.show_mask)
         row4.addWidget(self._status, 1)
-        for row in (row1, row2, row3, row4):
+        for row in (row1, row2, row_depth, row3, row4):
             layout.addLayout(row)
         for key in ("tool", "mode", "depth", "target"):
             self._labels[key].setFixedWidth(58)

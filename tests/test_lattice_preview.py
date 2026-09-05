@@ -9,8 +9,10 @@ from al_dvc.core.data_structures import VOIRange
 from al_dvc.gui.lattice_preview import (
     HOVER_RADIUS,
     describe,
+    layer_grid,
     layer_index,
     layer_nodes,
+    layer_segments,
     nearest_node,
     plan_lattice,
     subset_rect,
@@ -68,6 +70,28 @@ def test_layers_nodes_and_subset_geometry():
     assert f"{plan.n_nodes:,} nodes" in text and "17 x 25 x 9" in text
 
 
+def test_every_layer_of_every_plane_indexes_the_mask_correctly():
+    """Regression: the xz / yz layers were indexed with the other plane's layer count and went out of bounds."""
+    mask = np.zeros(SHAPE, dtype=bool)
+    mask[4:-4, 6:-6, 8 : SHAPE[2] // 2] = True  # the right half of x is outside the region
+    plan = plan_lattice(SHAPE, (12, 12, 12), (6, 6, 6), mask=mask)
+    nz, ny, nx = plan.grid_shape
+    assert len({nz, ny, nx}) == 3  # unequal node counts, so a wrong axis shows
+    for plane, axis in (("xy", plan.z0), ("xz", plan.y0), ("yz", plan.x0)):
+        for index in axis:
+            H, V, valid, dist = layer_grid(plan, plane, int(index))
+            assert H.shape == V.shape == valid.shape and dist == 0.0
+            segments, _d = layer_segments(plan, plane, int(index))
+            assert segments.shape[1:] == (2, 2)
+    # the grid stops at the region's edge: no segment touches a node outside the mask
+    H, V, valid, _d = layer_grid(plan, "xy", int(plan.z0[nz // 2]))
+    segments, _d = layer_segments(plan, "xy", int(plan.z0[nz // 2]))
+    outside = {(float(h), float(v)) for h, v, ok in zip(H.ravel(), V.ravel(), valid.ravel()) if not ok}
+    assert outside and not any(tuple(p) in outside for seg in segments for p in seg)
+    lengths = np.linalg.norm(segments[:, 1] - segments[:, 0], axis=1)
+    assert np.all(lengths == 6.0)
+
+
 # --------------------------------------------------------------------------- the viewer
 pytest.importorskip("PySide6")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -86,8 +110,10 @@ def _rects(ax):
     return [p for p in ax.patches if isinstance(p, Rectangle)]
 
 
-def _dots(ax):
-    return [ln for ln in ax.lines if ln.get_linestyle() == "None" or ln.get_marker() == "."]
+def _grids(ax):
+    from matplotlib.collections import LineCollection
+
+    return [c for c in ax.collections if isinstance(c, LineCollection)]
 
 
 class _Event:
@@ -109,11 +135,17 @@ def test_viewer_previews_the_lattice(qapp):
     window.state.set_params(winsize=16, winstepsize=8, search_radius=4)
     QApplication.processEvents()
     viewer = window.viewer
-    assert viewer.show_lattice.isChecked() and viewer._plan is not None
+    assert viewer.show_lattice.isChecked()
     assert "nodes" in viewer._lattice_label.text() and "17 x 17 x 17" in viewer._lattice_label.text()
+    assert viewer._plan is None and all(not _grids(ax) for ax in viewer.axes)  # no region yet: label only
+    mask = np.zeros(SHAPE, dtype=bool)
+    mask[4:-4, 6:-6, 8:-8] = True
+    window.state.set_mask(0, mask=mask)
+    QApplication.processEvents()
+    assert viewer._plan is not None
     plan = viewer._plan
     for ax in viewer.axes:
-        assert _dots(ax), "every plane shows the nodes of its nearest layer"
+        assert _grids(ax), "every plane shows the grid of its nearest layer"
         assert len(_rects(ax)) >= 1, "the subset of the crosshair node is outlined"
     # hovering a node outlines its subset on that plane only
     ax = viewer.axes[0]

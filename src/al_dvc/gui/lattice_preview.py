@@ -93,24 +93,54 @@ def layer_index(plan: LatticePlan, plane: str, slice_index: int) -> int:
     return int(np.argmin(np.abs(normal - float(slice_index))))
 
 
-def layer_nodes(
+def layer_grid(
     plan: LatticePlan, plane: str, slice_index: int
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.bool_], float]:
-    """Nodes of the layer nearest to the slice: ``(h, v, valid, distance)``.
+    """The layer nearest to the slice as 2-D arrays ``(H, V, valid, distance)``.
 
-    ``h`` / ``v`` are the in-plane node coordinates (flattened), ``valid`` the mask validity of
-    the centres and ``distance`` how far the layer is from the slice along the normal (voxels).
+    ``H`` / ``V`` hold the in-plane node coordinates (rows along the vertical axis), ``valid`` the
+    mask validity of the centres and ``distance`` how far the layer is from the slice along the
+    normal (voxels).
     """
     ih, iv, inorm = PLANE_AXES[plane]
     ax = plan.axes()
     k = layer_index(plan, plane, slice_index)
     H, V = np.meshgrid(ax[ih], ax[iv], indexing="xy")  # V varies along rows
-    if plan.centre_valid is None:
+    cv = plan.centre_valid  # (nz, ny, nx) over the lattice
+    if cv is None:
         valid = np.ones(H.shape, dtype=bool)
+    elif plane == "xy":
+        valid = cv[k]
+    elif plane == "xz":
+        valid = cv[:, k, :]
     else:
-        cv = plan.centre_valid  # (nz, ny, nx)
-        valid = {"xy": cv[k], "xz": cv[:, k, :], "yz": cv[:, :, k]}[plane]
-    return H.ravel(), V.ravel(), np.asarray(valid).ravel(), float(abs(ax[inorm][k] - slice_index))
+        valid = cv[:, :, k]
+    return H, V, np.asarray(valid, dtype=bool), float(abs(ax[inorm][k] - slice_index))
+
+
+def layer_nodes(
+    plan: LatticePlan, plane: str, slice_index: int
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.bool_], float]:
+    """Nodes of the layer nearest to the slice, flattened: ``(h, v, valid, distance)``."""
+    H, V, valid, dist = layer_grid(plan, plane, slice_index)
+    return H.ravel(), V.ravel(), valid.ravel(), dist
+
+
+def layer_segments(plan: LatticePlan, plane: str, slice_index: int) -> tuple[NDArray[np.float64], float]:
+    """Grid lines of the layer: segments between neighbouring nodes whose centres are both valid.
+
+    Returns ``(segments (n, 2, 2), distance)``; drawn as a grid this shows the step inside the region
+    of interest and stops at its edge.
+    """
+    H, V, valid, dist = layer_grid(plan, plane, slice_index)
+    along_h = valid[:, :-1] & valid[:, 1:]
+    along_v = valid[:-1, :] & valid[1:, :]
+    a = np.stack([H[:, :-1][along_h], V[:, :-1][along_h]], axis=-1)
+    b = np.stack([H[:, 1:][along_h], V[:, 1:][along_h]], axis=-1)
+    c = np.stack([H[:-1, :][along_v], V[:-1, :][along_v]], axis=-1)
+    d = np.stack([H[1:, :][along_v], V[1:, :][along_v]], axis=-1)
+    segments = np.concatenate([np.stack([a, b], axis=1), np.stack([c, d], axis=1)], axis=0)
+    return segments.reshape(-1, 2, 2), dist
 
 
 def nearest_node(plan: LatticePlan, plane: str, h: float, v: float, slice_index: int) -> tuple[float, float] | None:
@@ -145,7 +175,7 @@ def describe(plan: LatticePlan) -> str:
     ov = plan.overlap
     same = all(abs(o - ov[0]) < 1e-9 for o in ov)
     overlap = f"{ov[0] * 100:.0f} %" if same else " / ".join(f"{o * 100:.0f} %" for o in ov)
-    text = f"{nx} x {ny} x {nz} = {plan.n_nodes:,} nodes, subset {ws}, overlap {overlap}"
+    nodes = f"{plan.n_nodes:,} nodes"
     if plan.centre_valid is not None and plan.n_valid != plan.n_nodes:
-        text += f", {plan.n_valid:,} in the region of interest"
-    return text
+        nodes += f" ({plan.n_valid:,} in the region)"
+    return f"{nx} x {ny} x {nz} = {nodes}, subset {ws}, overlap {overlap}"

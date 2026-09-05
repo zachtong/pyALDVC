@@ -107,6 +107,9 @@ def _screenshots(ref, dfm):
     window.resize(1440, 900)
     window.show()
     window.state.set_volume_arrays([ref, dfm], ["reference", "deformed"])
+    mask = np.zeros(SHAPE, dtype=bool)  # the preview appears once a region of interest exists
+    mask[8:-8, 10:-10, 12:-12] = True
+    window.state.set_mask(0, mask=mask)
     shots = []
     for winsize, step in (((16, 16, 16), 8), ((24, 24, 8), 12)):
         window.state.set_params(winsize=winsize, winstepsize=step, search_radius=4)
@@ -156,8 +159,9 @@ def main(argv=None) -> int:
             fig.text(
                 0.5,
                 0.03,
-                "Teal dots: the nodes of the lattice layer nearest to each slice (dimmer when the layer is off the "
-                "slice). Yellow box: the subset of the node at the crosshair; dashed: its neighbour, showing the overlap.",
+                "Dark-yellow grid: the lattice layer nearest to each slice, inside the region of interest (dimmer when "
+                "the layer is off the slice). Yellow box: the subset of the node at the crosshair; dashed: its "
+                "neighbour, showing the overlap.",
                 ha="center",
                 fontsize=8,
             )
@@ -234,8 +238,9 @@ def main(argv=None) -> int:
             0.06,
             0.9,
             "Limitations\n\n"
-            "- The preview shows the lattice layer nearest to each slice; between layers the dots are dimmed but still\n"
-            "  drawn, so the user can always see the step. Nodes outside the region of interest are drawn faint.\n"
+            "- The preview shows the lattice layer nearest to each slice; between layers the grid is dimmed but still\n"
+            "  drawn, so the user can always see the step. The grid stops at the edge of the region of interest and\n"
+            "  appears only once a region has been drawn (before that the label above the slices gives the counts).\n"
             "- The preview costs one mask lookup per node; it is hidden while a result is overlaid.\n"
             f"- On the affine field the subset shape does not matter (page 3). On the wave along z (page 4) the RMSE\n"
             f"  rises from {sweep[0][1]['rmse']:.3f} voxel (cubic) to {worst[1]['rmse']:.3f} voxel at aspect ratio {worst[0]}\n"

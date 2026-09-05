@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.collections import LineCollection
 from matplotlib.colors import ListedColormap
 from matplotlib.figure import Figure
 from matplotlib.patches import Ellipse, Rectangle
@@ -14,7 +15,7 @@ from al_dvc.export.export_utils import field_array
 from al_dvc.export.slice_plots import DISPLACEMENT_LIKE, apply_equal_scale, build_axes, restore_cells
 
 from ..app_state import AppState
-from ..lattice_preview import describe, layer_nodes, nearest_node, plan_lattice, subset_rect
+from ..lattice_preview import describe, layer_segments, nearest_node, plan_lattice, subset_rect
 from ..mask_editor import MaskOp
 from ..names import field_name
 from ..theme import COLORS
@@ -25,7 +26,8 @@ NORMAL_OF_PLANE = {"xy": "z", "xz": "y", "yz": "x"}
 MASK_TINT = ListedColormap([[1.0, 0.25, 0.25, 1.0]])
 MASK_EDGE = "#ff5555"
 PREVIEW_COLOR = "#ffd166"
-LATTICE_COLOR = "#2dd4bf"  # planned nodes
+LATTICE_COLOR = "#d4a017"  # the planned lattice: a dark-yellow grid, thick enough to read on grey texture
+LATTICE_WIDTH = 1.6
 HOVER_COLOR = "#f8fafc"  # the subset of the node under the pointer
 LATTICE_ON_PLANE = 0.5  # voxels: a lattice layer this close to the slice is drawn at full strength
 BRUSH_MIN_MOVE = 0.5  # voxels between recorded stroke points
@@ -333,10 +335,11 @@ class SliceViewer(QWidget):
         self.canvas.draw_idle()
 
     def _draw_lattice(self, iz: int, iy: int, ix: int, draw: bool) -> None:
-        """Planned nodes of the lattice layer nearest to every slice, and the subset of the crosshair node.
+        """The lattice layer nearest to every slice as a grid, and the subset of the node at the crosshair.
 
-        The plan is computed whenever the preview is on (the label always tells the node count); the
-        artists are drawn only without a field overlay, which shows the lattice by itself.
+        The plan is computed whenever the preview is on (the label always tells the node count); the grid
+        is drawn once a region of interest exists, and only without a field overlay, which shows the
+        lattice by itself.
         """
         self._lattice_label.setText("")
         if not self.show_lattice.isChecked() or self._volume is None:
@@ -348,9 +351,11 @@ class SliceViewer(QWidget):
             )
         except ValueError as exc:
             self._lattice_label.setText(str(exc))
+            self._lattice_label.setToolTip(str(exc))
             return
         self._lattice_label.setText(describe(plan))
-        if not draw:
+        self._lattice_label.setToolTip(describe(plan))  # the toolbar may not have room for the whole line
+        if not draw or plan.centre_valid is None:  # no region of interest yet: nothing to judge the grid against
             return
         self._plan = plan
         panes = (
@@ -359,17 +364,15 @@ class SliceViewer(QWidget):
             (self.axes[2], "yz", ix, (float(iy), float(iz))),
         )
         for ax, plane, index, crosshair in panes:
-            H, V, valid, dist = layer_nodes(plan, plane, index)
-            alpha = 0.9 if dist <= LATTICE_ON_PLANE else 0.4
-            if valid.any():
-                ax.plot(H[valid], V[valid], ".", color=LATTICE_COLOR, ms=3.0, alpha=alpha, lw=0)
-            if (~valid).any():
-                ax.plot(H[~valid], V[~valid], ".", color=LATTICE_COLOR, ms=2.0, alpha=0.25 * alpha, lw=0)
+            segments, dist = layer_segments(plan, plane, index)
+            alpha = 0.95 if dist <= LATTICE_ON_PLANE else 0.45
+            if len(segments):
+                ax.add_collection(LineCollection(segments, colors=LATTICE_COLOR, linewidths=LATTICE_WIDTH, alpha=alpha))
             node = nearest_node(plan, plane, crosshair[0], crosshair[1], index)
             if node is None:
                 continue
             left, bottom, w, h = subset_rect(plan, plane, node)
-            ax.add_patch(Rectangle((left, bottom), w, h, fill=False, ec=PREVIEW_COLOR, lw=1.2, alpha=alpha))
+            ax.add_patch(Rectangle((left, bottom), w, h, fill=False, ec=PREVIEW_COLOR, lw=1.6, alpha=alpha))
             # the next node along the horizontal axis shows how much neighbouring subsets overlap
             step_h = plan.winstepsize[{"xy": 0, "xz": 0, "yz": 1}[plane]]
             neighbour = nearest_node(plan, plane, node[0] + step_h, node[1], index)
@@ -638,8 +641,9 @@ class SliceViewer(QWidget):
         self.show_lattice.setText(self.tr("Node lattice"))
         self.show_lattice.setToolTip(
             self.tr(
-                "Preview the nodes the run will place (layer nearest to each slice) and the subset of the node at the "
-                "crosshair; move the pointer over a node to see its subset. Hidden while a result is overlaid."
+                "Once a region of interest is drawn, show the node lattice the run will place (layer nearest to each "
+                "slice) and the subset of the node at the crosshair; move the pointer over a node to see its subset. "
+                "Hidden while a result is overlaid."
             )
         )
         self.equal_scale.setToolTip(

@@ -32,10 +32,11 @@ All notable changes to pyALDVC are documented here. The format follows
   holding a float32 copy of every frame of a sequence.
 
 ### Added
-- Node-lattice preview on the slices: with "Node lattice" checked, the slice
-  viewer draws the nodes the run will place (the lattice layer nearest to each
-  slice, dimmed when the layer is off the slice, faint outside the region of
-  interest), outlines the subset of the node at the crosshair with its
+- Node-lattice preview on the slices: once a region of interest is drawn and
+  "Node lattice" is checked, the slice viewer draws the lattice the run will
+  place as a dark-yellow grid (the layer nearest to each slice, dimmed when
+  the layer is off the slice, stopping at the region's edge), outlines the
+  subset of the node at the crosshair with its
   neighbour's subset dashed to show the overlap, and outlines the subset of
   the node under the pointer. A line above the slices gives the grid size, the
   node count, the subset edges and the overlap, or the pipeline's message when
