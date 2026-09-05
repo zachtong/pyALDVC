@@ -121,7 +121,9 @@ class RunPanel(QWidget):
         self._state.set_progress(0.0, self.tr("Starting..."))
         self._state.log(
             self.tr("Run started: {n} frames, subset {ws}, step {st}").format(
-                n=len(volumes), ws=para.winsize[0] + 1, st=para.winstepsize[0]
+                n=len(volumes),
+                ws=" x ".join(str(int(w) + 1) for w in para.winsize),
+                st=" x ".join(str(int(s)) for s in para.winstepsize),
             )
         )
         self._timer.start()

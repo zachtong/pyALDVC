@@ -14,6 +14,7 @@ from al_dvc.export.export_utils import field_array
 from al_dvc.export.slice_plots import DISPLACEMENT_LIKE, apply_equal_scale, build_axes, restore_cells
 
 from ..app_state import AppState
+from ..lattice_preview import describe, layer_nodes, nearest_node, plan_lattice, subset_rect
 from ..mask_editor import MaskOp
 from ..names import field_name
 from ..theme import COLORS
@@ -24,6 +25,9 @@ NORMAL_OF_PLANE = {"xy": "z", "xz": "y", "yz": "x"}
 MASK_TINT = ListedColormap([[1.0, 0.25, 0.25, 1.0]])
 MASK_EDGE = "#ff5555"
 PREVIEW_COLOR = "#ffd166"
+LATTICE_COLOR = "#2dd4bf"  # planned nodes
+HOVER_COLOR = "#f8fafc"  # the subset of the node under the pointer
+LATTICE_ON_PLANE = 0.5  # voxels: a lattice layer this close to the slice is drawn at full strength
 BRUSH_MIN_MOVE = 0.5  # voxels between recorded stroke points
 LEFT, RIGHT = 1, 3
 LAYOUTS = ("row", "column", "grid")  # three slices side by side, stacked, or XY / XZ left and YZ top-right
@@ -64,6 +68,13 @@ class SliceViewer(QWidget):
         self._layout_label = QLabel()
         self.equal_scale = QCheckBox()
         self.equal_scale.setChecked(bool(getattr(state, "slice_equal_scale", False)))
+        self.show_lattice = QCheckBox()
+        self.show_lattice.setChecked(bool(getattr(state, "show_lattice", True)))
+        self._lattice_label = QLabel()
+        self._lattice_label.setObjectName("hint")
+        self._plan = None  # LatticePlan drawn on the slices, None when hidden or not computable
+        self._hover_key: tuple | None = None
+        self._hover_artist = None
         self.sliders: dict[str, QSlider] = {}
         self._slider_labels: dict[str, QLabel] = {}
         self.mask_tools = MaskToolbar(state)
@@ -73,6 +84,8 @@ class SliceViewer(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout_row = QHBoxLayout()
+        layout_row.addWidget(self.show_lattice)
+        layout_row.addWidget(self._lattice_label)
         layout_row.addStretch(1)
         layout_row.addWidget(self.equal_scale)
         layout_row.addSpacing(12)
@@ -102,9 +115,11 @@ class SliceViewer(QWidget):
         self.canvas.mpl_connect("motion_notify_event", self._on_motion)
         self.canvas.mpl_connect("button_release_event", self._on_release)
         self.canvas.mpl_connect("key_press_event", self._on_key)
+        self.canvas.mpl_connect("axes_leave_event", lambda _e: self._set_hover(None, None))
         self.canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.layout_combo.currentIndexChanged.connect(lambda i: self.set_layout(LAYOUTS[i]))
         self.equal_scale.toggled.connect(self._on_equal_scale)
+        self.show_lattice.toggled.connect(self._on_show_lattice)
         self.canvas.mpl_connect("resize_event", lambda _e: self._on_canvas_resized())
 
         self._state.volumes_changed.connect(self._on_volumes_changed)
@@ -112,6 +127,7 @@ class SliceViewer(QWidget):
         self._state.results_changed.connect(self.redraw)
         self._state.display_changed.connect(self.redraw)
         self._state.mask_changed.connect(self.redraw)
+        self._state.params_changed.connect(self.redraw)
         self.retranslate_ui()
         self._on_volumes_changed()
 
@@ -153,6 +169,10 @@ class SliceViewer(QWidget):
 
     def _on_equal_scale(self, on: bool) -> None:
         self._state.slice_equal_scale = bool(on)
+        self.redraw()
+
+    def _on_show_lattice(self, on: bool) -> None:
+        self._state.show_lattice = bool(on)
         self.redraw()
 
     def _on_canvas_resized(self) -> None:
@@ -231,6 +251,9 @@ class SliceViewer(QWidget):
         self.cax.clear()
         self.cax.set_visible(False)
         self._cbar = None
+        self._plan = None
+        self._hover_key = None
+        self._hover_artist = None  # gone with the cleared axes
         if self._volume is None:
             self._empty.setVisible(True)
             self.canvas.draw_idle()
@@ -255,6 +278,7 @@ class SliceViewer(QWidget):
             ax.set_xlabel(xl, color=COLORS.TEXT_SECONDARY, fontsize=7)
             ax.set_ylabel(yl, color=COLORS.TEXT_SECONDARY, fontsize=7)
         self._draw_mask(iz, iy, ix)
+        self._draw_lattice(iz, iy, ix, draw=overlay is None)
         if overlay is not None:
             grid, mesh, label = overlay
             x0, y0, z0 = mesh.x0, mesh.y0, mesh.z0
@@ -307,6 +331,80 @@ class SliceViewer(QWidget):
         else:
             restore_cells(self.axes)
         self.canvas.draw_idle()
+
+    def _draw_lattice(self, iz: int, iy: int, ix: int, draw: bool) -> None:
+        """Planned nodes of the lattice layer nearest to every slice, and the subset of the crosshair node.
+
+        The plan is computed whenever the preview is on (the label always tells the node count); the
+        artists are drawn only without a field overlay, which shows the lattice by itself.
+        """
+        self._lattice_label.setText("")
+        if not self.show_lattice.isChecked() or self._volume is None:
+            return
+        para = self._state.para
+        try:
+            plan = plan_lattice(
+                self._volume.shape, para.winsize, para.winstepsize, self._state.effective_voi(), self._state.current_mask()
+            )
+        except ValueError as exc:
+            self._lattice_label.setText(str(exc))
+            return
+        self._lattice_label.setText(describe(plan))
+        if not draw:
+            return
+        self._plan = plan
+        panes = (
+            (self.axes[0], "xy", iz, (float(ix), float(iy))),
+            (self.axes[1], "xz", iy, (float(ix), float(iz))),
+            (self.axes[2], "yz", ix, (float(iy), float(iz))),
+        )
+        for ax, plane, index, crosshair in panes:
+            H, V, valid, dist = layer_nodes(plan, plane, index)
+            alpha = 0.9 if dist <= LATTICE_ON_PLANE else 0.4
+            if valid.any():
+                ax.plot(H[valid], V[valid], ".", color=LATTICE_COLOR, ms=3.0, alpha=alpha, lw=0)
+            if (~valid).any():
+                ax.plot(H[~valid], V[~valid], ".", color=LATTICE_COLOR, ms=2.0, alpha=0.25 * alpha, lw=0)
+            node = nearest_node(plan, plane, crosshair[0], crosshair[1], index)
+            if node is None:
+                continue
+            left, bottom, w, h = subset_rect(plan, plane, node)
+            ax.add_patch(Rectangle((left, bottom), w, h, fill=False, ec=PREVIEW_COLOR, lw=1.2, alpha=alpha))
+            # the next node along the horizontal axis shows how much neighbouring subsets overlap
+            step_h = plan.winstepsize[{"xy": 0, "xz": 0, "yz": 1}[plane]]
+            neighbour = nearest_node(plan, plane, node[0] + step_h, node[1], index)
+            if neighbour is not None and neighbour != node:
+                left, bottom, w, h = subset_rect(plan, plane, neighbour)
+                ax.add_patch(Rectangle((left, bottom), w, h, fill=False, ec=PREVIEW_COLOR, lw=0.8, ls="--", alpha=0.5 * alpha))
+
+    def _set_hover(self, plane: str | None, node: tuple[float, float] | None) -> None:
+        """Outline the subset of the node under the pointer (one artist, replaced as the pointer moves)."""
+        key = (plane, node) if node is not None else None
+        if key == self._hover_key:
+            return
+        self._hover_key = key
+        if self._hover_artist is not None:
+            try:
+                self._hover_artist.remove()
+            except Exception:
+                pass
+            self._hover_artist = None
+        if key is not None and self._plan is not None:
+            ax = self.axes[PLANE_OF_AXIS.index(plane)]
+            left, bottom, w, h = subset_rect(self._plan, plane, node)
+            self._hover_artist = ax.add_patch(Rectangle((left, bottom), w, h, fill=False, ec=HOVER_COLOR, lw=1.0))
+        self.canvas.draw_idle()
+
+    def _hover_lattice(self, event) -> None:
+        if self._plan is None:
+            return
+        plane = self._plane_at(event)
+        if plane is None:
+            self._set_hover(None, None)
+            return
+        iz, iy, ix = self.slice_indices()
+        index = {"xy": iz, "xz": iy, "yz": ix}[plane]
+        self._set_hover(plane, nearest_node(self._plan, plane, float(event.xdata), float(event.ydata), index))
 
     def _draw_mask(self, iz: int, iy: int, ix: int) -> None:
         """Tint the excluded (False) region of the mask on the three slices."""
@@ -384,7 +482,10 @@ class SliceViewer(QWidget):
 
     def _on_motion(self, event) -> None:
         g = self._gesture
-        if g is None or g["shape"] == "polygon":
+        if g is None:
+            self._hover_lattice(event)
+            return
+        if g["shape"] == "polygon":
             return
         p = self._gesture_point(event)
         if p is None:
@@ -534,6 +635,13 @@ class SliceViewer(QWidget):
         self._empty.setText(self.tr("No volume loaded. Use 'Add volumes...' to start."))
         self._layout_label.setText(self.tr("Layout"))
         self.equal_scale.setText(self.tr("Same scale"))
+        self.show_lattice.setText(self.tr("Node lattice"))
+        self.show_lattice.setToolTip(
+            self.tr(
+                "Preview the nodes the run will place (layer nearest to each slice) and the subset of the node at the "
+                "crosshair; move the pointer over a node to see its subset. Hidden while a result is overlaid."
+            )
+        )
         self.equal_scale.setToolTip(
             self.tr("Draw the three planes with the same voxels-per-pixel scale (smaller slices get padding)")
         )

@@ -63,6 +63,7 @@ def build_session(state: AppState, results_path: str | None = None) -> SessionDa
             "colormap": state.colormap,
             "slice_layout": state.slice_layout,
             "slice_equal_scale": bool(state.slice_equal_scale),
+            "show_lattice": bool(state.show_lattice),
             "color_auto": state.color_auto,
             "color_min": state.color_min,
             "color_max": state.color_max,
@@ -176,6 +177,7 @@ def apply_session(data: SessionData, state: AppState, path: str | Path | None = 
     state.colormap = d.get("colormap", state.colormap)
     state.slice_layout = d.get("slice_layout", state.slice_layout)
     state.slice_equal_scale = bool(d.get("slice_equal_scale", state.slice_equal_scale))
+    state.show_lattice = bool(d.get("show_lattice", state.show_lattice))
     state.color_auto = bool(d.get("color_auto", True))
     state.color_min = float(d.get("color_min", 0.0))
     state.color_max = float(d.get("color_max", 1.0))

@@ -104,6 +104,7 @@ class AppState(QObject):
         self.slice_index: dict[str, int | None] = {"z": None, "y": None, "x": None}
         self.slice_layout: str = "grid"  # arrangement of the three slices: "grid" (XY / XZ left, YZ top-right), "row", "column"
         self.slice_equal_scale: bool = False  # same voxels-per-pixel scale on the three planes
+        self.show_lattice: bool = True  # preview the planned node lattice and one subset on the slices
         # mask drawing
         self.mask_editor: MaskEditor | None = None
         self.mask_target: str = "current"  # "current" | "all"

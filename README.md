@@ -55,6 +55,9 @@ Three columns like pyALDIC: volumes, region of interest and parameters on the
 left, the slice viewer and the 3-D view in the middle, run controls, results,
 exports and the console on the right. Load volumes, draw or auto-segment the
 region of interest, set parameters, run, inspect, export: no code needed.
+Before a run the slices preview the node lattice and one subset for the
+current subset size and step (hover a node to see its subset); the subset
+can be cubic or set per axis.
 
 <p align="center">
   <img src="assets/pyALDVC_demo.gif" alt="pyALDVC workflow: load volumes, draw a region of interest, run, strain post-processing, 3-D slices with arrows, deformed lattice" width="90%"/>

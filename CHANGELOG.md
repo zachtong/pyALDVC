@@ -32,6 +32,22 @@ All notable changes to pyALDVC are documented here. The format follows
   holding a float32 copy of every frame of a sequence.
 
 ### Added
+- Node-lattice preview on the slices: with "Node lattice" checked, the slice
+  viewer draws the nodes the run will place (the lattice layer nearest to each
+  slice, dimmed when the layer is off the slice, faint outside the region of
+  interest), outlines the subset of the node at the crosshair with its
+  neighbour's subset dashed to show the overlap, and outlines the subset of
+  the node under the pointer. A line above the slices gives the grid size, the
+  node count, the subset edges and the overlap, or the pipeline's message when
+  the subset does not fit. The preview updates with every parameter, region or
+  slice change and is hidden while a result is overlaid
+  (`gui/lattice_preview.py`, `reports/subset.pdf`).
+- Non-cubic subsets in the application: the subset size is three boxes
+  (x, y, z) with a "Cube" lock, on by default, so one value still sets a cubic
+  subset; unlocked, each axis is set on its own (flat or elongated subsets,
+  e.g. for anisotropic voxels). The solver kernels already took per-axis
+  half-widths; tests now cover them (Numba against the NumPy reference, the
+  pipeline on the affine field with 13 x 17 x 25 and 25 x 17 x 13 subsets).
 - Branding: application icon (`assets/icon`, SVG / PNG / ICO, shown in the window
   title bar and used by the Windows bundle), a README hero banner, screenshots
   and a workflow GIF, all rendered offscreen from synthetic data by
