@@ -84,7 +84,11 @@ def _noise_floor(radial: Profile, one_over_e: float | None) -> float:
 
 
 def _secondary_peak(profile: Profile) -> tuple[float, float] | None:
-    """The highest local maximum of a profile after its first minimum, if it is a real peak."""
+    """The first local maximum of a profile after its first minimum, if it is a real peak.
+
+    The first maximum is the period; the global maximum of the tail could be the last sample
+    of a still-rising curve, which is no peak at all.
+    """
     y = profile.mean
     finite = np.isfinite(y)
     if finite.sum() < 5:
@@ -98,11 +102,12 @@ def _secondary_peak(profile: Profile) -> tuple[float, float] | None:
             break
     if i_min is None:
         return None
-    seg = y[i_min:]
-    j = int(np.argmax(seg)) + i_min
-    if j == y.size - 1 or y[j] < PERIODICITY_MIN_HEIGHT or y[j] <= y[i_min] + 0.02:
-        return None
-    return float(d[j]), float(y[j])
+    for j in range(i_min + 1, y.size - 1):
+        if y[j] >= y[j - 1] and y[j] > y[j + 1]:
+            if y[j] >= PERIODICITY_MIN_HEIGHT and y[j] > y[i_min] + 0.02:
+                return float(d[j]), float(y[j])
+            return None  # the first bump after the minimum is too small to be a period
+    return None
 
 
 def _periodicity(profiles: dict[str, Profile]) -> tuple[str, float, float] | None:

@@ -10,6 +10,8 @@ from .analysis import TextureResult, analyse_texture, analysis_window
 from .boolean_model import analytic_length, boolean_correlation, boolean_spheres
 from .crossing import THRESHOLD_LABELS, THRESHOLDS, Crossing, correlation_length, lengths
 from .profiles import Profile, directional_profiles, radial_profile
+from .recommend import Recommendation, recommend_parameters
+from .rve import PlateauDecision, SizeLevel, SizeSweep, SubVolume, decide_plateau, sample_positions, size_schedule, sweep_sizes
 
 __all__ = [
     "ESTIMATORS",
@@ -17,7 +19,12 @@ __all__ = [
     "THRESHOLD_LABELS",
     "Autocorrelation",
     "Crossing",
+    "PlateauDecision",
     "Profile",
+    "Recommendation",
+    "SizeLevel",
+    "SizeSweep",
+    "SubVolume",
     "TextureResult",
     "analyse_texture",
     "analysis_window",
@@ -26,7 +33,12 @@ __all__ = [
     "boolean_correlation",
     "boolean_spheres",
     "correlation_length",
+    "decide_plateau",
     "directional_profiles",
     "lengths",
     "radial_profile",
+    "recommend_parameters",
+    "sample_positions",
+    "size_schedule",
+    "sweep_sizes",
 ]
