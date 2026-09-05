@@ -145,6 +145,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
         self.state.log_message.connect(self.console.append_log)
         self.results_panel.strain_requested.connect(self._on_strain)
+        self.results_panel.texture_requested.connect(self._on_texture)
         self.results_panel.export_requested.connect(self._on_export_requested)
 
         self._actions: dict[str, QAction] = {}

@@ -67,6 +67,16 @@ CHOICES: dict[str, dict[str, str]] = {
         "overlap": tr_noop("Overlap-corrected"),
         "window": tr_noop("Finite window"),
     },
+    "animation": {
+        "orbit": tr_noop("Orbit"),
+        "frames": tr_noop("Frames"),
+        "slice": tr_noop("Slice sweep"),
+        "warp": tr_noop("Deformed lattice"),
+    },
+    "direction": {
+        "ccw": tr_noop("Counter-clockwise"),
+        "cw": tr_noop("Clockwise"),
+    },
     "camera": {
         "iso": tr_noop("Isometric"),
         "xy": "XY",

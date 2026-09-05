@@ -14,7 +14,9 @@ The scene itself is built by :mod:`al_dvc.gui.view3d_scene`, so the two
 backends cannot drift apart. The controls shown depend on the mode: slice
 positions for ``slices`` (shared with the Slices tab), the iso level for
 ``surface``, the warp scale for ``warped``; arrows, outline, volume slices,
-background and camera are always available.
+background and camera are always available. The camera row turns and zooms the preset view; the
+animation row plays an orbit, the result frames, a slice sweep or the growing deformed lattice
+live, and records the same sequence off-screen as GIF, MP4 or PNG frames.
 """
 
 from __future__ import annotations
@@ -23,16 +25,21 @@ import logging
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QElapsedTimer, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
+    QPushButton,
     QSlider,
     QSpinBox,
     QStackedWidget,
@@ -42,26 +49,131 @@ from PySide6.QtWidgets import (
 
 from ..app_state import AppState
 from ..icons import tool_button
-from ..names import field_name, retranslate_combo
+from ..names import field_name, fill_combo, retranslate_combo
+from ..view3d_animation import (
+    DEFAULT_SPEEDS,
+    FORMATS,
+    SIZES,
+    SPEED_RANGES,
+    AnimationSpec,
+    frame_at,
+    mp4_available,
+    record_animation,
+)
 from ..view3d_scene import (
     BACKGROUND,
     BACKGROUNDS,
     CAMERAS,
     MODES,
+    CameraSpec,
     SceneInfo,
     SceneOptions,
+    apply_camera,
     available,
     build_scene,
     import_error,
     render_image,
 )
-from ..widgets import guard_wheel
+from ..widgets import guard_wheel, headless
 
 logger = logging.getLogger(__name__)
 
 STATIC_SIZE = (900, 640)
 INSTALL_HINT = "pip install pyvista pyvistaqt"
 SLICE_AXES = ("z", "y", "x")
+PLAY_INTERVAL_MS = {"interactive": 33, "static": 150}  # the static backend re-renders every tick
+RECORD_SIZE = (1280, 960)  # frames rendered off-screen while the live view keeps its own size
+
+
+class _RecordWorker(QThread):
+    """Render and write an animation off the UI thread."""
+
+    progress = Signal(float, str)
+    finished_record = Signal(object)  # Path | None
+    failed = Signal(str)
+
+    def __init__(self, result, volume, spec, camera, options, path, window_size, parent=None) -> None:
+        super().__init__(parent)
+        self._args = (result, volume, spec, camera, options, path, window_size)
+        self._stop = False
+
+    def cancel(self) -> None:
+        self._stop = True
+
+    def run(self) -> None:  # noqa: D401 - QThread entry point
+        try:
+            out = record_animation(*self._args, progress=self.progress.emit, stop=lambda: self._stop)
+        except Exception as exc:
+            logger.exception("Recording failed")
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+            return
+        self.finished_record.emit(out)
+
+
+class RecordDialog(QDialog):
+    """Format, length, rate and size of the recording; the animation itself comes from the panel."""
+
+    def __init__(self, spec: AnimationSpec, parent=None) -> None:
+        super().__init__(parent)
+        self.setModal(True)
+        form = QFormLayout(self)
+        self.format = QComboBox()
+        for key in FORMATS:
+            self.format.addItem(key.upper(), key)
+        if not mp4_available():
+            self.format.model().item(FORMATS.index("mp4")).setEnabled(False)
+        self.fps = QSpinBox()
+        self.fps.setRange(1, 60)
+        self.fps.setValue(spec.fps)
+        self.duration = QDoubleSpinBox()
+        self.duration.setRange(0.5, 600.0)
+        self.duration.setDecimals(1)
+        self.duration.setValue(spec.duration)
+        self.size = QComboBox()
+        for key in SIZES:
+            self.size.addItem(key, key)
+        self.loop = QCheckBox()
+        self.loop.setChecked(spec.loop)
+        self._labels = {k: QLabel() for k in ("format", "fps", "duration", "size")}
+        form.addRow(self._labels["format"], self.format)
+        form.addRow(self._labels["fps"], self.fps)
+        form.addRow(self._labels["duration"], self.duration)
+        form.addRow(self._labels["size"], self.size)
+        form.addRow(self.loop)
+        self._hint = QLabel()
+        self._hint.setObjectName("hint")
+        self._hint.setWordWrap(True)
+        form.addRow(self._hint)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+        self.retranslate_ui()
+
+    def values(self) -> dict:
+        return {
+            "format": str(self.format.currentData() or "gif"),
+            "fps": int(self.fps.value()),
+            "duration": float(self.duration.value()),
+            "size": str(self.size.currentData() or "view"),
+            "loop": bool(self.loop.isChecked()),
+        }
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(self.tr("Record animation"))
+        self._labels["format"].setText(self.tr("Format"))
+        self._labels["fps"].setText(self.tr("Frames per second"))
+        self._labels["duration"].setText(self.tr("Duration [s]"))
+        self._labels["size"].setText(self.tr("Size"))
+        for i, text in enumerate((self.tr("Current view"), "1280 x 960", "1920 x 1440")):
+            self.size.setItemText(i, text)
+        self.loop.setText(self.tr("Loop the GIF"))
+        self._hint.setText(
+            self.tr(
+                "GIF plays everywhere; MP4 needs imageio-ffmpeg (pip install imageio imageio-ffmpeg); "
+                "PNG writes one file per frame."
+            )
+        )
 
 
 class View3DPanel(QWidget):
@@ -116,8 +228,50 @@ class View3DPanel(QWidget):
         self.camera = QComboBox()
         for key in CAMERAS:
             self.camera.addItem(key, key)
+        self.camera.setMinimumWidth(100)  # room for 'Isometric' next to the camera row
         self._btn_refresh = tool_button("refresh")
         self._btn_shot = tool_button("camera")
+        # camera row: turn and zoom the preset view
+        self.azimuth = QSpinBox()
+        self.azimuth.setRange(-180, 180)
+        self.azimuth.setSingleStep(5)
+        self.azimuth.setWrapping(True)
+        self.azimuth.setFixedWidth(64)
+        self.elevation = QSpinBox()
+        self.elevation.setRange(-89, 89)
+        self.elevation.setSingleStep(5)
+        self.elevation.setFixedWidth(64)
+        self.zoom = QDoubleSpinBox()
+        self.zoom.setRange(0.2, 5.0)
+        self.zoom.setSingleStep(0.1)
+        self.zoom.setValue(1.0)
+        self.zoom.setFixedWidth(64)
+        self._btn_reset_camera = QPushButton()
+        # animation row: kind, axis, direction, speed, play / pause / stop, record
+        self.anim_kind = QComboBox()
+        fill_combo(self.anim_kind, "animation")
+        self.anim_axis = QComboBox()
+        for axis in ("z", "y", "x"):
+            self.anim_axis.addItem(axis, axis)
+        self.anim_direction = QComboBox()
+        fill_combo(self.anim_direction, "direction")
+        self.anim_speed = QDoubleSpinBox()
+        self.anim_speed.setDecimals(1)
+        self.anim_speed.setFixedWidth(72)
+        self._btn_play = tool_button("play")
+        self._btn_stop = tool_button("stop")
+        self._btn_record = tool_button("record")
+        self._record_progress = QProgressBar()
+        self._record_progress.setRange(0, 1000)
+        self._record_progress.setTextVisible(False)
+        self._record_progress.setFixedWidth(120)
+        self._record_progress.setVisible(False)
+        self._play_timer = QTimer(self)
+        self._play_clock = QElapsedTimer()
+        self._play_offset = 0.0  # seconds already played before the current pause
+        self._play_base: tuple | None = None  # (CameraSpec, SceneOptions) the animation started from
+        self._recorder: _RecordWorker | None = None
+        self._playing = False
         self._labels: dict[str, QLabel] = {
             k: QLabel()
             for k in (
@@ -131,6 +285,11 @@ class View3DPanel(QWidget):
                 "arrow_scale",
                 "background",
                 "camera",
+                "azimuth",
+                "elevation",
+                "zoom",
+                "anim_kind",
+                "anim_speed",
             )
         }
 
@@ -153,7 +312,30 @@ class View3DPanel(QWidget):
         bottom.addSpacing(8)
         bottom.addWidget(self._labels["camera"])
         bottom.addWidget(self.camera)
+        bottom.addSpacing(8)
+        bottom.addWidget(self._labels["azimuth"])
+        bottom.addWidget(self.azimuth)
+        bottom.addWidget(self._labels["elevation"])
+        bottom.addWidget(self.elevation)
+        bottom.addWidget(self._labels["zoom"])
+        bottom.addWidget(self.zoom)
+        bottom.addWidget(self._btn_reset_camera)
         bottom.addStretch(1)
+        anim = QHBoxLayout()
+        anim.addWidget(self._labels["anim_kind"])
+        anim.addWidget(self.anim_kind)
+        anim.addWidget(self.anim_axis)
+        anim.addWidget(self.anim_direction)
+        anim.addWidget(self._labels["anim_speed"])
+        anim.addWidget(self.anim_speed)
+        anim.addSpacing(6)
+        anim.addWidget(self._btn_play)
+        anim.addWidget(self._btn_stop)
+        anim.addWidget(self._btn_record)
+        anim.addWidget(self._record_progress)
+        anim.addStretch(1)
+        self._anim_row = QWidget()
+        self._anim_row.setLayout(anim)
         actions = QHBoxLayout()
         actions.addWidget(self.volume_slices)
         actions.addWidget(self.outline)
@@ -191,6 +373,7 @@ class View3DPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(top)
         layout.addLayout(bottom)
+        layout.addWidget(self._anim_row)
         layout.addLayout(actions)
         layout.addWidget(self._arrow_row)
         layout.addWidget(self._stack, stretch=1)
@@ -225,6 +408,15 @@ class View3DPanel(QWidget):
             s.valueChanged.connect(lambda v, a=axis: self._on_slice_spin(a, v))
         self.background.currentIndexChanged.connect(lambda _i: self._on_background())
         self.camera.currentIndexChanged.connect(lambda i: self._on_camera(CAMERAS[i]))
+        for w in (self.azimuth, self.elevation, self.zoom):
+            w.valueChanged.connect(lambda _v: self._on_camera_tweak())
+        self._btn_reset_camera.clicked.connect(self.reset_camera)
+        self.anim_kind.currentIndexChanged.connect(lambda _i: self._on_anim_kind())
+        self._btn_play.clicked.connect(self.toggle_play)
+        self._btn_stop.clicked.connect(self.stop_animation)
+        self._btn_record.clicked.connect(self._on_record)
+        self._play_timer.timeout.connect(self._on_play_tick)
+        self._on_anim_kind()
         self._btn_refresh.clicked.connect(self.refresh)
         self._btn_shot.clicked.connect(self._on_screenshot)
         self._state.results_changed.connect(self._on_results_changed)
@@ -284,6 +476,16 @@ class View3DPanel(QWidget):
             slice_index=dict(st.slice_index),
             background=BACKGROUNDS.get(self.background_key(), BACKGROUND),
             title=field_name(st.display_field),
+        )
+
+    def camera_spec(self) -> CameraSpec:
+        """The preset turned and zoomed as the camera row says."""
+        return CameraSpec(
+            preset=self._camera,
+            azimuth=float(self.azimuth.value()),
+            elevation=float(self.elevation.value()),
+            zoom=float(self.zoom.value()),
+            view_up=str(self.anim_axis.currentData() or "z") if self.anim_kind_key() == "orbit" else "z",
         )
 
     def _volume_for_scene(self):
@@ -355,6 +557,24 @@ class View3DPanel(QWidget):
         self._camera_reset_pending = True
         self.invalidate()
 
+    def _on_camera_tweak(self) -> None:
+        if self._updating:
+            return
+        self._camera_reset_pending = True
+        self.invalidate()
+
+    def reset_camera(self) -> None:
+        """Back to the untouched preset."""
+        self._updating = True
+        try:
+            self.azimuth.setValue(0)
+            self.elevation.setValue(0)
+            self.zoom.setValue(1.0)
+        finally:
+            self._updating = False
+        self._camera_reset_pending = True
+        self.invalidate()
+
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
         if self._dirty:
@@ -379,7 +599,7 @@ class View3DPanel(QWidget):
                 self._interactor.render()
                 self._stack.setCurrentWidget(self._interactor)
             else:
-                img, info = render_image(res, opts, volume, window_size=STATIC_SIZE, camera=self._camera)
+                img, info = render_image(res, opts, volume, window_size=STATIC_SIZE, camera=self.camera_spec())
                 self._last_image = img
                 self._show_image(img)
                 self._stack.setCurrentWidget(self._image)
@@ -399,12 +619,8 @@ class View3DPanel(QWidget):
             parts.append(self.tr("static rendering; use the camera presets to rotate"))
         self._status.setText("   ".join(parts))
 
-    def _apply_interactor_camera(self) -> None:
-        if self._camera == "iso":
-            self._interactor.view_isometric()
-        else:
-            getattr(self._interactor, f"view_{self._camera}")()
-        self._interactor.reset_camera()
+    def _apply_interactor_camera(self, spec: CameraSpec | None = None) -> None:
+        apply_camera(self._interactor, spec or self.camera_spec())
         self._camera_reset_pending = False
 
     def _show_image(self, img: np.ndarray) -> None:
@@ -437,7 +653,7 @@ class View3DPanel(QWidget):
                 self._interactor.screenshot(str(out))
             else:
                 render_image(
-                    res, self.options(), self._volume_for_scene(), window_size=(1600, 1200), camera=self._camera, path=out
+                    res, self.options(), self._volume_for_scene(), window_size=(1600, 1200), camera=self.camera_spec(), path=out
                 )
         except Exception as exc:
             self._state.log(f"screenshot failed: {exc}", "error")
@@ -453,6 +669,166 @@ class View3DPanel(QWidget):
         if path:
             self.screenshot(path)
 
+    # ------------------------------------------------------------------ animation
+    def anim_kind_key(self) -> str:
+        return str(self.anim_kind.currentData() or "orbit")
+
+    def animation_spec(self, **overrides) -> AnimationSpec:
+        """The animation the controls describe (``overrides`` for the recording dialog)."""
+        kind = self.anim_kind_key()
+        values = dict(
+            kind=kind,
+            axis=str(self.anim_axis.currentData() or "z"),
+            direction=1 if (self.anim_direction.currentData() or "ccw") == "ccw" else -1,
+            speed=float(self.anim_speed.value()),
+        )
+        if kind == "orbit" and "duration" not in overrides:
+            values["duration"] = 360.0 / float(self.anim_speed.value())  # one full turn
+        values.update(overrides)
+        return AnimationSpec(**values)
+
+    def _on_anim_kind(self) -> None:
+        kind = self.anim_kind_key()
+        lo, hi = SPEED_RANGES[kind]
+        self._updating = True
+        try:
+            self.anim_speed.setRange(lo, hi)
+            self.anim_speed.setValue(DEFAULT_SPEEDS[kind])
+        finally:
+            self._updating = False
+        self.anim_axis.setVisible(kind in ("orbit", "slice"))
+        self.anim_direction.setVisible(kind in ("orbit", "frames", "slice"))
+        self.anim_speed.setSuffix({"orbit": " \u00b0/s", "frames": " f/s", "slice": " vx/s", "warp": " /s"}[kind])
+        if self._playing:
+            self.stop_animation()
+
+    def _play_frame(self, t: float):
+        base_cam, base_opts = self._play_base
+        res = self._state.results
+        return frame_at(self.animation_spec(), t, base_cam, base_opts, len(res.result_disp), tuple(res.volume_shape))
+
+    def toggle_play(self) -> None:
+        """Play or pause the animation described by the controls."""
+        if self._playing:
+            self._play_offset += self._play_clock.elapsed() / 1000.0
+            self._play_timer.stop()
+            self._playing = False
+        else:
+            if self._state.results is None or self.backend == "unavailable":
+                return
+            if self._play_base is None:
+                self._play_base = (self.camera_spec(), self.options())
+            self._play_clock.start()
+            self._play_timer.start(PLAY_INTERVAL_MS.get(self.backend, 100))
+            self._playing = True
+        self._btn_play.setToolTip(self.tr("Pause") if self._playing else self.tr("Play"))
+
+    def stop_animation(self) -> None:
+        """Stop and return to where the animation started."""
+        self._play_timer.stop()
+        self._playing = False
+        self._play_offset = 0.0
+        base = self._play_base
+        self._play_base = None
+        self._btn_play.setToolTip(self.tr("Play"))
+        if base is not None:
+            self._camera_reset_pending = True
+            self.invalidate()
+
+    @property
+    def playing(self) -> bool:
+        return self._playing
+
+    @property
+    def play_time(self) -> float:
+        """Seconds into the animation (paused time included)."""
+        return self._play_offset + (self._play_clock.elapsed() / 1000.0 if self._playing else 0.0)
+
+    def _on_play_tick(self) -> None:
+        res = self._state.results
+        if res is None or self._play_base is None:
+            self.stop_animation()
+            return
+        frame = self._play_frame(self.play_time)
+        try:
+            if self.backend == "interactive":
+                if frame.options != self._play_base[1]:
+                    build_scene(self._interactor, res, frame.options, self._volume_for_scene())
+                apply_camera(self._interactor, frame.camera)
+                self._interactor.render()
+            else:
+                img, _info = render_image(
+                    res, frame.options, self._volume_for_scene(), window_size=STATIC_SIZE, camera=frame.camera
+                )
+                self._last_image = img
+                self._show_image(img)
+        except Exception as exc:
+            self._state.log(f"animation: {exc}", "error")
+            self.stop_animation()
+
+    def record(self, path, **overrides):
+        """Record the animation to ``path`` on a worker thread (``overrides``: format, fps, duration, size, loop)."""
+        res = self._state.results
+        if res is None or self.backend == "unavailable" or (self._recorder is not None and self._recorder.isRunning()):
+            return None
+        was_playing = self._playing
+        if was_playing:
+            self.toggle_play()
+        base_cam, base_opts = self._play_base or (self.camera_spec(), self.options())
+        spec = self.animation_spec(**overrides)
+        size = STATIC_SIZE if self.backend == "static" else RECORD_SIZE
+        self._recorder = _RecordWorker(res, self._volume_for_scene(), spec, base_cam, base_opts, Path(path), size, parent=self)
+        self._recorder.progress.connect(self._on_record_progress)
+        self._recorder.finished_record.connect(self._on_record_finished)
+        self._recorder.failed.connect(self._on_record_failed)
+        self._record_progress.setValue(0)
+        self._record_progress.setVisible(True)
+        self._btn_record.setEnabled(False)
+        self._state.log(
+            self.tr("Recording {kind} animation: {n} frames").format(kind=self.anim_kind.currentText(), n=spec.n_frames)
+        )
+        self._recorder.start()
+        return self._recorder
+
+    def wait_recording(self, timeout_ms: int = 600_000) -> bool:
+        return self._recorder.wait(timeout_ms) if self._recorder is not None else True
+
+    def _on_record_progress(self, fraction: float, message: str) -> None:
+        self._record_progress.setValue(int(round(1000 * fraction)))
+        self._record_progress.setToolTip(message)
+
+    def _on_record_finished(self, out) -> None:
+        self._record_progress.setVisible(False)
+        self._btn_record.setEnabled(True)
+        if out is None:
+            self._state.log(self.tr("Recording cancelled."), "warning")
+        else:
+            self._state.log(self.tr("Animation saved: {path}").format(path=out), "success")
+
+    def _on_record_failed(self, message: str) -> None:
+        self._record_progress.setVisible(False)
+        self._btn_record.setEnabled(True)
+        self._state.log(self.tr("Recording failed: {msg}").format(msg=message), "error")
+
+    def _on_record(self) -> None:
+        if self._state.results is None:
+            return
+        dialog = RecordDialog(self.animation_spec(), self)
+        if not headless() and dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        values = dialog.values()
+        default = str(self._state.output_dir / f"view3d_{self.anim_kind_key()}_{self._state.display_field}.{values['format']}")
+        if headless():
+            path = default
+        else:
+            filters = {"gif": "GIF (*.gif)", "mp4": "MP4 (*.mp4)", "png": "Folder"}
+            if values["format"] == "png":
+                path = QFileDialog.getExistingDirectory(self, self.tr("Folder for the PNG frames"), str(self._state.output_dir))
+            else:
+                path, _ = QFileDialog.getSaveFileName(self, self.tr("Save animation"), default, filters[values["format"]])
+        if path:
+            self.record(path, **values)
+
     # ------------------------------------------------------------------ misc
     def _update_enabled(self) -> None:
         """Enable what makes sense and show only the controls of the current mode."""
@@ -467,8 +843,19 @@ class View3DPanel(QWidget):
             self.camera,
             self._btn_refresh,
             self._btn_shot,
+            self.azimuth,
+            self.elevation,
+            self.zoom,
+            self._btn_reset_camera,
+            self.anim_kind,
+            self.anim_axis,
+            self.anim_direction,
+            self.anim_speed,
+            self._btn_play,
+            self._btn_stop,
         ):
             w.setEnabled(has)
+        self._btn_record.setEnabled(has and (self._recorder is None or not self._recorder.isRunning()))
         show_slices = mode == "slices"
         self._slider_box.setVisible(show_slices or self.volume_slices.isChecked())
         for s in self.slice_sliders.values():
@@ -520,6 +907,30 @@ class View3DPanel(QWidget):
         self._labels["iso"].setText(self.tr("Iso level"))
         self._labels["background"].setText(self.tr("Background"))
         self._labels["camera"].setText(self.tr("Camera"))
+        self._labels["azimuth"].setText(self.tr("Turn"))
+        self._labels["elevation"].setText(self.tr("Tilt"))
+        self._labels["zoom"].setText(self.tr("Zoom"))
+        self._labels["anim_kind"].setText(self.tr("Animate"))
+        self._labels["anim_speed"].setText(self.tr("Speed"))
+        self._btn_reset_camera.setText(self.tr("Reset"))
+        self._btn_reset_camera.setToolTip(self.tr("Back to the untouched camera preset"))
+        self.azimuth.setToolTip(self.tr("Turn the camera about the vertical axis [degrees]"))
+        self.elevation.setToolTip(self.tr("Tilt the camera up or down [degrees]"))
+        self.zoom.setToolTip(self.tr("Zoom factor on the preset framing"))
+        retranslate_combo(self.anim_kind, "animation")
+        retranslate_combo(self.anim_direction, "direction")
+        self.anim_kind.setToolTip(
+            self.tr(
+                "Orbit: the camera turns about the chosen axis. Frames: the result frames play in sequence. "
+                "Slice sweep: one field slice moves through the volume. "
+                "Deformed lattice: the lattice grows to the warp scale and back."
+            )
+        )
+        self.anim_axis.setToolTip(self.tr("Axis turned about (orbit) or swept along (slice)"))
+        self.anim_speed.setToolTip(self.tr("Degrees, frames, voxels or cycles per second"))
+        self._btn_play.setToolTip(self.tr("Pause") if self._playing else self.tr("Play"))
+        self._btn_stop.setToolTip(self.tr("Stop and return to the start"))
+        self._btn_record.setToolTip(self.tr("Record the animation as GIF, MP4 or PNG frames..."))
         self.arrows.setText(self.tr("Arrows"))
         self.volume_slices.setText(self.tr("Volume slices"))
         self.outline.setText(self.tr("Outline"))

@@ -7,6 +7,17 @@ All notable changes to pyALDVC are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- 3-D view: a camera row (turn, tilt, zoom, reset on top of the presets) and an
+  animation row. Orbit about x, y or z, the result frames in sequence, a slice
+  sweep along an axis, or the deformed lattice growing to its warp scale and
+  back; direction and speed are set per kind, play / pause / stop run live in
+  the interactive and the static backend. "Record" writes the same sequence
+  off-screen as GIF (always), MP4 (with imageio-ffmpeg) or PNG frames at the
+  view's size, 1280 x 960 or 1920 x 1440, with frame rate, duration and loop
+  settings, a progress bar and cancel (`gui/view3d_animation.py`).
+- The results column opens with a "Post-processing" box holding the texture
+  analysis and strain buttons (texture needs only a volume); the summary is two
+  lines with the per-frame details folded away, so the buttons stay in view.
 - Texture analysis (`al_dvc.texture`, the "Texture analysis" window under
   Analysis / Ctrl+X, and `al-dvc texture`): the autocorrelation of the
   reference volume inside the region of interest, profiles along x, y, z and
@@ -23,6 +34,8 @@ All notable changes to pyALDVC are documented here. The format follows
   (`reports/texture.pdf`, `docs/texture_analysis_plan.md`).
 
 ### Changed
+- 3-D view: the colour bar is drawn with the interface font file (Segoe UI or
+  Arial on Windows, DejaVu Sans elsewhere) instead of VTK's built-in "arial".
 - Slices: the node grid follows pyALDIC's toggles. "Show grid" (on by default)
   draws a thin, pale grid instead of the thick yellow one: before a run the
   lattice the parameters would place inside the region of interest, after a

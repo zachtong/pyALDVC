@@ -40,6 +40,9 @@ SVG: dict[str, str] = {
     "auto": f'<path d="M3.5 16.5 L12 8" {_STROKE}/><path d="M13.5 3 L14.3 5.2 L16.5 6 L14.3 6.8 L13.5 9 L12.7 6.8 L10.5 6 L12.7 5.2 Z" fill="{{c}}"/><path d="M5 4 L5.5 5.5 L7 6 L5.5 6.5 L5 8 L4.5 6.5 L3 6 L4.5 5.5 Z" fill="{{c}}"/>',
     "refresh": f'<path d="M16 10 A6 6 0 1 1 14.2 5.8" {_STROKE}/><path d="M14.5 2.5 V6.5 H10.5" {_STROKE}/>',
     "camera": f'<path d="M3 7 H7 L8.5 5 H11.5 L13 7 H17 V16 H3 Z" {_STROKE}/><circle cx="10" cy="11.5" r="2.8" {_STROKE}/>',
+    "play": f'<polygon points="6,4 16,10 6,16" {_STROKE}/>',
+    "stop": f'<rect x="5" y="5" width="10" height="10" rx="1" {_STROKE}/>',
+    "record": f'<circle cx="10" cy="10" r="6" {_STROKE}/><circle cx="10" cy="10" r="2.5" fill="{{c}}" stroke="none"/>',
     "eye": f'<path d="M2.5 10 C5 6 8 4.5 10 4.5 C12 4.5 15 6 17.5 10 C15 14 12 15.5 10 15.5 C8 15.5 5 14 2.5 10 Z" {_STROKE}/><circle cx="10" cy="10" r="2.5" {_STROKE}/>',
 }
 

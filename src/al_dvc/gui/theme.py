@@ -166,6 +166,11 @@ QGroupBox {{
     margin: 4px 0px;
 }}
 
+QGroupBox#analysisBox {{
+    background: {c.BG_INPUT};
+    border: 1px solid {c.ACCENT};
+}}
+
 QGroupBox::title {{
     color: {c.TEXT_SECONDARY};
     subcontrol-origin: margin;

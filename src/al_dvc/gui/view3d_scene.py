@@ -30,8 +30,68 @@ MAX_ARROWS = 20_000
 ARROW_SCALE_FRACTION = 0.6  # longest arrow = this fraction of the node spacing at unit arrow_scale
 VOLUME_SLICE_MAX_PIXELS = 4_000_000  # subsample larger image slices before turning them into textures
 CAMERAS = ("iso", "xy", "xz", "yz")
+VIEW_UPS = {"z": (0.0, 0.0, 1.0), "y": (0.0, 1.0, 0.0), "x": (1.0, 0.0, 0.0)}
 BACKGROUND = "#1b1d23"
 BACKGROUNDS = {"dark": BACKGROUND, "black": "#000000", "grey": "#808080", "white": "#ffffff"}
+
+
+@dataclass(frozen=True)
+class CameraSpec:
+    """A camera as the panel and the animations describe it: a preset, then turned and zoomed.
+
+    ``azimuth`` turns the camera about the view-up axis (degrees), ``elevation`` tilts it, ``zoom``
+    multiplies the preset's framing; ``view_up`` is the axis kept vertical (the axis an orbit
+    turns about).
+    """
+
+    preset: str = "iso"
+    azimuth: float = 0.0
+    elevation: float = 0.0
+    zoom: float = 1.0
+    view_up: str = "z"
+
+    def __post_init__(self) -> None:
+        if self.preset not in CAMERAS:
+            raise ValueError(f"preset must be one of {CAMERAS}, got {self.preset!r}")
+        if self.view_up not in VIEW_UPS:
+            raise ValueError(f"view_up must be one of {tuple(VIEW_UPS)}, got {self.view_up!r}")
+        if self.zoom <= 0:
+            raise ValueError("zoom must be positive")
+
+
+def ui_font_file() -> str | None:
+    """A TrueType file of the interface font for VTK text (VTK's built-in "arial" is not the system font).
+
+    Segoe UI or Arial on Windows, Arial on macOS, else matplotlib's DejaVu Sans, which is always shipped.
+    """
+    import os
+    import sys
+
+    candidates = []
+    if sys.platform == "win32":
+        fonts = os.path.join(os.environ.get("WINDIR", r"C:\\Windows"), "Fonts")
+        candidates += [os.path.join(fonts, "segoeui.ttf"), os.path.join(fonts, "arial.ttf")]
+    elif sys.platform == "darwin":
+        candidates += ["/System/Library/Fonts/Supplemental/Arial.ttf", "/Library/Fonts/Arial.ttf"]
+    try:
+        import matplotlib
+
+        candidates.append(os.path.join(matplotlib.get_data_path(), "fonts", "ttf", "DejaVuSans.ttf"))
+    except Exception:  # matplotlib is a dependency, but stay safe
+        pass
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _use_ui_font(text_property, font_file: str | None) -> None:
+    if font_file is None:
+        return
+    from vtkmodules.vtkCommonCore import VTK_FONT_FILE
+
+    text_property.SetFontFamily(VTK_FONT_FILE)
+    text_property.SetFontFile(font_file)
 
 
 def foreground_for(background: str) -> str:
@@ -269,7 +329,10 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
             )
     if "field" in info.actors:
         # bind the bar to the field's mapper explicitly: by default pyvista takes the last added mesh (outline, arrows)
-        plotter.add_scalar_bar(mapper=info.actors["field"].mapper, **scalar_bar)
+        bar = plotter.add_scalar_bar(mapper=info.actors["field"].mapper, **scalar_bar)
+        font_file = ui_font_file()
+        _use_ui_font(bar.GetTitleTextProperty(), font_file)
+        _use_ui_font(bar.GetLabelTextProperty(), font_file)
     plotter.add_axes(color=fg)
     return info
 
@@ -329,10 +392,13 @@ def render_image(
     opts: SceneOptions | None = None,
     volume: NDArray | None = None,
     window_size: tuple[int, int] = (900, 700),
-    camera: str = "iso",
+    camera: str | CameraSpec = "iso",
     path=None,
 ) -> tuple[NDArray[np.uint8], SceneInfo]:
-    """Render a scene off-screen; returns ``(rgb image (h, w, 3), info)`` and writes ``path`` when given."""
+    """Render a scene off-screen; returns ``(rgb image (h, w, 3), info)`` and writes ``path`` when given.
+
+    ``camera`` is a preset name or a :class:`CameraSpec`.
+    """
     import pyvista as pv
 
     pl = pv.Plotter(off_screen=True, window_size=window_size)
@@ -351,17 +417,30 @@ def render_png(
     opts: SceneOptions | None = None,
     volume: NDArray | None = None,
     window_size: tuple[int, int] = (900, 700),
-    camera: str = "iso",
+    camera: str | CameraSpec = "iso",
 ) -> SceneInfo:
     """Render a scene off-screen to ``path``; the same code the panel's static backend uses."""
     return render_image(result, opts, volume, window_size, camera, path=path)[1]
 
 
-def _apply_camera(plotter, camera: str) -> None:
-    if camera not in CAMERAS:
-        raise ValueError(f"camera must be one of {CAMERAS}, got {camera!r}")
-    if camera == "iso":
+def apply_camera(plotter, camera: str | CameraSpec) -> None:
+    """Point ``plotter``'s camera as ``camera`` says: the preset, the view-up axis, then azimuth, elevation, zoom."""
+    spec = camera if isinstance(camera, CameraSpec) else CameraSpec(preset=str(camera))
+    if spec.preset == "iso":
         plotter.view_isometric()
     else:
-        getattr(plotter, f"view_{camera}")()
+        getattr(plotter, f"view_{spec.preset}")()
     plotter.reset_camera()
+    cam = plotter.camera
+    if spec.preset == "iso" or spec.view_up != "z":
+        cam.up = VIEW_UPS[spec.view_up]
+    if spec.azimuth:
+        cam.Azimuth(float(spec.azimuth))
+    if spec.elevation:
+        cam.Elevation(float(spec.elevation))
+        cam.OrthogonalizeViewUp()
+    if spec.zoom != 1.0:
+        cam.Zoom(float(spec.zoom))
+
+
+_apply_camera = apply_camera  # the old private name

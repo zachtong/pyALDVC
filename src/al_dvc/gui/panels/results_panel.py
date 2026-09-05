@@ -1,4 +1,9 @@
-"""Result display controls, summary and exports."""
+"""Result display controls, the post-processing entry points, a compact summary and exports.
+
+Order, top to bottom: the two post-processing windows (texture analysis needs only a volume,
+strain needs a result), the display controls, the export, and a two-line summary whose
+per-frame details are folded away.
+"""
 
 from __future__ import annotations
 
@@ -30,7 +35,7 @@ from al_dvc.export.export_utils import DISP_FIELDS, STD_FIELDS, STRAIN_FIELDS
 
 from ..app_state import AppState
 from ..names import field_name, status_name
-from ..widgets import guard_wheel, headless
+from ..widgets import CollapsibleSection, guard_wheel, headless
 
 COLORMAPS = ["turbo", "viridis", "plasma", "inferno", "magma", "coolwarm", "RdBu_r", "jet", "gray"]
 
@@ -39,6 +44,7 @@ class ResultsPanel(QWidget):
     """Field / frame / colour controls, a text summary, the strain window and export buttons."""
 
     strain_requested = Signal()
+    texture_requested = Signal()
     export_requested = Signal()
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
@@ -47,6 +53,29 @@ class ResultsPanel(QWidget):
         self._updating = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+
+        # the two post-processing windows first: they are what the user looks for after a run
+        self._analysis_group = QGroupBox()
+        self._analysis_group.setObjectName("analysisBox")
+        agrid = QVBoxLayout(self._analysis_group)
+        agrid.setSpacing(6)
+        self._btn_texture = QPushButton()
+        self._btn_texture.setProperty("class", "btn-primary")
+        self._btn_texture.setMinimumHeight(32)
+        self._btn_texture.setEnabled(False)
+        self._btn_texture.clicked.connect(self.texture_requested.emit)
+        self._btn_strain = QPushButton()
+        self._btn_strain.setProperty("class", "btn-primary")
+        self._btn_strain.setMinimumHeight(32)
+        self._btn_strain.setEnabled(False)
+        self._btn_strain.clicked.connect(self.strain_requested.emit)
+        agrid.addWidget(self._btn_texture)
+        agrid.addWidget(self._btn_strain)
+        self._analysis_hint = QLabel()
+        self._analysis_hint.setObjectName("hint")
+        self._analysis_hint.setWordWrap(True)
+        agrid.addWidget(self._analysis_hint)
+        layout.addWidget(self._analysis_group)
 
         self._display_group = QGroupBox()
         form = QFormLayout(self._display_group)
@@ -99,20 +128,6 @@ class ResultsPanel(QWidget):
             form.addRow(label, widget)
         layout.addWidget(self._display_group)
 
-        self._summary_group = QGroupBox()
-        sl = QVBoxLayout(self._summary_group)
-        self._summary = QLabel()
-        self._summary.setWordWrap(True)
-        self._summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        sl.addWidget(self._summary)
-        layout.addWidget(self._summary_group)
-
-        self._btn_strain = QPushButton()
-        self._btn_strain.setProperty("class", "btn-primary")
-        self._btn_strain.setMinimumHeight(30)
-        self._btn_strain.setEnabled(False)
-        self._btn_strain.clicked.connect(self.strain_requested.emit)
-        layout.addWidget(self._btn_strain)
         self._export_group = QGroupBox()
         grid = QGridLayout(self._export_group)
         self._btn_export = QPushButton()
@@ -124,6 +139,23 @@ class ResultsPanel(QWidget):
         self._export_status.setObjectName("hint")
         grid.addWidget(self._export_status, 1, 0)
         layout.addWidget(self._export_group)
+
+        # a two-line summary; the per-frame lines live in a folded section
+        self._summary_group = QGroupBox()
+        sl = QVBoxLayout(self._summary_group)
+        sl.setSpacing(4)
+        self._summary = QLabel()
+        self._summary.setWordWrap(True)
+        self._summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        sl.addWidget(self._summary)
+        self._details_section = CollapsibleSection(expanded=False)
+        self._details = QLabel()
+        self._details.setWordWrap(True)
+        self._details.setObjectName("hint")
+        self._details.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._details_section.add_widget(self._details)
+        sl.addWidget(self._details_section)
+        layout.addWidget(self._summary_group)
         guard_wheel(self)
         layout.addStretch(1)
 
@@ -139,6 +171,7 @@ class ResultsPanel(QWidget):
         self.show_overlay.toggled.connect(lambda v: self._set(show_overlay=bool(v)))
         self._state.results_changed.connect(self.refresh)
         self._state.current_frame_changed.connect(lambda _i: self.refresh())
+        self._state.volumes_changed.connect(self.refresh)
         self.retranslate_ui()
         self.refresh()
 
@@ -180,6 +213,7 @@ class ResultsPanel(QWidget):
         self._display_group.setEnabled(has)
         self._export_group.setEnabled(has)
         self._btn_strain.setEnabled(has)
+        self._btn_texture.setEnabled(bool(self._state.volumes))
         self._updating = True
         try:
             self.field.clear()
@@ -200,12 +234,40 @@ class ResultsPanel(QWidget):
             self.colormap.setCurrentText(self._state.colormap)
         finally:
             self._updating = False
-        self._summary.setText(self._summary_text() if has else self.tr("No results yet."))
+        if has:
+            short, details = self._summary_text()
+            self._summary.setText(short)
+            self._details.setText(details)
+        else:
+            self._summary.setText(self.tr("No results yet."))
+            self._details.setText("")
+        self._details_section.setVisible(has)
 
-    def _summary_text(self) -> str:
+    def _summary_text(self) -> tuple[str, str]:
+        """``(two-line summary, per-frame details)``."""
         res = self._state.results
         mesh = res.dvc_mesh
-        lines = [self.tr("Nodes: {n} on a {g} grid, spacing {s}").format(n=mesh.n_nodes, g=mesh.grid_shape, s=mesh.spacing)]
+        nz, ny, nx = mesh.grid_shape
+        sx, sy, sz = mesh.spacing
+        head = self.tr("{n} nodes, {g} grid, step {s}").format(
+            n=f"{mesh.n_nodes:,}", g=f"{nx} x {ny} x {nz}", s=" x ".join(f"{v:g}" for v in (sx, sy, sz))
+        )
+        conv = [float(np.mean(fr.status == 0)) if fr.status is not None else float("nan") for fr in res.result_disp]
+        z = [
+            float(np.nanmedian(fr.zncc)) if fr.zncc is not None and np.isfinite(fr.zncc).any() else float("nan")
+            for fr in res.result_disp
+        ]
+        t = res.timings
+        second = self.tr("{k} frame(s): converged {c}, median ZNCC {z}, {t:.1f} s").format(
+            k=len(res.result_disp),
+            c=f"{100 * float(np.nanmin(conv)):.0f} %" if conv and np.isfinite(conv).any() else "-",
+            z=f"{float(np.nanmin(z)):.3f}" if z and np.isfinite(z).any() else "-",
+            t=t.get("total", 0.0),
+        )
+        short = head + "\n" + second
+        if res.stopped_early:
+            short += "\n" + self.tr("Stopped early at frame {k}: {why}").format(k=res.stopped_at_frame, why=res.stop_reason)
+        lines = []
         for k, fr in enumerate(res.result_disp):
             codes, counts = np.unique(fr.status, return_counts=True) if fr.status is not None else ([], [])
             status = ", ".join(f"{status_name(STATUS_NAMES.get(int(c), c))} {int(n)}" for c, n in zip(codes, counts))
@@ -220,15 +282,12 @@ class ResultsPanel(QWidget):
                     k=k + 1, r=fr.ref_frame, z=z, beta=beta, std=std, status=status
                 )
             )
-        t = res.timings
         lines.append(
             self.tr("Time: total {t:.1f} s (local {l:.1f} s, ADMM local {s1:.1f} s)").format(
                 t=t.get("total", 0.0), l=t.get("local_icgn", 0.0), s1=t.get("subpb1", 0.0)
             )
         )
-        if res.stopped_early:
-            lines.append(self.tr("Stopped early at frame {k}: {why}").format(k=res.stopped_at_frame, why=res.stop_reason))
-        return "\n".join(lines)
+        return short, "\n".join(lines)
 
     # ------------------------------------------------------------------ export
     _EXPORT_FILES = {
@@ -299,6 +358,12 @@ class ResultsPanel(QWidget):
         for i in range(self.field.count()):
             self.field.setItemText(i, field_name(self.field.itemData(i)))
         self._summary_group.setTitle(self.tr("Summary"))
+        self._details_section.set_title(self.tr("Details"))
+        self._analysis_group.setTitle(self.tr("Post-processing"))
+        self._btn_texture.setText(self.tr("Texture analysis..."))
+        self._analysis_hint.setText(
+            self.tr("Texture: subset size from the reference volume. Strain: from the displacement result.")
+        )
         self._export_group.setTitle(self.tr("Export"))
         self._btn_strain.setText(self.tr("Strain post-processing..."))
         texts = {

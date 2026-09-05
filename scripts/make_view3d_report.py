@@ -104,6 +104,36 @@ def main(argv=None) -> int:
         for c in CAMERAS
     ]
 
+    # animation frames: an orbit and a slice sweep, as the panel plays and records them
+    from al_dvc.gui.view3d_animation import AnimationSpec, frames
+    from al_dvc.gui.view3d_scene import CameraSpec
+
+    anim_pages = []
+    for spec, label, opts in (
+        (
+            AnimationSpec(kind="orbit", speed=60.0, fps=1, duration=6.0),
+            "orbit about z, 60 deg/s",
+            SceneOptions(field="disp_u", mode="slices", slice_index=mid, show_arrows=True, arrow_stride=3),
+        ),
+        (
+            AnimationSpec(kind="slice", axis="z", speed=shape[0] / 6.0, fps=1, duration=6.0),
+            "slice sweep along z",
+            SceneOptions(field="disp_u", mode="slices", slice_index={**mid, "z": 0}),
+        ),
+        (
+            AnimationSpec(kind="warp", speed=1.0 / 6.0, fps=1, duration=6.0),
+            "deformed lattice growing to x5",
+            SceneOptions(field="disp_u", mode="warped", warp_scale=5.0),
+        ),
+    ):
+        items = []
+        t = time.perf_counter()
+        for fr in frames(spec, CameraSpec(), opts, len(res.result_disp), shape):
+            img, _info = render_image(res, fr.options, None, window_size=(320, 240), camera=fr.camera)
+            items.append((f"{label}, t = {fr.time:.0f} s", img))
+        timings.append((f"animation: {label} (6 frames, 320x240)", time.perf_counter() - t))
+        anim_pages.append((label, items))
+
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     with PdfPages(str(out)) as pdf:
@@ -146,6 +176,8 @@ def main(argv=None) -> int:
         _page_images(pdf, "Modes (field disp_u, warp x5)", modes)
         _page_images(pdf, "Arrows, volume slices, iso-surface, points", extras)
         _page_images(pdf, "Camera presets (disp_u with arrows)", cams)
+        for label, items in anim_pages:
+            _page_images(pdf, f"Animation frames: {label}", items, ncols=3)
     print(f"wrote {out}")
     return 0
 
