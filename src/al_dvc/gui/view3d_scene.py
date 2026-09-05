@@ -99,6 +99,7 @@ class SceneInfo:
     n_nodes: int
     n_finite: int
     n_arrows: int = 0
+    note: str = ""  # something the viewer should tell the user, e.g. a fallback drawing
     actors: dict[str, Any] = dc_field(default_factory=dict)
 
 
@@ -189,14 +190,18 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
     common = dict(scalars=opts.field, cmap=opts.colormap, clim=clim, nan_opacity=0.0, show_scalar_bar=False)
     fg = foreground_for(opts.background)
     plotter.set_background(opts.background)
-    scalar_bar = dict(  # a slim vertical bar centred on the right edge, plain sans-serif text
-        title=(opts.title or opts.field) + chr(10),  # the newline keeps the title clear of the top label
+    title = opts.title or opts.field
+    # a slim vertical bar near the right edge, plain sans-serif text; the title is centred over the bar, so
+    # the bar moves left as the title gets longer or it would run out of the viewport
+    bar_x = min(0.90, max(0.60, 1.0 - 0.035 - 0.0085 * len(title)))
+    scalar_bar = dict(
+        title=title + chr(10),  # the newline keeps the title clear of the top label
         vertical=True,
         n_labels=5,
         fmt="%.3g",
         width=0.07,
         height=0.55,
-        position_x=0.90,
+        position_x=bar_x,
         position_y=0.22,
         title_font_size=13,
         label_font_size=11,
@@ -232,12 +237,23 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
         info.actors["iso_level"] = level
     else:  # warped: the lattice of the valid nodes moved by the displacement, drawn with its cell edges
         grid.point_data["_valid"] = finite.astype(np.float32)
-        cells = grid.threshold(0.5, scalars="_valid", preference="point")  # cells whose 8 nodes are valid
+        # only cells whose 8 nodes are valid: a cell with one NaN corner would be drawn fully transparent
+        cells = grid.threshold(0.5, scalars="_valid", preference="point", all_scalars=True)
         if cells.n_cells:
             warped = cells.warp_by_vector(DISPLACEMENT_ARRAY, factor=opts.warp_scale)
             info.actors["field"] = plotter.add_mesh(
                 warped, opacity=opts.opacity, show_edges=True, edge_color=fg, line_width=1, **common
             )
+        elif finite.any():  # no complete cell (a thin region, a sparse field): the valid nodes, moved
+            pts = np.asarray(grid.points)[finite] + opts.warp_scale * np.asarray(grid.point_data[DISPLACEMENT_ARRAY])[finite]
+            import pyvista as pv
+
+            cloud = pv.PolyData(pts)
+            cloud.point_data[opts.field] = values[finite]
+            info.actors["field"] = plotter.add_mesh(
+                cloud, style="points", point_size=8.0, render_points_as_spheres=True, opacity=opts.opacity, **common
+            )
+            info.note = "nodes_only"
         if opts.show_outline:
             info.actors["original"] = plotter.add_mesh(grid.outline(), color="gray", line_width=1)
 

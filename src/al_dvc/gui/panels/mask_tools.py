@@ -241,6 +241,10 @@ class MaskToolbar(QWidget):
 
     # ------------------------------------------------------------------ view
     def refresh(self) -> None:
+        if self.show_mask.isChecked() != bool(self._state.show_mask):  # the state may hide the mask (results)
+            self.show_mask.blockSignals(True)
+            self.show_mask.setChecked(bool(self._state.show_mask))
+            self.show_mask.blockSignals(False)
         ed = self._state.mask_editor
         has_volume = bool(self._state.volumes)
         self._btn["undo"].setEnabled(ed is not None and ed.can_undo)

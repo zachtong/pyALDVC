@@ -135,7 +135,7 @@ def test_viewer_previews_the_lattice(qapp):
     window.state.set_params(winsize=16, winstepsize=8, search_radius=4)
     QApplication.processEvents()
     viewer = window.viewer
-    assert viewer.show_lattice.isChecked()
+    assert viewer.show_mesh.isChecked() and not viewer.show_subset.isChecked()
     assert "nodes" in viewer._lattice_label.text() and "17 x 17 x 17" in viewer._lattice_label.text()
     assert viewer._plan is None and all(not _grids(ax) for ax in viewer.axes)  # no region yet: label only
     mask = np.zeros(SHAPE, dtype=bool)
@@ -146,16 +146,25 @@ def test_viewer_previews_the_lattice(qapp):
     plan = viewer._plan
     for ax in viewer.axes:
         assert _grids(ax), "every plane shows the grid of its nearest layer"
-        assert len(_rects(ax)) >= 1, "the subset of the crosshair node is outlined"
-    # hovering a node outlines its subset on that plane only
+        assert not _rects(ax), "the subset box waits for Show subset"
+    # Show subset outlines the crosshair node's subset and follows the pointer; the grid is independent
+    viewer.show_subset.setChecked(True)
+    QApplication.processEvents()
+    assert window.state.show_subset_window
     ax = viewer.axes[0]
     n_before = len(_rects(ax))
+    assert n_before >= 1
     viewer._on_motion(_Event(ax, float(plan.x0[1]) + 1.0, float(plan.y0[1]) - 1.0))
     assert viewer._hover_artist is not None and len(_rects(ax)) == n_before + 1
     left, bottom, w, h = subset_rect(plan, "xy", (float(plan.x0[1]), float(plan.y0[1])))
     assert (viewer._hover_artist.get_x(), viewer._hover_artist.get_y()) == (left, bottom)
     viewer._on_motion(_Event(None, None, None))  # pointer off the planes
     assert viewer._hover_artist is None and len(_rects(ax)) == n_before
+    viewer.show_mesh.setChecked(False)
+    QApplication.processEvents()
+    assert not window.state.show_mesh and all(not _grids(a) for a in viewer.axes)
+    assert all(_rects(a) for a in viewer.axes), "the subset box does not need the grid"
+    viewer.show_mesh.setChecked(True)
     # the subset size feeds straight through
     window.param_panel.winsize.setValue(25)
     QApplication.processEvents()
@@ -166,14 +175,41 @@ def test_viewer_previews_the_lattice(qapp):
     QApplication.processEvents()
     assert viewer._plan is None and "does not fit" in viewer._lattice_label.text()
     window.state.set_params(winsize=16)
-    # the checkbox hides everything and is remembered in the state
-    viewer.show_lattice.setChecked(False)
+    # both off: nothing drawn, the label stays
+    viewer.show_subset.setChecked(False)
+    viewer.show_mesh.setChecked(False)
     QApplication.processEvents()
-    assert not window.state.show_lattice and viewer._plan is None and viewer._lattice_label.text() == ""
-    assert all(not _rects(a) for a in viewer.axes)
-    viewer.show_lattice.setChecked(True)
+    assert viewer._plan is None and "nodes" in viewer._lattice_label.text()
+    assert all(not _rects(a) and not _grids(a) for a in viewer.axes)
+    viewer.show_mesh.setChecked(True)
+    window.close()
+
+
+def test_grid_shows_the_result_mesh_after_a_run(qapp):
+    from PySide6.QtWidgets import QApplication
+
+    from al_dvc.gui.app import MainWindow
+    from al_dvc.synthetic import affine_displacement, generate_speckle_volume, warp_volume_lagrangian
+
+    shape = (40, 44, 48)
+    centre = tuple((s - 1) / 2 for s in shape[::-1])
+    ref = generate_speckle_volume(shape, sigma=2.0, seed=2)
+    dfm = warp_volume_lagrangian(ref, affine_displacement(np.diag([0.01, -0.005, 0.005]), (0.3, -0.2, 0.1), centre))
+    window = MainWindow()
+    window.show()
+    window.state.set_volume_arrays([ref, dfm], ["ref", "def"])
+    window.state.set_params(winsize=12, winstepsize=6, search_radius=3, admm_max_iter=1, verbose=False)
+    window.state.write_checkpoints = False
+    window.run_panel.start()
+    assert window.run_panel.wait(300_000)
     QApplication.processEvents()
-    assert viewer._plan is not None
+    viewer = window.viewer
+    res = window.state.results
+    assert res is not None and window.state.result_frame() == 0
+    assert viewer._plan is not None and np.array_equal(viewer._plan.x0, res.dvc_mesh.x0)  # the mesh the run used
+    assert viewer._plan.n_valid == int(np.asarray(res.dvc_mesh.node_valid, dtype=bool).sum())  # the kept nodes
+    assert all(_grids(ax) for ax in viewer.axes), "the grid is drawn over the field"
+    assert viewer._cbar is not None and viewer._cbar.mappable.get_alpha() in (None, 1.0)  # an opaque colour bar
     window.close()
 
 
@@ -182,9 +218,10 @@ def test_lattice_flag_round_trips_through_the_session(qapp, tmp_path):
     from al_dvc.gui.session import apply_session, load_session, save_session
 
     state = AppState()
-    state.show_lattice = False
+    state.show_mesh = False
+    state.show_subset_window = True
     path = save_session(state, tmp_path / "s.json")
     fresh = AppState()
-    assert fresh.show_lattice
+    assert fresh.show_mesh and not fresh.show_subset_window
     apply_session(load_session(path), fresh)
-    assert not fresh.show_lattice
+    assert not fresh.show_mesh and fresh.show_subset_window

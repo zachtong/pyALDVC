@@ -59,11 +59,12 @@ def build_session(state: AppState, results_path: str | None = None) -> SessionDa
         output_dir=str(state.output_dir),
         display={
             "field": state.display_field,
-            "frame": state.display_frame,
+            "frame": state.current_frame,
             "colormap": state.colormap,
             "slice_layout": state.slice_layout,
             "slice_equal_scale": bool(state.slice_equal_scale),
-            "show_lattice": bool(state.show_lattice),
+            "show_mesh": bool(state.show_mesh),
+            "show_subset_window": bool(state.show_subset_window),
             "color_auto": state.color_auto,
             "color_min": state.color_min,
             "color_max": state.color_max,
@@ -167,17 +168,17 @@ def apply_session(data: SessionData, state: AppState, path: str | Path | None = 
     ]
     state.mask_editor = None
     _rebuild_drawn_masks(state)
-    state.current_frame = 0
     state.results = None
     state.para = data.para
     state.output_dir = Path(data.output_dir)
     d = data.display
     state.display_field = d.get("field", state.display_field)
-    state.display_frame = int(d.get("frame", 0))
+    state.current_frame = max(0, min(int(d.get("frame", 0)), max(0, len(state.volumes) - 1)))
     state.colormap = d.get("colormap", state.colormap)
     state.slice_layout = d.get("slice_layout", state.slice_layout)
     state.slice_equal_scale = bool(d.get("slice_equal_scale", state.slice_equal_scale))
-    state.show_lattice = bool(d.get("show_lattice", state.show_lattice))
+    state.show_mesh = bool(d.get("show_mesh", d.get("show_lattice", state.show_mesh)))
+    state.show_subset_window = bool(d.get("show_subset_window", state.show_subset_window))
     state.color_auto = bool(d.get("color_auto", True))
     state.color_min = float(d.get("color_min", 0.0))
     state.color_max = float(d.get("color_max", 1.0))

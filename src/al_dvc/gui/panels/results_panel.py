@@ -127,7 +127,7 @@ class ResultsPanel(QWidget):
         guard_wheel(self)
         layout.addStretch(1)
 
-        self.frame.valueChanged.connect(lambda v: self._set(display_frame=int(v) - 1))
+        self.frame.valueChanged.connect(self._on_frame)
         self._btn_prev.clicked.connect(lambda: self.frame.setValue(self.frame.value() - 1))
         self._btn_next.clicked.connect(lambda: self.frame.setValue(self.frame.value() + 1))
         self.field.currentIndexChanged.connect(self._on_field_index)
@@ -138,6 +138,7 @@ class ResultsPanel(QWidget):
         self.alpha.valueChanged.connect(lambda v: self._set(overlay_alpha=v / 100.0))
         self.show_overlay.toggled.connect(lambda v: self._set(show_overlay=bool(v)))
         self._state.results_changed.connect(self.refresh)
+        self._state.current_frame_changed.connect(lambda _i: self.refresh())
         self.retranslate_ui()
         self.refresh()
 
@@ -145,6 +146,11 @@ class ResultsPanel(QWidget):
     def _set(self, **values) -> None:
         if not self._updating:
             self._state.set_display(**values)
+
+    def _on_frame(self, value: int) -> None:
+        """The frame box selects the volume of that result: frame k is deformed volume k."""
+        if not self._updating:
+            self._state.set_current_frame(int(value))
 
     def _on_field_index(self, index: int) -> None:
         name = self.field.itemData(index) if index >= 0 else None
@@ -190,7 +196,7 @@ class ResultsPanel(QWidget):
                 else:
                     self._state.display_field = fields[0]
                 self.frame.setRange(1, len(res.result_disp))
-                self.frame.setValue(self._state.display_frame + 1)
+                self.frame.setValue(max(1, min(self._state.current_frame, len(res.result_disp))))
             self.colormap.setCurrentText(self._state.colormap)
         finally:
             self._updating = False

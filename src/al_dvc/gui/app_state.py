@@ -94,7 +94,6 @@ class AppState(QObject):
         self.write_checkpoints: bool = False  # advanced option; results live in memory and are exported afterwards
         # display
         self.display_field: str = "disp_magnitude"
-        self.display_frame: int = 0
         self.colormap: str = "turbo"
         self.color_auto: bool = True
         self.color_min: float = 0.0
@@ -104,7 +103,8 @@ class AppState(QObject):
         self.slice_index: dict[str, int | None] = {"z": None, "y": None, "x": None}
         self.slice_layout: str = "grid"  # arrangement of the three slices: "grid" (XY / XZ left, YZ top-right), "row", "column"
         self.slice_equal_scale: bool = False  # same voxels-per-pixel scale on the three planes
-        self.show_lattice: bool = True  # preview the planned node lattice and one subset on the slices
+        self.show_mesh: bool = True  # the node grid on the slices (planned before a run, the result mesh after)
+        self.show_subset_window: bool = False  # the subset of the crosshair node and of the node under the pointer
         # mask drawing
         self.mask_editor: MaskEditor | None = None
         self.mask_target: str = "current"  # "current" | "all"
@@ -315,6 +315,22 @@ class AppState(QObject):
             self.log(f"cannot read {self.volumes[0].name}: {exc}", "error")
             return None
 
+    @property
+    def display_frame(self) -> int:
+        """Result frame of the selected volume: frame k is the deformed volume k against the reference.
+
+        Selecting a volume in the list selects its result (like pyALDIC); the reference volume has
+        none, so it shows frame 0's field greyed out by :meth:`result_frame` being ``None``.
+        """
+        return max(0, self.current_frame - 1)
+
+    def result_frame(self) -> int | None:
+        """Index into ``results.result_disp`` for the selected volume, ``None`` for the reference or without results."""
+        res = self.results
+        if res is None or not res.result_disp or self.current_frame < 1:
+            return None
+        return min(self.current_frame - 1, len(res.result_disp) - 1)
+
     def set_current_frame(self, index: int) -> None:
         if self.volumes and 0 <= index < len(self.volumes) and index != self.current_frame:
             self.current_frame = index
@@ -349,8 +365,12 @@ class AppState(QObject):
 
     def set_results(self, results: PipelineResult | None) -> None:
         self.results = results
-        self.display_frame = 0
+        if results is not None and results.result_disp:
+            self.show_mask = False  # a field is on the slices now; the region tint would only muddy it
+            if self.current_frame < 1 and len(self.volumes) > 1:
+                self.set_current_frame(1)  # the first deformed volume carries the first result
         self.results_changed.emit()
+        self.mask_changed.emit()
 
     def set_output_dir(self, path: str | Path) -> None:
         self.output_dir = Path(path)

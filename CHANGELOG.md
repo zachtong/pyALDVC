@@ -7,6 +7,24 @@ All notable changes to pyALDVC are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- Slices: the node grid follows pyALDIC's toggles. "Show grid" (on by default)
+  draws a thin, pale grid instead of the thick yellow one: before a run the
+  lattice the parameters would place inside the region of interest, after a
+  run the mesh the run used, drawn over the field. "Show subset" (off by
+  default) outlines the subset of the crosshair node, its neighbour dashed,
+  and the subset of the node under the pointer; it works without the grid.
+- The volume selected in the list is the displayed frame: its result (frame
+  k = deformed volume k) is overlaid, the reference volume shows no field, and
+  the Frame box of the results panel selects the volume. A finished run selects
+  the first deformed volume and hides the mask tint (the mask checkbox brings
+  it back).
+- The slice colour bar is drawn from its own opaque mappable; it no longer
+  inherits the overlay's transparency (it looked faded).
+- 3-D view: the colour bar moves left as its title gets longer, so the title is
+  never clipped at the viewport edge; the deformed lattice keeps only cells
+  whose 8 nodes are valid (a cell with one NaN corner was drawn transparent)
+  and, when no such cell exists, draws the valid nodes and says so; switching
+  the mode re-frames the camera.
 - The README hero band is the designed `assets/banner-master.png` (volume,
   node lattice, displacement, logo); `scripts/make_branding.py` copies it
   and renders its own banner only when the master is missing.

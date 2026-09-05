@@ -87,6 +87,26 @@ def plan_lattice(
     return LatticePlan(x0, y0, z0, ws, st, centre_valid)  # type: ignore[arg-type]
 
 
+def plan_from_result(result, frame: int) -> LatticePlan:
+    """The lattice the run actually used, with a node valid where the reference precompute kept it.
+
+    Invalid nodes (outside the region, ill-conditioned) carry inpainted displacements, so validity comes
+    from the mesh's ``node_valid`` flags, not from finiteness; finiteness is the fallback.
+    """
+    mesh = result.dvc_mesh
+    para = result.dvc_para
+    fr = result.result_disp[frame]
+    U = np.asarray(fr.U_accum if fr.U_accum is not None else fr.U)
+    flags = getattr(mesh, "node_valid", None)
+    valid = np.isfinite(U).all(axis=1)
+    if flags is not None and np.size(flags) == valid.size:
+        valid &= np.asarray(flags, dtype=bool).ravel()
+    valid = valid.reshape(mesh.grid_shape)
+    ws = tuple(int(w) for w in para.winsize)
+    st = tuple(int(s) for s in para.winstepsize)
+    return LatticePlan(np.asarray(mesh.x0), np.asarray(mesh.y0), np.asarray(mesh.z0), ws, st, valid)  # type: ignore[arg-type]
+
+
 def layer_index(plan: LatticePlan, plane: str, slice_index: int) -> int:
     """Index of the lattice layer nearest to ``slice_index`` along the plane's normal axis."""
     normal = plan.axes()[PLANE_AXES[plane][2]]

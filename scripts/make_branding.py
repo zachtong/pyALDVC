@@ -344,6 +344,7 @@ def make_screens(ref, dfm) -> list[Path]:
     window.state.set_params(**DEMO_PARAMS)
     window.run_panel.start()
     window.run_panel.wait(600_000)
+    window.viewer.show_mesh.setChecked(False)  # the field alone, without the grid on top
     app.processEvents()
     main_shot = grab("04_result")
     shutil.copy(main_shot, ASSETS / "screenshot_main.png")

@@ -1,0 +1,13 @@
+name: autocorrelation_env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.9
+  - numpy>=1.21.0
+  - scipy>=1.7.0
+  - matplotlib>=3.5.0
+  - scikit-image>=0.19.0
+  - opencv
+  - tifffile>=2021.7.2
+  - tk

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.cm import ScalarMappable
 from matplotlib.collections import LineCollection
-from matplotlib.colors import ListedColormap
+from matplotlib.colors import ListedColormap, Normalize
 from matplotlib.figure import Figure
 from matplotlib.patches import Ellipse, Rectangle
 from PySide6.QtCore import Qt
@@ -15,7 +16,7 @@ from al_dvc.export.export_utils import field_array
 from al_dvc.export.slice_plots import DISPLACEMENT_LIKE, apply_equal_scale, build_axes, restore_cells
 
 from ..app_state import AppState
-from ..lattice_preview import describe, layer_segments, nearest_node, plan_lattice, subset_rect
+from ..lattice_preview import describe, layer_segments, nearest_node, plan_from_result, plan_lattice, subset_rect
 from ..mask_editor import MaskOp
 from ..names import field_name
 from ..theme import COLORS
@@ -26,8 +27,9 @@ NORMAL_OF_PLANE = {"xy": "z", "xz": "y", "yz": "x"}
 MASK_TINT = ListedColormap([[1.0, 0.25, 0.25, 1.0]])
 MASK_EDGE = "#ff5555"
 PREVIEW_COLOR = "#ffd166"
-LATTICE_COLOR = "#d4a017"  # the planned lattice: a dark-yellow grid, thick enough to read on grey texture
-LATTICE_WIDTH = 1.6
+LATTICE_COLOR = "#7dd3fc"  # the node grid: thin, pale and translucent, so the image stays readable through it
+LATTICE_WIDTH = 0.7
+LATTICE_ALPHA = 0.55
 HOVER_COLOR = "#f8fafc"  # the subset of the node under the pointer
 LATTICE_ON_PLANE = 0.5  # voxels: a lattice layer this close to the slice is drawn at full strength
 BRUSH_MIN_MOVE = 0.5  # voxels between recorded stroke points
@@ -70,8 +72,10 @@ class SliceViewer(QWidget):
         self._layout_label = QLabel()
         self.equal_scale = QCheckBox()
         self.equal_scale.setChecked(bool(getattr(state, "slice_equal_scale", False)))
-        self.show_lattice = QCheckBox()
-        self.show_lattice.setChecked(bool(getattr(state, "show_lattice", True)))
+        self.show_mesh = QCheckBox()  # the node grid, like pyALDIC's Show grid
+        self.show_mesh.setChecked(bool(getattr(state, "show_mesh", True)))
+        self.show_subset = QCheckBox()  # the subset of the crosshair node and of the node under the pointer
+        self.show_subset.setChecked(bool(getattr(state, "show_subset_window", False)))
         self._lattice_label = QLabel()
         self._lattice_label.setObjectName("hint")
         self._plan = None  # LatticePlan drawn on the slices, None when hidden or not computable
@@ -86,7 +90,9 @@ class SliceViewer(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout_row = QHBoxLayout()
-        layout_row.addWidget(self.show_lattice)
+        layout_row.addWidget(self.show_mesh)
+        layout_row.addWidget(self.show_subset)
+        layout_row.addSpacing(8)
         layout_row.addWidget(self._lattice_label)
         layout_row.addStretch(1)
         layout_row.addWidget(self.equal_scale)
@@ -121,7 +127,8 @@ class SliceViewer(QWidget):
         self.canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.layout_combo.currentIndexChanged.connect(lambda i: self.set_layout(LAYOUTS[i]))
         self.equal_scale.toggled.connect(self._on_equal_scale)
-        self.show_lattice.toggled.connect(self._on_show_lattice)
+        self.show_mesh.toggled.connect(self._on_show_mesh)
+        self.show_subset.toggled.connect(self._on_show_subset)
         self.canvas.mpl_connect("resize_event", lambda _e: self._on_canvas_resized())
 
         self._state.volumes_changed.connect(self._on_volumes_changed)
@@ -173,8 +180,12 @@ class SliceViewer(QWidget):
         self._state.slice_equal_scale = bool(on)
         self.redraw()
 
-    def _on_show_lattice(self, on: bool) -> None:
-        self._state.show_lattice = bool(on)
+    def _on_show_mesh(self, on: bool) -> None:
+        self._state.show_mesh = bool(on)
+        self.redraw()
+
+    def _on_show_subset(self, on: bool) -> None:
+        self._state.show_subset_window = bool(on)
         self.redraw()
 
     def _on_canvas_resized(self) -> None:
@@ -234,9 +245,9 @@ class SliceViewer(QWidget):
     def _field_grid(self):
         """``(grid (nz, ny, nx) over nodes, mesh, label)`` of the displayed field or ``None``."""
         res = self._state.results
-        if res is None or not self._state.show_overlay or not res.result_disp:
+        frame = self._state.result_frame()
+        if res is None or frame is None or not self._state.show_overlay:
             return None
-        frame = min(self._state.display_frame, len(res.result_disp) - 1)
         try:
             values = field_array(res, frame, self._state.display_field)
         except ValueError:
@@ -273,14 +284,12 @@ class SliceViewer(QWidget):
             (self.axes[2], vol[:, :, ix], (ny, nz), "y", "z", f"YZ  x = {ix}"),
         ]
         overlay = self._field_grid()
-        mappable = None
         for ax, img, (w, h), xl, yl, title in panes:
             ax.imshow(img, cmap="gray", origin="lower", vmin=self._vmin, vmax=self._vmax, extent=[-0.5, w - 0.5, -0.5, h - 0.5])
             ax.set_title(title, color=COLORS.TEXT_SECONDARY, fontsize=8)
             ax.set_xlabel(xl, color=COLORS.TEXT_SECONDARY, fontsize=7)
             ax.set_ylabel(yl, color=COLORS.TEXT_SECONDARY, fontsize=7)
         self._draw_mask(iz, iy, ix)
-        self._draw_lattice(iz, iy, ix, draw=overlay is None)
         if overlay is not None:
             grid, mesh, label = overlay
             x0, y0, z0 = mesh.x0, mesh.y0, mesh.z0
@@ -301,7 +310,7 @@ class SliceViewer(QWidget):
                 (self.axes[2], grid[:, :, kx], [y0[0] - hy / 2, y0[-1] + hy / 2, z0[0] - hz / 2, z0[-1] + hz / 2]),
             ]
             for ax, img, extent in overlays:
-                mappable = ax.imshow(
+                ax.imshow(
                     np.ma.masked_invalid(img),
                     cmap=self._state.colormap,
                     origin="lower",
@@ -312,11 +321,14 @@ class SliceViewer(QWidget):
                     interpolation="nearest",
                 )
             self.cax.set_visible(True)
-            self._cbar = self.figure.colorbar(mappable, cax=self.cax)
+            # the bar is drawn from its own mappable: the overlay's alpha would wash the colours out
+            bar_mappable = ScalarMappable(norm=Normalize(vmin=vmin, vmax=vmax), cmap=self._state.colormap)
+            self._cbar = self.figure.colorbar(bar_mappable, cax=self.cax)
             units = getattr(self._state.para, "units", "voxel")
             text = field_name(label) + (f" [{units}]" if label in DISPLACEMENT_LIKE else "")
             self._cbar.set_label(text, color=COLORS.TEXT_SECONDARY, fontsize=8)
             self._cbar.ax.tick_params(colors=COLORS.TEXT_SECONDARY, labelsize=7)
+        self._draw_lattice(iz, iy, ix)  # on top of the field, so the grid is legible either way
         # cursor lines showing the other two slice positions
         self.axes[0].axhline(iy, color=COLORS.ACCENT, lw=0.5, alpha=0.6)
         self.axes[0].axvline(ix, color=COLORS.ACCENT, lw=0.5, alpha=0.6)
@@ -334,28 +346,40 @@ class SliceViewer(QWidget):
             restore_cells(self.axes)
         self.canvas.draw_idle()
 
-    def _draw_lattice(self, iz: int, iy: int, ix: int, draw: bool) -> None:
-        """The lattice layer nearest to every slice as a grid, and the subset of the node at the crosshair.
+    def _draw_lattice(self, iz: int, iy: int, ix: int) -> None:
+        """The node grid (layer nearest to every slice) and the subset of the crosshair node.
 
-        The plan is computed whenever the preview is on (the label always tells the node count); the grid
-        is drawn once a region of interest exists, and only without a field overlay, which shows the
-        lattice by itself.
+        Before a run the grid is the lattice the parameters would place, once a region of interest
+        exists; after a run it is the mesh the run used, with a node valid where its displacement is
+        finite. "Show grid" and "Show subset" are independent, like pyALDIC's toggles; the label with
+        the node count is always filled in.
         """
         self._lattice_label.setText("")
-        if not self.show_lattice.isChecked() or self._volume is None:
+        self._lattice_label.setToolTip("")
+        if self._volume is None:
             return
-        para = self._state.para
-        try:
-            plan = plan_lattice(
-                self._volume.shape, para.winsize, para.winstepsize, self._state.effective_voi(), self._state.current_mask()
-            )
-        except ValueError as exc:
-            self._lattice_label.setText(str(exc))
-            self._lattice_label.setToolTip(str(exc))
-            return
-        self._lattice_label.setText(describe(plan))
-        self._lattice_label.setToolTip(describe(plan))  # the toolbar may not have room for the whole line
-        if not draw or plan.centre_valid is None:  # no region of interest yet: nothing to judge the grid against
+        res = self._state.results
+        frame = self._state.result_frame()
+        if res is not None and frame is not None and tuple(res.volume_shape) == tuple(self._volume.shape):
+            plan = plan_from_result(res, frame)
+            grid_ready = True
+        else:
+            para = self._state.para
+            try:
+                plan = plan_lattice(
+                    self._volume.shape, para.winsize, para.winstepsize, self._state.effective_voi(), self._state.current_mask()
+                )
+            except ValueError as exc:
+                self._lattice_label.setText(str(exc))
+                self._lattice_label.setToolTip(str(exc))
+                return
+            grid_ready = plan.centre_valid is not None  # no region of interest yet: nothing to judge the grid against
+        text = describe(plan)
+        self._lattice_label.setText(text)
+        self._lattice_label.setToolTip(text)  # the toolbar may not have room for the whole line
+        want_grid = self.show_mesh.isChecked() and grid_ready
+        want_subset = self.show_subset.isChecked()
+        if not (want_grid or want_subset):
             return
         self._plan = plan
         panes = (
@@ -365,14 +389,18 @@ class SliceViewer(QWidget):
         )
         for ax, plane, index, crosshair in panes:
             segments, dist = layer_segments(plan, plane, index)
-            alpha = 0.95 if dist <= LATTICE_ON_PLANE else 0.45
-            if len(segments):
+            on_plane = dist <= LATTICE_ON_PLANE
+            if want_grid and len(segments):
+                alpha = LATTICE_ALPHA if on_plane else 0.5 * LATTICE_ALPHA
                 ax.add_collection(LineCollection(segments, colors=LATTICE_COLOR, linewidths=LATTICE_WIDTH, alpha=alpha))
+            if not want_subset:
+                continue
             node = nearest_node(plan, plane, crosshair[0], crosshair[1], index)
             if node is None:
                 continue
+            alpha = 0.95 if on_plane else 0.5
             left, bottom, w, h = subset_rect(plan, plane, node)
-            ax.add_patch(Rectangle((left, bottom), w, h, fill=False, ec=PREVIEW_COLOR, lw=1.6, alpha=alpha))
+            ax.add_patch(Rectangle((left, bottom), w, h, fill=False, ec=PREVIEW_COLOR, lw=1.4, alpha=alpha))
             # the next node along the horizontal axis shows how much neighbouring subsets overlap
             step_h = plan.winstepsize[{"xy": 0, "xz": 0, "yz": 1}[plane]]
             neighbour = nearest_node(plan, plane, node[0] + step_h, node[1], index)
@@ -399,7 +427,7 @@ class SliceViewer(QWidget):
         self.canvas.draw_idle()
 
     def _hover_lattice(self, event) -> None:
-        if self._plan is None:
+        if self._plan is None or not self.show_subset.isChecked():
             return
         plane = self._plane_at(event)
         if plane is None:
@@ -638,12 +666,18 @@ class SliceViewer(QWidget):
         self._empty.setText(self.tr("No volume loaded. Use 'Add volumes...' to start."))
         self._layout_label.setText(self.tr("Layout"))
         self.equal_scale.setText(self.tr("Same scale"))
-        self.show_lattice.setText(self.tr("Node lattice"))
-        self.show_lattice.setToolTip(
+        self.show_mesh.setText(self.tr("Show grid"))
+        self.show_mesh.setToolTip(
             self.tr(
-                "Once a region of interest is drawn, show the node lattice the run will place (layer nearest to each "
-                "slice) and the subset of the node at the crosshair; move the pointer over a node to see its subset. "
-                "Hidden while a result is overlaid."
+                "The node grid on the slices: before a run the lattice the parameters would place inside the region "
+                "of interest (layer nearest to each slice), after a run the mesh the run used."
+            )
+        )
+        self.show_subset.setText(self.tr("Show subset"))
+        self.show_subset.setToolTip(
+            self.tr(
+                "Outline the subset of the node at the crosshair (dashed: its neighbour, showing the overlap) and of "
+                "the node under the pointer, so the subset size can be judged against the texture."
             )
         )
         self.equal_scale.setToolTip(

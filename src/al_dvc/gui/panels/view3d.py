@@ -336,6 +336,10 @@ class View3DPanel(QWidget):
         self.invalidate()
 
     def _on_control_changed(self) -> None:
+        mode = self.mode_key()
+        if mode != getattr(self, "_last_mode", None):  # a new kind of geometry: frame it again
+            self._last_mode = mode
+            self._camera_reset_pending = True
         self._update_enabled()
         self.invalidate()
 
@@ -389,6 +393,8 @@ class View3DPanel(QWidget):
         parts = [f"{field_name(info.field)}: {info.n_finite}/{info.n_nodes} nodes, [{lo:.4g}, {hi:.4g}]"]
         if info.n_arrows:
             parts.append(self.tr("{n} arrows").format(n=info.n_arrows))
+        if info.note == "nodes_only":
+            parts.append(self.tr("no cell has 8 valid nodes: the valid nodes are drawn instead of the lattice"))
         if self.backend == "static":
             parts.append(self.tr("static rendering; use the camera presets to rotate"))
         self._status.setText("   ".join(parts))

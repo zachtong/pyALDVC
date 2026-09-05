@@ -114,6 +114,7 @@ def _screenshots(ref, dfm):
     for winsize, step in (((16, 16, 16), 8), ((24, 24, 8), 12)):
         window.state.set_params(winsize=winsize, winstepsize=step, search_radius=4)
         app.processEvents()
+        window.viewer.show_subset.setChecked(True)
         window.viewer.redraw()
         window.viewer.canvas.draw()
         app.processEvents()
@@ -159,7 +160,7 @@ def main(argv=None) -> int:
             fig.text(
                 0.5,
                 0.03,
-                "Dark-yellow grid: the lattice layer nearest to each slice, inside the region of interest (dimmer when "
+                "Pale grid: the lattice layer nearest to each slice, inside the region of interest (dimmer when "
                 "the layer is off the slice). Yellow box: the subset of the node at the crosshair; dashed: its "
                 "neighbour, showing the overlap.",
                 ha="center",
