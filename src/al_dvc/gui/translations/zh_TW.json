@@ -572,5 +572,6 @@
   "{s:.0f} s": "{s:.0f} 秒",
   "{what} saved: {path}": "{what}已儲存：{path}",
   "Edges": "網格線",
-  "Draw the cell edges of the deformed lattice": "繪製變形網格的單元邊線"
+  "Draw the cell edges of the deformed lattice": "繪製變形網格的單元邊線",
+  "reference state (no displacement)": "參考狀態（無位移）"
 }

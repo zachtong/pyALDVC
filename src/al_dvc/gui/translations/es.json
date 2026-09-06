@@ -572,5 +572,6 @@
   "{s:.0f} s": "{s:.0f} s",
   "{what} saved: {path}": "{what} guardado: {path}",
   "Edges": "Aristas",
-  "Draw the cell edges of the deformed lattice": "Dibujar las aristas de las celdas de la retícula deformada"
+  "Draw the cell edges of the deformed lattice": "Dibujar las aristas de las celdas de la retícula deformada",
+  "reference state (no displacement)": "estado de referencia (sin desplazamiento)"
 }

@@ -572,5 +572,6 @@
   "{s:.0f} s": "{s:.0f} 秒",
   "{what} saved: {path}": "{what}を保存しました：{path}",
   "Edges": "エッジ",
-  "Draw the cell edges of the deformed lattice": "変形格子のセルのエッジを描画"
+  "Draw the cell edges of the deformed lattice": "変形格子のセルのエッジを描画",
+  "reference state (no displacement)": "参照状態（変位なし）"
 }

@@ -572,5 +572,6 @@
   "{s:.0f} s": "{s:.0f} s",
   "{what} saved: {path}": "{what} gespeichert: {path}",
   "Edges": "Kanten",
-  "Draw the cell edges of the deformed lattice": "Zellkanten des verformten Gitters zeichnen"
+  "Draw the cell edges of the deformed lattice": "Zellkanten des verformten Gitters zeichnen",
+  "reference state (no displacement)": "Referenzzustand (keine Verschiebung)"
 }
