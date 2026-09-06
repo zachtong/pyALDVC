@@ -75,16 +75,25 @@ def test_window_analyses_applies_and_exports(qapp, aniso, tmp_path):
     assert summary["lengths_voxel"]["z"]["1/e"]["value"] == pytest.approx(res.length("z"))
     tw._on_save_png()  # headless: writes the default path
     assert (tmp_path / "texture_profiles.png").is_file()
-    # the size sweep through the worker
-    tw.run_sweep.setChecked(True)
+    # the window size analysis runs on its own, next to the autocorrelation analysis
     tw.sweep_start.setValue(16)
     tw.sweep_step.setValue(16)
     tw.sweep_count.setValue(3)
     tw.sweep_samples.setValue(2)
-    tw.analyse()
+    tw.run_sweep_analysis()
     assert tw.wait(300_000)
     _pump()
     assert tw.sweep is not None and len(tw.sweep.levels) == 3 and tw.tabs.currentIndex() == 1
+    assert tw.result is not None and tw._btn_apply.isEnabled()  # the autocorrelation result is untouched
+    if tw.sweep_size() is not None:
+        tw.use_sweep_size()
+        assert tw.window_edge.value() >= tw.sweep_size()
+    # plot controls: curves off, log scale, background, reset view
+    tw.curve_checks["x"].setChecked(False)
+    tw.plot_scale.setCurrentIndex(1)
+    tw.plot_background.setCurrentIndex(1)
+    tw.reset_view()
+    _pump()
     assert set(tw.sweep.decisions) == {float(t) for t in THRESHOLDS}
     tw.save_json(tmp_path / "s2.json")
     assert "sweep" in json.loads((tmp_path / "s2.json").read_text(encoding="utf-8"))

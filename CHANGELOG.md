@@ -80,6 +80,19 @@ All notable changes to pyALDVC are documented here. The format follows
   order (frame2 before frame10).
 
 ### Changed
+- Texture analysis window redesigned: the autocorrelation analysis and the window size
+  analysis are two parallel analyses with their own parameters, buttons and progress;
+  the window size analysis reports the size from which the correlation length is stable
+  and writes it into the analysis window with one click. Plots: larger fonts, dark /
+  white / grey background, linear or log scale, each curve and the ± 1 std band can be
+  switched off (the band is in the legend), threshold lines are labelled, zoom and pan
+  with a reset. The correlation lengths and the subset suggestion are highlighted boxes;
+  the table says "not reached", "no profile" or "plateau" instead of symbols; every
+  parameter has a tooltip that says what it does.
+- Strain window: the fit window is chosen as its full size per axis (3 x 3 x 3,
+  5 x 5 x 3, ...) with a Cube lock; smoothing steps are half a node; every parameter
+  has a tooltip.
+### Changed
 - 3-D view: the Frames animation plays the reference state (no displacement) followed
   by the result frames, and a "Smooth" option interpolates the displacement and the
   field between consecutive frames, so the deformed lattice moves like the real
