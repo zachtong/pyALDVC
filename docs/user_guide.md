@@ -79,7 +79,7 @@ volume, 3 invalid subset (mask / texture), 4 singular update, 5 NaN,
 | `export_report` | multi-page PDF with parameters, timings, convergence and field slices |
 | `export_run_summary` | JSON with the parameters and per-frame statistics |
 
-## 7. Parameter reference
+## 6. Parameter reference
 
 `dvcpara_default(**overrides)` returns a validated, immutable `DVCPara`.
 The most useful fields:
@@ -115,7 +115,7 @@ The most useful fields:
 | `n_threads` | 0 (all) | Numba thread count (CPU backend) |
 | `gradient_mode` | `"stored"` | `on_the_fly` drops the three gradient volumes (21 -> 9 bytes per voxel) for scans that do not fit otherwise; about 15-20 % slower local step |
 
-## 8. GPU acceleration
+## 7. GPU acceleration
 
 ```bash
 pip install "al-dvc[gpu]"          # numba-cuda with the CUDA 12 wheels; needs an NVIDIA driver
@@ -131,7 +131,7 @@ without a driver or without a usable device are unaffected: `backend="auto"`
 (the default) probes CUDA once and uses the CPU kernels otherwise, and the GUI
 shows which backend it picked. The portable Windows bundle is CPU-only.
 
-## 6. Command line
+## 8. Command line
 
 The same analysis without the window, for scripts and clusters:
 
