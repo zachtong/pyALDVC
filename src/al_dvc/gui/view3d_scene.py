@@ -31,6 +31,7 @@ ARROW_SCALE_FRACTION = 0.6  # longest arrow = this fraction of the node spacing 
 VOLUME_SLICE_MAX_PIXELS = 1_000_000  # subsample larger image slices before turning them into textures
 VOLUME_SLICE_OPACITY = 0.9  # the field slices behind a volume slice stay faintly visible
 VOLUME_SLICE_PERCENTILES = (0.5, 99.5)  # grey-level window of the volume slices
+PLANE_NORMAL = {"xy": "z", "xz": "y", "yz": "x"}  # plane name -> the axis it is normal to (the slice's axis)
 CAMERAS = ("iso", "xy", "xz", "yz")
 VIEW_UPS = {"z": (0.0, 0.0, 1.0), "y": (0.0, 1.0, 0.0), "x": (1.0, 0.0, 0.0)}
 SCENE_COLUMNS = (6, 1)  # relative widths of the scene renderer and the colour-bar renderer
@@ -238,7 +239,8 @@ class SceneOptions:
     """What to draw. Defaults match the slice viewer's overlay."""
 
     field: str = "disp_magnitude"
-    frame: int = 0
+    frame: int = 0  # result frame; -1 is the reference state (no displacement)
+    blend: float = 0.0  # fraction of the way from ``frame`` to the next one (displacement and field interpolated)
     mode: str = "slices"
     colormap: str = "turbo"
     clim: tuple[float, float] | None = None
@@ -251,6 +253,7 @@ class SceneOptions:
     show_volume_slices: bool = False
     iso_fraction: float = 0.5
     slice_index: dict[str, int | None] = dc_field(default_factory=dict)
+    slice_visible: dict[str, bool] = dc_field(default_factory=dict)  # per normal axis (z: XY, y: XZ, x: YZ); missing = shown
     background: str = BACKGROUND
     title: str | None = None  # scalar bar title; the field key when None
 
@@ -259,6 +262,8 @@ class SceneOptions:
             raise ValueError(f"mode must be one of {MODES}, got {self.mode!r}")
         if self.arrow_stride < 1:
             raise ValueError("arrow_stride must be >= 1")
+        if not 0.0 <= self.blend <= 1.0:
+            raise ValueError("blend must be in [0, 1]")
         if not 0.0 <= self.opacity <= 1.0:
             raise ValueError("opacity must be within [0, 1]")
         if not 0.0 <= self.iso_fraction <= 1.0:
@@ -279,8 +284,26 @@ class SceneInfo:
 
 
 # ----------------------------------------------------------------------------- datasets
-def node_grid(result: PipelineResult, frame: int, fields: tuple[str, ...] = ("disp_magnitude",)) -> "pv.ImageData":
-    """``ImageData`` over the node lattice with the requested per-node fields and the displacement vectors."""
+def _frame_arrays(result: PipelineResult, frame: int, fields: tuple[str, ...]):
+    """Per-node field values and physical displacement of ``frame``; ``-1`` is the reference state (zeros at the
+    valid nodes, NaN elsewhere)."""
+    if frame < 0:
+        valid = np.asarray(result.dvc_mesh.node_valid, dtype=bool)
+        zeros = np.where(valid, 0.0, np.nan)
+        return {name: zeros.copy() for name in fields}, np.zeros((valid.size, 3), dtype=np.float64)
+    fr = result.result_disp[frame]
+    values = {name: np.asarray(field_array(result, frame, name), dtype=np.float64) for name in fields}
+    return values, np.asarray(displacement_physical(fr, result.dvc_para.voxel_size), dtype=np.float64)
+
+
+def node_grid(
+    result: PipelineResult, frame: int, fields: tuple[str, ...] = ("disp_magnitude",), blend: float = 0.0
+) -> "pv.ImageData":
+    """``ImageData`` over the node lattice with the requested per-node fields and the displacement vectors.
+
+    ``frame`` -1 is the reference state; ``blend`` in (0, 1] interpolates linearly towards the next frame
+    (after the last frame: back to the reference state), so a frames animation can deform continuously.
+    """
     import pyvista as pv
 
     mesh = result.dvc_mesh
@@ -292,10 +315,14 @@ def node_grid(result: PipelineResult, frame: int, fields: tuple[str, ...] = ("di
     )
     if grid.n_points != mesh.n_nodes:
         raise ValueError(f"node grid {mesh.grid_shape} has {grid.n_points} lattice points but the mesh has {mesh.n_nodes} nodes")
-    fr = result.result_disp[frame]
+    values, U = _frame_arrays(result, frame, fields)
+    if blend > 0.0:
+        nxt = frame + 1 if frame + 1 < len(result.result_disp) else -1
+        values2, U2 = _frame_arrays(result, nxt, fields)
+        values = {name: (1.0 - blend) * values[name] + blend * values2[name] for name in fields}
+        U = (1.0 - blend) * U + blend * U2
     for name in fields:
-        grid.point_data[name] = np.asarray(field_array(result, frame, name), dtype=np.float64)
-    U = np.asarray(displacement_physical(fr, result.dvc_para.voxel_size), dtype=np.float64)
+        grid.point_data[name] = values[name]
     grid.point_data[DISPLACEMENT_ARRAY] = np.nan_to_num(U)
     return grid
 
@@ -375,8 +402,8 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
     import pyvista as pv
 
     plotter.clear()
-    frame = int(np.clip(opts.frame, 0, len(result.result_disp) - 1))
-    grid = node_grid(result, frame, (opts.field,))
+    frame = int(np.clip(opts.frame, -1, len(result.result_disp) - 1))
+    grid = node_grid(result, frame, (opts.field,), blend=opts.blend)
     values = np.asarray(grid.point_data[opts.field])
     finite = np.isfinite(values)
     clim = opts.clim if opts.clim is not None else auto_clim(values)
@@ -408,8 +435,15 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
 
     if opts.mode == "slices":
         x, y, z = _slice_positions(result, opts.slice_index)
-        sliced = grid.slice_orthogonal(x=x, y=y, z=z)
-        info.actors["field"] = plotter.add_mesh(sliced, opacity=opts.opacity, **common)
+        parts = [
+            grid.slice(normal=normal, origin=(x, y, z))
+            for axis, normal in (("z", (0.0, 0.0, 1.0)), ("y", (0.0, 1.0, 0.0)), ("x", (1.0, 0.0, 0.0)))
+            if opts.slice_visible.get(axis, True)
+        ]
+        parts = [part for part in parts if part.n_points]  # a cut at the lattice edge can be empty: merging it drops the arrays
+        if parts:
+            sliced = parts[0] if len(parts) == 1 else parts[0].merge(parts[1:])
+            info.actors["field"] = plotter.add_mesh(sliced, opacity=opts.opacity, **common)
     elif opts.mode == "points":
         idx = np.flatnonzero(finite)
         if idx.size:
@@ -457,6 +491,8 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
     if opts.show_volume_slices and volume is not None:
         planes = volume_slice_planes(volume, opts.slice_index, result.dvc_para.voxel_size)
         for key, (quad, texture) in planes.items():
+            if not opts.slice_visible.get(PLANE_NORMAL[key], True):
+                continue
             info.actors[f"volume_{key}"] = plotter.add_mesh(
                 quad, texture=texture, lighting=False, show_scalar_bar=False, opacity=VOLUME_SLICE_OPACITY
             )

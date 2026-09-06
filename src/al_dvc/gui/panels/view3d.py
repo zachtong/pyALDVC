@@ -304,6 +304,7 @@ class View3DPanel(QWidget):
         self.anim_speed = QDoubleSpinBox()
         self.anim_speed.setDecimals(1)
         self.anim_speed.setFixedWidth(84)
+        self.anim_smooth = QCheckBox()  # frames: interpolate the deformation between frames
         self._btn_play = tool_button("play")
         self._btn_stop = tool_button("stop")
         self._btn_record = QPushButton()
@@ -380,6 +381,7 @@ class View3DPanel(QWidget):
         anim.addWidget(self.anim_direction)
         anim.addWidget(self._labels["anim_speed"])
         anim.addWidget(self.anim_speed)
+        anim.addWidget(self.anim_smooth)
         anim.addSpacing(6)
         anim.addWidget(self._btn_play)
         anim.addWidget(self._btn_stop)
@@ -434,18 +436,28 @@ class View3DPanel(QWidget):
         layout.addWidget(self._stack, stretch=1)
         self.slice_sliders: dict[str, QSlider] = {}
         self._slider_labels: dict[str, QLabel] = {}
+        self.slice_visible: dict[str, QCheckBox] = {}  # per plane: show the XY (z), XZ (y), YZ (x) slice
         sliders = QHBoxLayout()
         for axis in SLICE_AXES:
             col = QVBoxLayout()
+            head = QHBoxLayout()
+            head.setSpacing(6)
+            show = QCheckBox()
+            show.setChecked(True)
+            show.toggled.connect(lambda _v: self._on_control_changed())
             lab = QLabel(f"{axis} = -")
+            head.addWidget(show)
+            head.addWidget(lab)
+            head.addStretch(1)
             s = QSlider(Qt.Orientation.Horizontal)
             s.setRange(0, 0)
             s.valueChanged.connect(lambda v, a=axis: self._on_slice_spin(a, v))
-            col.addWidget(lab)
+            col.addLayout(head)
             col.addWidget(s)
             sliders.addLayout(col)
             self.slice_sliders[axis] = s
             self._slider_labels[axis] = lab
+            self.slice_visible[axis] = show
         self._slider_box = QWidget()
         self._slider_box.setLayout(sliders)
         layout.addWidget(self._slider_box)
@@ -470,6 +482,7 @@ class View3DPanel(QWidget):
         self.anim_axis.currentIndexChanged.connect(lambda _i: self._on_anim_param())
         self.anim_direction.currentIndexChanged.connect(lambda _i: self._on_anim_param())
         self.anim_speed.valueChanged.connect(lambda _v: self._on_anim_param())
+        self.anim_smooth.toggled.connect(lambda _v: self._on_anim_param())
         self._btn_play.clicked.connect(self.toggle_play)
         self._btn_stop.clicked.connect(self.stop_animation)
         self._btn_record.clicked.connect(self._on_record)
@@ -536,6 +549,7 @@ class View3DPanel(QWidget):
             show_volume_slices=self.volume_slices.isChecked(),
             iso_fraction=float(self.iso.value()),
             slice_index=dict(st.slice_index),
+            slice_visible={axis: cb.isChecked() for axis, cb in self.slice_visible.items()},
             background=BACKGROUNDS.get(self.background_key(), BACKGROUND),
             title=field_name(st.display_field),
         )
@@ -624,7 +638,22 @@ class View3DPanel(QWidget):
 
     def _on_control_changed(self) -> None:
         self._update_enabled()
+        self._sync_animation_choices()
         self.invalidate()
+
+    def _sync_animation_choices(self) -> None:
+        """Only animations that can show something are selectable: a slice sweep needs the field slices
+        (Slices mode) or the volume slices. Orbit and Frames work in every mode."""
+        sweep_ok = self.mode_key() == "slices" or self.volume_slices.isChecked()
+        idx = self.anim_kind.findData("slice")
+        if idx < 0:
+            return
+        item = self.anim_kind.model().item(idx)
+        if item is not None:
+            item.setEnabled(sweep_ok)
+        if not sweep_ok and self.anim_kind_key() == "slice":
+            self.anim_kind.setCurrentIndex(max(0, self.anim_kind.findData("orbit")))
+            self._status.setText(self.tr("Slice sweep needs the Slices mode or the volume slices: animation set to Orbit."))
 
     def _on_background(self) -> None:
         colour = BACKGROUNDS.get(self.background_key(), BACKGROUND)
@@ -816,6 +845,7 @@ class View3DPanel(QWidget):
             axis=str(self.anim_axis.currentData() or "z"),
             direction=1 if (self.anim_direction.currentData() or "ccw") == "ccw" else -1,
             speed=float(self.anim_speed.value()),
+            smooth=bool(kind == "frames" and self.anim_smooth.isChecked()),
         )
         if kind == "orbit" and "duration" not in overrides:
             values["duration"] = 360.0 / float(self.anim_speed.value())  # one full turn
@@ -832,8 +862,10 @@ class View3DPanel(QWidget):
         finally:
             self._updating = False
         self.anim_axis.setVisible(kind in ("orbit", "slice"))
-        self.anim_direction.setVisible(kind in ("orbit", "frames", "slice"))
-        self.anim_speed.setSuffix({"orbit": " °/s", "frames": " f/s", "slice": " vx/s", "warp": " /s"}[kind])
+        self.anim_direction.setVisible(True)
+        retranslate_combo(self.anim_direction, "direction" if kind == "orbit" else "direction_linear")
+        self.anim_smooth.setVisible(kind == "frames")
+        self.anim_speed.setSuffix({"orbit": " °/s", "frames": " f/s", "slice": " vx/s"}[kind])
         if self._play_base is not None:  # playing or paused: another kind is a new animation, from the start
             self.stop_animation()
 
@@ -871,16 +903,6 @@ class View3DPanel(QWidget):
         opts = replace(self.options(), frame=base_opts.frame)
         return frame_at(self.animation_spec(), t, base_cam, opts, len(res.result_disp), tuple(res.volume_shape))
 
-    def _fit_mode_to_animation(self, kind: str) -> None:
-        """A slice sweep needs slices and a growing lattice needs the deformed lattice: switch the mode."""
-        wanted = {"warp": "warped", "slice": "slices"}.get(kind)
-        if wanted is None or self.mode_key() == wanted or (kind == "slice" and self.volume_slices.isChecked()):
-            return
-        idx = self.mode.findData(wanted)
-        if idx >= 0:
-            self.mode.setCurrentIndex(idx)
-            self._state.log(self.tr("3-D view: mode switched to {mode} for the animation").format(mode=self.mode.currentText()))
-
     def recording(self) -> bool:
         return self._recorder is not None and self._recorder.isRunning()
 
@@ -897,7 +919,6 @@ class View3DPanel(QWidget):
                 self._status.setText(self.tr("Recording in progress: wait for it to finish or cancel it."))
                 return
             if self._play_base is None:
-                self._fit_mode_to_animation(self.anim_kind_key())
                 self._play_kind = self.anim_kind_key()
                 self._play_base = (self.base_camera(), self.options())
                 self._last_frame = None
@@ -1097,10 +1118,13 @@ class View3DPanel(QWidget):
             self.anim_axis,
             self.anim_direction,
             self.anim_speed,
+            self.anim_smooth,
             self._btn_play,
             self._btn_stop,
         ):
             w.setEnabled(has)
+        for cb in self.slice_visible.values():
+            cb.setEnabled(has)
         self._btn_record.setEnabled(has or self.recording())  # while recording the button cancels
         show_slices = mode == "slices"
         self._slider_box.setVisible(show_slices or self.volume_slices.isChecked())
@@ -1174,7 +1198,7 @@ class View3DPanel(QWidget):
         retranslate_combo(self.camera, "camera")
         retranslate_combo(self.background, "background")
         retranslate_combo(self.anim_kind, "animation")
-        retranslate_combo(self.anim_direction, "direction")
+        retranslate_combo(self.anim_direction, "direction" if self.anim_kind_key() == "orbit" else "direction_linear")
         self.mode.setToolTip(
             self.tr(
                 "Orthogonal slices of the field, node points, an iso-surface, "
@@ -1183,13 +1207,25 @@ class View3DPanel(QWidget):
         )
         self.anim_kind.setToolTip(
             self.tr(
-                "Orbit: the camera turns about the chosen axis. Frames: the result frames play in sequence. "
-                "Slice sweep: one field slice moves through the volume. "
-                "Deformed lattice: the lattice grows to the warp scale and back."
+                "Orbit: the camera turns about the chosen axis. Frames: the reference state and the result frames "
+                "play in sequence (tick Smooth for a continuous deformation). "
+                "Slice sweep: one field slice moves through the volume (Slices mode or volume slices)."
             )
         )
         self.anim_axis.setToolTip(self.tr("Axis turned about (orbit) or swept along (slice)"))
-        self.anim_speed.setToolTip(self.tr("Degrees, frames, voxels or cycles per second"))
+        self.anim_speed.setToolTip(
+            self.tr("Degrees per second (orbit), frames per second (frames) or voxels per second (slice sweep)")
+        )
+        self.anim_smooth.setText(self.tr("Smooth"))
+        self.anim_smooth.setToolTip(
+            self.tr(
+                "Interpolate the displacement and the field between consecutive frames: the lattice deforms "
+                "continuously from the reference state through every frame instead of jumping"
+            )
+        )
+        for axis, plane in (("z", "XY"), ("y", "XZ"), ("x", "YZ")):
+            self.slice_visible[axis].setText(plane)
+            self.slice_visible[axis].setToolTip(self.tr("Show the {plane} slice").format(plane=plane))
         self._btn_play.setToolTip(self.tr("Pause") if self._playing else self.tr("Play"))
         self._btn_stop.setToolTip(self.tr("Stop and return to the start"))
         if self.recording():

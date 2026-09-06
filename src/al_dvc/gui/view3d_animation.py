@@ -6,11 +6,11 @@ off-screen recording produce the same sequence:
 ``orbit``
     the camera turns about the view-up axis (``axis``) at ``speed`` degrees per second;
 ``frames``
-    the result frames play one after another at ``speed`` frames per second;
+    the reference state (no displacement) and the result frames play one after another at
+    ``speed`` frames per second; with ``smooth`` the displacement and the field are interpolated
+    between consecutive frames, so the deformed lattice moves like the real deformation;
 ``slice``
-    one of the three field slices sweeps through the volume at ``speed`` voxels per second;
-``warp``
-    the deformed lattice grows from an undeformed lattice to the chosen warp scale and back.
+    one of the three field slices sweeps through the volume at ``speed`` voxels per second.
 
 Recording renders every frame off-screen at the requested size and writes a GIF (always), an
 MP4 (when ``imageio`` with ffmpeg is installed) or a folder of PNGs.
@@ -26,12 +26,12 @@ import numpy as np
 
 from .view3d_scene import CameraState, SceneOptions, render_image
 
-KINDS = ("orbit", "frames", "slice", "warp")
+KINDS = ("orbit", "frames", "slice")
 FORMATS = ("gif", "mp4", "png")
 MAX_FRAMES = {"gif": 600, "mp4": 3600, "png": 3600}  # a GIF is assembled in memory; MP4 and PNG stream to disk
 SIZES = {"view": None, "hd": (1280, 960), "full": (1920, 1440)}
-DEFAULT_SPEEDS = {"orbit": 30.0, "frames": 2.0, "slice": 20.0, "warp": 1.0}  # deg/s, frames/s, voxel/s, cycles/s
-SPEED_RANGES = {"orbit": (1.0, 360.0), "frames": (0.2, 30.0), "slice": (1.0, 500.0), "warp": (0.05, 5.0)}
+DEFAULT_SPEEDS = {"orbit": 30.0, "frames": 2.0, "slice": 20.0}  # degrees/s, frames/s, voxels/s
+SPEED_RANGES = {"orbit": (1.0, 360.0), "frames": (0.2, 30.0), "slice": (1.0, 500.0)}
 
 
 def mp4_available() -> bool:
@@ -57,6 +57,7 @@ class AnimationSpec:
     size: str = "view"
     format: str = "gif"
     loop: bool = True
+    smooth: bool = False  # frames: interpolate displacement and field between consecutive frames
 
     def __post_init__(self) -> None:
         if self.kind not in KINDS:
@@ -119,19 +120,19 @@ def frame_at(spec: AnimationSpec, t: float, base_camera, base_options: SceneOpti
             camera = replace(base_camera, view_up=spec.axis, azimuth=(base_camera.azimuth + angle) % 360.0)
     elif spec.kind == "frames":
         n = max(1, int(n_result_frames))
-        k = int(np.floor(spec.speed * t)) % n
-        options = replace(base_options, frame=(base_options.frame + spec.direction * k) % n)
-    elif spec.kind == "slice":
+        length = n + 1  # the reference state (frame -1, no displacement) followed by the result frames
+        start = int(base_options.frame) + 1  # sequence index of the frame the animation started from
+        pos = (start + spec.direction * spec.speed * t) % length
+        k = int(np.floor(pos))
+        blend = float(pos - k) if spec.smooth else 0.0  # fraction of the way to the next frame
+        options = replace(base_options, frame=k - 1, blend=blend)
+    else:  # slice
         nz, ny, nx = (int(v) for v in shape)
         length = {"x": nx, "y": ny, "z": nz}[spec.axis]
         start = base_options.slice_index.get(spec.axis)
         start = int(start) if start is not None else length // 2
         pos = int(np.floor(start + spec.direction * spec.speed * t)) % max(1, length)
         options = replace(base_options, slice_index={**base_options.slice_index, spec.axis: pos})
-    else:  # warp: a triangle wave between 0 and the chosen scale
-        phase = (spec.speed * t) % 1.0
-        f = 2.0 * phase if phase < 0.5 else 2.0 * (1.0 - phase)
-        options = replace(base_options, warp_scale=float(base_options.warp_scale) * f)
     return Frame(int(round(t * spec.fps)), float(t), camera, options)
 
 

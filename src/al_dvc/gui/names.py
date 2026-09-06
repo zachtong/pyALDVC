@@ -71,11 +71,14 @@ CHOICES: dict[str, dict[str, str]] = {
         "orbit": tr_noop("Orbit"),
         "frames": tr_noop("Frames"),
         "slice": tr_noop("Slice sweep"),
-        "warp": tr_noop("Deformed lattice"),
     },
     "direction": {
         "ccw": tr_noop("Counter-clockwise"),
         "cw": tr_noop("Clockwise"),
+    },
+    "direction_linear": {  # frames and slice sweeps: the same keys, read as forward / backward
+        "ccw": tr_noop("Forward"),
+        "cw": tr_noop("Backward"),
     },
     "camera": {
         "iso": tr_noop("Isometric"),

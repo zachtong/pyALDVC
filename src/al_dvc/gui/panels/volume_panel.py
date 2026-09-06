@@ -8,13 +8,14 @@ per-frame actions.
 
 from __future__ import annotations
 
-import re
+from collections import Counter
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -27,18 +28,42 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..app_state import AppState
+from ..app_state import AppState, lexical_key, natural_key
 
 VOLUME_FILTER = "Volumes (*.tif *.tiff *.mat *.npy *.npz *.h5 *.hdf5 *.nii *.nii.gz *.nrrd);;All files (*)"
 COLUMNS = ("thumb", "index", "name", "shape", "region")
 THUMB_SIZE = 44  # px, middle XY slice of a loaded volume
-_NUMBER = re.compile(r"(\d+)")
+SETTINGS_ORG, SETTINGS_APP = "pyALDVC", "gui"
+NATURAL_SORT_KEY = "ui/natural_sort"
+
+__all__ = ["VolumePanel", "natural_key", "lexical_key", "select_single_type", "thumbnail_pixmap"]
 
 
-def natural_key(path: str | Path) -> tuple:
-    """Sort key that orders the numbers inside a name numerically: frame2 before frame10, not after frame1."""
-    parts = _NUMBER.split(str(path))
-    return tuple(int(part) if part.isdigit() else part.lower() for part in parts)
+def _kind(path: Path) -> str:
+    """The file type of a volume path: the (compound) extension, or ``dir`` for a folder of slices."""
+    if path.is_dir():
+        return "dir"
+    name = path.name.lower()
+    return ".nii.gz" if name.endswith(".nii.gz") else path.suffix.lower()
+
+
+def select_single_type(paths: list[str]) -> tuple[list[str], dict[str, int]]:
+    """Keep the files of one supported volume type (the most numerous one) and count what is left out.
+
+    A sequence is one kind of file; stray files of other types in the same folder (notes, previews,
+    exports) must not become frames. Returns ``(kept, skipped)`` with ``skipped`` counting per type.
+    """
+    from al_dvc.io.volume_io import VOLUME_EXT
+
+    supported = set(VOLUME_EXT) | {".nii.gz", "dir"}
+    kinds = {p: _kind(Path(p)) for p in paths}
+    counts = Counter(k for k in kinds.values() if k in supported)
+    if not counts:
+        return [], dict(Counter(kinds.values()))
+    keep = max(counts, key=lambda k: (counts[k], k))
+    kept = [p for p in paths if kinds[p] == keep]
+    skipped = Counter(k if k else "(no extension)" for p, k in kinds.items() if k != keep)
+    return kept, dict(skipped)
 
 
 def thumbnail_pixmap(volume, size: int = THUMB_SIZE):
@@ -101,6 +126,8 @@ class VolumePanel(QWidget):
         header.setHighlightSections(False)
         self._btn_add = QPushButton()
         self._btn_folder = QPushButton()
+        self._natural_sort = QCheckBox()
+        self._natural_sort.setChecked(bool(QSettings(SETTINGS_ORG, SETTINGS_APP).value(NATURAL_SORT_KEY, True, type=bool)))
         self._btn_mask = QPushButton()
         self._btn_remove = QPushButton()
         self._btn_up = QPushButton()
@@ -128,6 +155,10 @@ class VolumePanel(QWidget):
         row1.addWidget(self._btn_folder)
         layout.addLayout(row1)
         layout.addWidget(self._list)
+        row_sort = QHBoxLayout()
+        row_sort.addWidget(self._natural_sort)
+        row_sort.addStretch(1)
+        layout.addLayout(row_sort)
         row2 = QHBoxLayout()
         row2.addWidget(self._btn_mask)
         row2.addWidget(self._btn_remove)
@@ -138,6 +169,7 @@ class VolumePanel(QWidget):
         layout.addWidget(self._roi_hint)
 
         self._btn_add.clicked.connect(self._on_add_files)
+        self._natural_sort.toggled.connect(self._on_natural_sort)
         self._btn_folder.clicked.connect(self._on_add_folder)
         self._btn_mask.clicked.connect(self._on_set_mask)
         self._btn_remove.clicked.connect(self._on_remove)
@@ -167,46 +199,90 @@ class VolumePanel(QWidget):
             event.acceptProposedAction()
 
     def add_dropped(self, paths: list[str]) -> int:
-        """Add dropped files and folders (a folder contributes every volume file it holds); returns the count."""
+        """Add dropped files and folders; a dropped folder replaces the sequence like Add folder. Returns the count."""
         from al_dvc.io.volume_io import resolve_volume_paths
 
         files: list[str] = []
+        replace = False
         for p in paths:
             path = Path(p)
             if path.is_dir():
+                replace = True
                 try:
                     files += [str(q) for q in resolve_volume_paths(str(path))]
                 except Exception as exc:
                     self._state.log(f"{path}: {exc}", "error")
             elif path.is_file():
                 files.append(str(path))
-        if files:
-            self._state.add_volume_paths(sorted(files, key=natural_key))
-        else:
+        if not files:
             self._state.log(self.tr("Nothing usable was dropped (volumes or a folder of volumes)."), "warning")
-        return len(files)
+            return 0
+        return self.import_files(files, replace=replace)
+
+    def sort_key(self):
+        return natural_key if self._natural_sort.isChecked() else lexical_key
+
+    def import_files(self, files: list[str], replace: bool = False) -> int:
+        """Add the files of one volume type, in the chosen order; ``replace`` drops the current sequence first.
+        Returns how many frames were added."""
+        kept, skipped = select_single_type([str(f) for f in files])
+        if not kept:
+            self._state.log(
+                self.tr("No volume files among the selection ({types}).").format(
+                    types=", ".join(f"{n} {k}" for k, n in sorted(skipped.items()))
+                ),
+                "warning",
+            )
+            return 0
+        if replace and self._state.volumes:
+            n_old = len(self._state.volumes)
+            self._state.clear_volumes()
+            if self._state.volumes:  # locked by a run
+                return 0
+            self._state.log(self.tr("The previous {n} volume(s) were replaced.").format(n=n_old))
+        self._state.add_volume_paths(sorted(kept, key=self.sort_key()))
+        kind = _kind(Path(kept[0]))
+        self._state.log(
+            self.tr("{n} {kind} volume(s) added").format(n=len(kept), kind=self.tr("slice-folder") if kind == "dir" else kind)
+        )
+        if skipped:
+            self._state.log(
+                self.tr("Skipped {n} file(s) of other types: {types}").format(
+                    n=sum(skipped.values()), types=", ".join(f"{k} ({v})" for k, v in sorted(skipped.items()))
+                ),
+                "warning",
+            )
+        return len(kept)
 
     # ------------------------------------------------------------------ actions
+    def _on_natural_sort(self, natural: bool) -> None:
+        QSettings(SETTINGS_ORG, SETTINGS_APP).setValue(NATURAL_SORT_KEY, bool(natural))
+        self._state.sort_volumes(bool(natural))
+
     def _on_add_files(self) -> None:
         files, _ = QFileDialog.getOpenFileNames(self, self.tr("Add volumes"), "", VOLUME_FILTER)
         if files:
-            self._state.add_volume_paths(sorted(files, key=natural_key))
+            self.import_files(files, replace=False)
 
     def _on_add_folder(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, self.tr("Add a folder of volumes"))
+        folder = QFileDialog.getExistingDirectory(self, self.tr("Folder of volumes (replaces the sequence)"))
         if not folder:
             return
+        self.import_folder(folder)
+
+    def import_folder(self, folder: str) -> int:
+        """The volumes of ``folder`` (one type) become the sequence; whatever was listed before is dropped."""
         from al_dvc.io.volume_io import resolve_volume_paths
 
         try:
             paths = resolve_volume_paths(folder)
         except Exception as exc:
             self._state.log(f"{folder}: {exc}", "error")
-            return
-        if paths:
-            self._state.add_volume_paths(sorted((str(p) for p in paths), key=natural_key))
-        else:
+            return 0
+        if not paths:
             self._state.log(self.tr("No volume files found in {folder}").format(folder=folder), "warning")
+            return 0
+        return self.import_files([str(p) for p in paths], replace=True)
 
     def _on_set_mask(self) -> None:
         row = self._list.currentRow()
@@ -346,7 +422,16 @@ class VolumePanel(QWidget):
 
     def retranslate_ui(self) -> None:
         self._btn_add.setText(self.tr("Add volumes..."))
+        self._btn_add.setToolTip(self.tr("Append volume files of one type to the sequence"))
         self._btn_folder.setText(self.tr("Add folder..."))
+        self._btn_folder.setToolTip(self.tr("The volumes of a folder become the sequence (the current list is replaced)"))
+        self._natural_sort.setText(self.tr("Natural order (1, 2, ..., 10)"))
+        self._natural_sort.setToolTip(
+            self.tr(
+                "Numbers inside file names compare numerically (frame2 before frame10); "
+                "unticked, names compare character by character (000, 001, ...)"
+            )
+        )
         self._btn_mask.setText(self.tr("Set mask..."))
         self._btn_remove.setText(self.tr("Remove"))
         self._btn_up.setText("\u25b2")  # up-pointing triangle

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -25,6 +26,18 @@ from al_dvc.core.data_structures import PipelineResult, VOIRange, voi_from_mask
 from .mask_editor import MaskEditor, MaskOp
 
 logger = logging.getLogger(__name__)
+_NUMBER = re.compile(r"(\d+)")
+
+
+def natural_key(path: str | Path) -> tuple:
+    """Sort key that orders the numbers inside a file name numerically: frame2 before frame10."""
+    parts = _NUMBER.split(Path(path).name)
+    return tuple(int(part) if part.isdigit() else part.lower() for part in parts)
+
+
+def lexical_key(path: str | Path) -> str:
+    """Sort key that compares file names character by character (000, 001, ..., as the file system lists them)."""
+    return Path(path).name.lower()
 
 
 class RunState(enum.Enum):
@@ -189,6 +202,26 @@ class AppState(QObject):
         self.mask_changed.emit()
         if self.results is not None:
             self.results_changed.emit()  # every row keeps the result it was computed for
+
+    def sort_volumes(self, natural: bool = True) -> None:
+        """Reorder the sequence by file name, numbers compared numerically (``natural``) or character by
+        character; the selected volume stays selected."""
+        if len(self.volumes) < 2 or self._locked("sort volumes"):
+            return
+        key = natural_key if natural else lexical_key
+        order = sorted(range(len(self.volumes)), key=lambda i: key(self.volumes[i].name))
+        if order == list(range(len(self.volumes))):
+            return
+        current = self.volumes[self.current_frame] if self.current_frame < len(self.volumes) else None
+        self.volumes = [self.volumes[i] for i in order]
+        self.current_frame = self.volumes.index(current) if current is not None else 0
+        self.mask_editor = None
+        self._sequence_changed()
+        self.volumes_changed.emit()
+        self.current_frame_changed.emit(self.current_frame)
+        self.mask_changed.emit()
+        if self.results is not None:
+            self.results_changed.emit()
 
     def clear_volumes(self) -> None:
         if self._locked("clear volumes"):
@@ -437,7 +470,10 @@ class AppState(QObject):
         return k - 1
 
     def volume_for_result(self, frame: int) -> int | None:
-        """Index in ``volumes`` of the deformed volume that result frame ``frame`` describes (``None`` if gone)."""
+        """Index in ``volumes`` of the deformed volume that result frame ``frame`` describes (``None`` if gone);
+        frame -1 is the reference state, i.e. the reference volume."""
+        if frame < 0:
+            return 0 if self.volumes else None
         if self.result_uids:
             if frame + 1 >= len(self.result_uids):
                 return None

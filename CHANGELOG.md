@@ -77,6 +77,20 @@ All notable changes to pyALDVC are documented here. The format follows
   order (frame2 before frame10).
 
 ### Changed
+- 3-D view: the Frames animation plays the reference state (no displacement) followed
+  by the result frames, and a "Smooth" option interpolates the displacement and the
+  field between consecutive frames, so the deformed lattice moves like the real
+  deformation; it replaces the separate "Deformed lattice" animation. Speed is in
+  frames per second. Each of the three slices (XY, XZ, YZ) has its own check box in
+  the Slices mode (also for the volume slices). A slice sweep is only offered when
+  the Slices mode or the volume slices are on; the mode is never switched behind the
+  user's back.
+- Volume import: a "Natural order (1, 2, ..., 10)" check box (remembered) chooses
+  between numeric and character order, like pyALDIC, and re-sorts the list; an
+  import keeps one volume type only (the most numerous one) and reports the files
+  it skipped; Add folder (or a dropped folder) replaces the sequence instead of
+  appending to it.
+### Changed
 - Subset step is set per axis like the subset size (three boxes and a "Same"
   lock), so an anisotropic step from the texture analysis is visible and
   survives edits.

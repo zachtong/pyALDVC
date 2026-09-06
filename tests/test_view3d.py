@@ -59,6 +59,27 @@ def test_node_grid_matches_mesh_ordering(small_result):
     assert np.all(np.isfinite(vec))
 
 
+def test_node_grid_reference_state_and_blend(small_result):
+    res, _ref = small_result
+    from al_dvc.gui.view3d_scene import DISPLACEMENT_ARRAY
+
+    g0 = node_grid(res, 0, ("disp_magnitude",))
+    ref = node_grid(res, -1, ("disp_magnitude",))
+    valid = np.asarray(res.dvc_mesh.node_valid, dtype=bool)
+    assert np.all(np.asarray(ref.point_data[DISPLACEMENT_ARRAY]) == 0.0)
+    assert np.all(np.asarray(ref.point_data["disp_magnitude"])[valid] == 0.0)
+    assert np.all(np.isnan(np.asarray(ref.point_data["disp_magnitude"])[~valid]))
+    half = node_grid(res, -1, ("disp_magnitude",), blend=0.5)  # half-way from the reference state to frame 0
+    half_u = np.asarray(half.point_data[DISPLACEMENT_ARRAY])
+    np.testing.assert_allclose(half_u, 0.5 * np.asarray(g0.point_data[DISPLACEMENT_ARRAY]))
+    # slices mode draws only the planes that are switched on
+    img_all, info_all = render_image(res, SceneOptions(mode="slices"), None, window_size=(240, 180))
+    one = SceneOptions(mode="slices", slice_visible={"y": False, "x": False})
+    img_one, info_one = render_image(res, one, None, window_size=(240, 180))
+    assert info_one.actors["field"].bounds[4] == info_one.actors["field"].bounds[5]  # a single XY plane: flat in z
+    assert np.abs(img_all.astype(int) - img_one.astype(int)).mean() > 0.5
+
+
 def test_volume_slice_planes_geometry():
     vol = np.arange(np.prod(SHAPE), dtype=np.float32).reshape(SHAPE)
     planes = volume_slice_planes(vol, {"z": 5, "y": 7, "x": 9}, voxel_size=(2.0, 1.0, 0.5))

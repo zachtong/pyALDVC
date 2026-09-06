@@ -84,9 +84,11 @@ elements, finite differences or the solver's gradient; infinitesimal,
 Green-Lagrange, Euler-Almansi or Hencky measures; smoothing and edge trimming.
 The 3-D view shows field slices, node points, iso-surfaces, the deformed
 lattice and displacement arrows. Its camera row (azimuth, elevation, zoom) follows
-the mouse, and the animation row plays an orbit about any axis, a frame sequence,
-a slice sweep or a growing warp, at a chosen speed and direction; Record writes
-the animation as GIF, MP4 or PNG frames.
+the mouse, and the animation row plays an orbit about any axis, the frame sequence
+(from the reference state, optionally with the deformation interpolated between
+frames so the lattice moves continuously) or a slice sweep, at a chosen speed and
+direction; each of the three slices can be switched off; Record writes the
+animation as GIF, MP4 or PNG frames.
 
 <p align="center">
   <img src="assets/screenshot_strain.png" alt="Strain post-processing window" width="46%"/>
@@ -215,7 +217,7 @@ range (memory and time scale with the region, not with the scan). Mask drawing
 through all slices, one slice or a range; add / cut; undo; `reports/mask_tools.pdf`), a
 3-D view (pyvista: field slices with their own position controls, node points,
 iso-surface, warped lattice, displacement arrows, volume slices, selectable
-background, camera controls, orbit / frames / slice / warp animations recorded
+background, camera controls, orbit / frames (smooth deformation) / slice animations recorded
 as GIF, MP4 or PNG; `reports/view3d.pdf`), a strain post-processing window (method,
 measure, smoothing chosen after the run, computed on demand; Ctrl+T) and an
 export dialog (npz, mat, CSV, ParaView, PDF report, slice images; Ctrl+E),

@@ -121,8 +121,8 @@ def main(argv=None) -> int:
             SceneOptions(field="disp_u", mode="slices", slice_index={**mid, "z": 0}),
         ),
         (
-            AnimationSpec(kind="warp", speed=1.0 / 6.0, fps=1, duration=6.0),
-            "deformed lattice growing to x5",
+            AnimationSpec(kind="frames", speed=0.5, smooth=True, fps=1, duration=6.0),
+            "frames with smooth deformation (reference state to the last frame, x5)",
             SceneOptions(field="disp_u", mode="warped", warp_scale=5.0),
         ),
     ):

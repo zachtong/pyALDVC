@@ -98,22 +98,22 @@ def test_animation_spec_and_frames(result):
     # orbit: the azimuth advances at the speed, in the chosen direction, about the chosen axis
     f = frame_at(AnimationSpec(kind="orbit", axis="y", speed=90.0, direction=-1), 1.0, base_cam, base, n, shape)
     assert f.camera.azimuth == pytest.approx((10.0 - 90.0) % 360) and f.camera.view_up == "y" and f.options == base
-    # frames: wraps around the result frames
+    # frames: the reference state (-1) then the result frames, from the current frame on, wrapping
     f = frame_at(AnimationSpec(kind="frames", speed=2.0), 1.0, base_cam, base, n, shape)
-    assert f.options.frame == (1 + 2) % n and f.camera == base_cam
+    assert f.options.frame == (base.frame + 1 + 2) % (n + 1) - 1 and f.camera == base_cam and f.options.blend == 0.0
+    f = frame_at(AnimationSpec(kind="frames", speed=1.0), 1.0, base_cam, base, n, shape)
+    assert f.options.frame == -1  # after the last frame comes the reference state
+    # smooth: part of the way to the next frame
+    f = frame_at(AnimationSpec(kind="frames", speed=1.0, smooth=True), 0.25, base_cam, base, n, shape)
+    assert f.options.frame == base.frame and f.options.blend == pytest.approx(0.25)
     # slice: sweeps the chosen axis through the volume and wraps
     f = frame_at(AnimationSpec(kind="slice", axis="z", speed=20.0), 1.0, base_cam, base, n, shape)
     assert f.options.slice_index["z"] == (10 + 20) % shape[0] and f.options.slice_index["x"] == 5
     f = frame_at(AnimationSpec(kind="slice", axis="y", speed=20.0), 0.5, base_cam, base, n, shape)
     assert f.options.slice_index["y"] == (shape[1] // 2 + 10) % shape[1]  # an unset slice starts in the middle
-    # warp: a triangle wave from 0 to the scale and back
-    spec = AnimationSpec(kind="warp", speed=1.0)
-    assert frame_at(spec, 0.0, base_cam, base, n, shape).options.warp_scale == 0.0
-    assert frame_at(spec, 0.5, base_cam, base, n, shape).options.warp_scale == pytest.approx(4.0)
-    assert frame_at(spec, 0.25, base_cam, base, n, shape).options.warp_scale == pytest.approx(2.0)
     seq = list(frames(AnimationSpec(kind="orbit", speed=60.0, fps=5, duration=2.0), base_cam, base, n, shape))
     assert len(seq) == 10 and seq[0].time == 0.0 and seq[-1].time == pytest.approx(1.8)
-    assert all(k in KINDS for k in ("orbit", "frames", "slice", "warp"))
+    assert KINDS == ("orbit", "frames", "slice")
 
 
 def test_record_gif_and_png(result, tmp_path):
@@ -202,8 +202,20 @@ def test_panel_camera_controls_playback_and_recording(result, tmp_path):
     assert select_key(panel.anim_kind, "orbit") and panel.anim_axis.isVisibleTo(panel)
     spec = panel.animation_spec()
     assert spec.kind == "orbit" and spec.duration == pytest.approx(360.0 / spec.speed)
-    assert select_key(panel.anim_kind, "warp") and not panel.anim_axis.isVisibleTo(panel)
-    assert panel.animation_spec().speed == 1.0
+    assert select_key(panel.anim_kind, "frames") and not panel.anim_axis.isVisibleTo(panel)
+    assert panel.anim_smooth.isVisibleTo(panel) and panel.animation_spec().speed == 2.0
+    panel.anim_smooth.setChecked(True)
+    assert panel.animation_spec().smooth
+    # a slice sweep is only offered when something can sweep: the Slices mode or the volume slices
+    select_key(panel.mode, "points")
+    panel.volume_slices.setChecked(False)
+    slice_item = panel.anim_kind.model().item(panel.anim_kind.findData("slice"))
+    assert not slice_item.isEnabled()
+    select_key(panel.mode, "slices")
+    assert slice_item.isEnabled() and select_key(panel.anim_kind, "slice")
+    select_key(panel.mode, "points")
+    assert panel.anim_kind_key() == "orbit"  # the invalid choice was replaced, with a status line
+    select_key(panel.mode, "slices")
     select_key(panel.anim_kind, "orbit")
     panel.anim_speed.setValue(180.0)
     # play, pause, stop: playing advances the animation clock and renders frames; stop restores the view
