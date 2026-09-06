@@ -83,7 +83,7 @@ def test_window_analyses_applies_and_exports(qapp, aniso, tmp_path):
     tw.run_sweep_analysis()
     assert tw.wait(300_000)
     _pump()
-    assert tw.sweep is not None and len(tw.sweep.levels) == 3 and tw.tabs.currentIndex() == 1
+    assert tw.sweep is not None and len(tw.sweep.levels) == 3 and tw.tabs.currentIndex() == tw.TAB_SWEEP
     assert tw.result is not None and tw._btn_apply.isEnabled()  # the autocorrelation result is untouched
     if tw.sweep_size() is not None:
         tw.use_sweep_size()

@@ -193,8 +193,9 @@ class TextureWindow(QMainWindow):
         self.toolbar_sweep = NavigationToolbar2QT(self.canvas_sweep, self)
         for tb in (self.toolbar_profiles, self.toolbar_sweep):
             tb.setIconSize(tb.iconSize() * 0.8)
+        self.tabs.addTab(self._plot_page(self.canvas_sweep, self.toolbar_sweep), "")  # the window size comes first
         self.tabs.addTab(self._plot_page(self.canvas_profiles, self.toolbar_profiles), "")
-        self.tabs.addTab(self._plot_page(self.canvas_sweep, self.toolbar_sweep), "")
+        self.TAB_SWEEP, self.TAB_ACF = 0, 1
         left = QVBoxLayout()
         left.setSpacing(6)
         left.addLayout(tools)
@@ -256,7 +257,6 @@ class TextureWindow(QMainWindow):
         self._status.setWordWrap(True)
         acf.add_widget(self._status)
         self.sections["acf"] = acf
-        side_layout.addWidget(acf)
 
         # window size analysis (representative volume)
         rve = CollapsibleSection()
@@ -301,6 +301,7 @@ class TextureWindow(QMainWindow):
         rve.add_widget(self._btn_use_size)
         self.sections["sweep"] = rve
         side_layout.addWidget(rve)
+        side_layout.addWidget(acf)
 
         # correlation lengths: the headline result
         self._lengths_box = QGroupBox()
@@ -609,7 +610,7 @@ class TextureWindow(QMainWindow):
         self._settle()
         self._fill_table()
         self._draw_profiles()
-        self.tabs.setCurrentIndex(0)
+        self.tabs.setCurrentIndex(self.TAB_ACF)
         one = result.length("radial")
         self._state.log(
             self.tr("Texture analysed: 1/e length {L} voxel (radial), {n} voxels").format(
@@ -624,7 +625,7 @@ class TextureWindow(QMainWindow):
         self._sweep_progress.setValue(1000)
         self._settle()
         self._draw_sweep()
-        self.tabs.setCurrentIndex(1)
+        self.tabs.setCurrentIndex(self.TAB_SWEEP)
         size = self.sweep_size()
         self._state.log(
             self.tr("Window size analysis done: {verdict}").format(
@@ -760,11 +761,16 @@ class TextureWindow(QMainWindow):
                 if (mask is not None and self.use_roi.isChecked())
                 else self.tr("whole volume")
             )
-            self._status.setText(self.tr("Ready: reference volume, {where}.").format(where=where))
+            self._status.setText(
+                self.tr("Ready: reference volume, {where}. Run the window size analysis first to size the window.").format(
+                    where=where
+                )
+            )
         elif res.status != "ok":
             self._status.setText(self.tr("No texture: the analysed region has no grey-value variation."))
         else:
-            parts = [self.tr("{n} voxels analysed").format(n=f"{res.acf.n_voxels:,}")]
+            box = " x ".join(str(sl.stop - sl.start) for sl in res.window[::-1])
+            parts = [self.tr("window {box} voxel, {n} voxels analysed").format(box=box, n=f"{res.acf.n_voxels:,}")]
             if np.isfinite(res.noise_floor):
                 parts.append(self.tr("noise floor {v}").format(v=f"{res.noise_floor:.3f}"))
             if res.periodicity is not None:
@@ -794,6 +800,13 @@ class TextureWindow(QMainWindow):
             if size is not None
             else self.tr("No stable size in this range: extend the sizes or the number of positions.")
         )
+        values = []
+        for t in THRESHOLDS:
+            d = sweep.decisions.get(float(t))
+            if d is not None and d.converged:
+                values.append(f"{THRESHOLD_LABELS.get(float(t), f'{t:.2f}')}: {d.reference:.2f} ± {d.tolerance:.2f}")
+        if values:
+            text += " " + self.tr("Stable lengths [voxel]: {values}.").format(values="; ".join(values))
         if self.is_sweep_stale:
             text += " " + self.tr("(from a previous input: run again)")
         self._sweep_status.setText(text)
@@ -823,10 +836,10 @@ class TextureWindow(QMainWindow):
 
     def reset_view(self) -> None:
         """Back to the full plot after zooming or panning."""
-        (self.toolbar_sweep if self.tabs.currentIndex() == 1 else self.toolbar_profiles).home()
+        (self.toolbar_sweep if self.tabs.currentIndex() == self.TAB_SWEEP else self.toolbar_profiles).home()
 
     def _update_plot_tools(self) -> None:
-        on_profiles = self.tabs.currentIndex() == 0
+        on_profiles = self.tabs.currentIndex() == self.TAB_ACF
         for w in (
             self._plot_labels["scale"],
             self.plot_scale,
@@ -879,7 +892,11 @@ class TextureWindow(QMainWindow):
                 )
             if log:
                 ax.set_yscale("log")
-                ax.set_ylim(0.005, 1.2)
+                positive = np.concatenate(
+                    [res.profiles[a].mean[res.profiles[a].mean > 0] for a in AXES_ROWS if self.curve_checks[a].isChecked()]
+                    or [np.array([1.0])]
+                )
+                ax.set_ylim(max(1e-4, float(positive.min()) * 0.7), 1.3)
             if handles:
                 ax.legend(handles=handles, fontsize=FONT["legend"], loc="upper right", frameon=False, labelcolor=th["text"])
         ax.set_ylabel(self.tr("autocorrelation") + (self.tr(" (log)") if log else ""))
@@ -907,16 +924,21 @@ class TextureWindow(QMainWindow):
                 if d.converged:
                     ax.axvline(sizes[d.start_index], color=line[0].get_color(), ls="--", lw=1.1)
                     ax.axhspan(d.reference - d.tolerance, d.reference + d.tolerance, color=line[0].get_color(), alpha=0.08)
-                    verdicts.append(self.tr("{name}: stable from {size} voxel").format(name=label, size=sizes[d.start_index]))
+                    ax.axhline(d.reference, color=line[0].get_color(), ls=":", lw=1.0, alpha=0.9)
+                    verdicts.append(
+                        self.tr("{name}: stable from {size} voxel, length {value} ± {tol} voxel").format(
+                            name=label, size=sizes[d.start_index], value=f"{d.reference:.2f}", tol=f"{d.tolerance:.2f}"
+                        )
+                    )
                 else:
                     verdicts.append(self.tr("{name}: not stable ({why})").format(name=label, why=d.reason))
-            ax.legend(fontsize=FONT["legend"], frameon=False, labelcolor=th["text"], loc="lower right")
+            ax.legend(fontsize=FONT["legend"], frameon=False, labelcolor=th["text"], loc="upper right")
             ax.text(
                 0.02,
-                0.98,
+                0.02,
                 "\n".join(verdicts),
                 ha="left",
-                va="top",
+                va="bottom",
                 fontsize=FONT["note"],
                 color=th["text"],
                 transform=ax.transAxes,
@@ -958,7 +980,7 @@ class TextureWindow(QMainWindow):
             self._write(self.tr("Summary"), path, self.save_json)
 
     def _on_save_png(self) -> None:
-        sweep_tab = self.tabs.currentIndex() == 1
+        sweep_tab = self.tabs.currentIndex() == self.TAB_SWEEP
         name = "texture_window_sizes.png" if sweep_tab else "texture_profiles.png"
         path = self._ask_path(str(self._state.output_dir / name), "PNG (*.png)")
         if path:
@@ -979,10 +1001,10 @@ class TextureWindow(QMainWindow):
     # ------------------------------------------------------------------ misc
     def retranslate_ui(self) -> None:
         self.setWindowTitle(self.tr("Texture analysis"))
-        self.tabs.setTabText(0, self.tr("Autocorrelation"))
-        self.tabs.setTabText(1, self.tr("Window size"))
-        self.sections["acf"].set_title(self.tr("Autocorrelation analysis"))
-        self.sections["sweep"].set_title(self.tr("Window size analysis"))
+        self.tabs.setTabText(self.TAB_SWEEP, self.tr("1. Window size"))
+        self.tabs.setTabText(self.TAB_ACF, self.tr("2. Autocorrelation"))
+        self.sections["acf"].set_title(self.tr("2. Autocorrelation analysis"))
+        self.sections["sweep"].set_title(self.tr("1. Window size analysis"))
         self.sections["export"].set_title(self.tr("Export"))
         self._lengths_box.setTitle(self.tr("Correlation lengths [voxel]"))
         self._suggestion_box.setTitle(self.tr("Subset suggestion"))
@@ -1001,8 +1023,9 @@ class TextureWindow(QMainWindow):
         retranslate_combo(self.estimator, "estimator")
         self.labels["window_edge"].setToolTip(
             self.tr(
-                "Edge of the cube analysed, cut from the centre of the region of interest (or of the volume). "
-                "It bounds memory and time; the window size analysis tells how large it must be to represent the texture."
+                "Voxel budget of the analysis, as the edge of a cube: the bounding box of the region of interest (or the volume) "
+                "is shrunk about its centre to at most this many voxels cubed, keeping its shape (a slab stays a slab). "
+                "The window size analysis tells how large it must be to represent the texture."
             )
         )
         self.labels["estimator"].setToolTip(
