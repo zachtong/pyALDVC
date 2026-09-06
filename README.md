@@ -109,21 +109,29 @@ deformed lattice, coloured by displacement magnitude.
 </p>
 
 **Hydrogel indentation (micro-CT, 306 x 1024 x 1024 voxels).** A real scan of a hydrogel
-pressed by an indenter, subset 33, step 16, on the GPU. Left: the deformed lattice with
-displacement arrows orbiting the camera; right: the frames animation with smooth
-deformation.
+pressed by an indenter, subset 33, step 16, on the GPU. The deformed lattice with
+displacement arrows, orbiting the camera:
 
 <p align="center">
-  <img src="assets/videos/indentation_deformed_lattice_orbit_with_arrow.gif" alt="Hydrogel indentation: deformed lattice with displacement arrows, orbit" width="49%"/>
-  <img src="assets/videos/indentation_frame_smooth_animation.gif" alt="Hydrogel indentation: frames animation with smooth deformation" width="49%"/>
+  <img src="assets/videos/indentation_deformed_lattice_orbit_with_arrow.gif" alt="Hydrogel indentation: deformed lattice with displacement arrows, orbit" width="90%"/>
+</p>
+
+The frames animation with smooth deformation:
+
+<p align="center">
+  <img src="assets/videos/indentation_frame_smooth_animation.gif" alt="Hydrogel indentation: frames animation with smooth deformation" width="90%"/>
 </p>
 
 Slice sweeps of the displacement field through the same result along x, y and z:
 
 <p align="center">
-  <img src="assets/videos/indentation_sweep_x.gif" alt="Slice sweep along x" width="32%"/>
-  <img src="assets/videos/indentation_sweep_y.gif" alt="Slice sweep along y" width="32%"/>
-  <img src="assets/videos/indentation_sweep_z.gif" alt="Slice sweep along z" width="32%"/>
+  <img src="assets/videos/indentation_sweep_x.gif" alt="Slice sweep along x" width="90%"/>
+</p>
+<p align="center">
+  <img src="assets/videos/indentation_sweep_y.gif" alt="Slice sweep along y" width="90%"/>
+</p>
+<p align="center">
+  <img src="assets/videos/indentation_sweep_z.gif" alt="Slice sweep along z" width="90%"/>
 </p>
 
 ### Texture analysis before the run
