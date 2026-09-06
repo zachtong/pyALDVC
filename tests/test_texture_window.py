@@ -48,13 +48,17 @@ def test_window_analyses_applies_and_exports(qapp, aniso, tmp_path):
     mask = np.zeros(SHAPE, dtype=bool)
     mask[4:-4, 6:-6, 8:-8] = True
     window.state.set_mask(0, mask=mask)
-    tw.max_lag.setValue(16)
+    _pump()
+    tw.set_range_from_roi()  # the region's bounding box becomes the analysis range
+    assert tw.range_box() == ((8, 56), (6, 50), (4, 44))
+    tw.window_size.setValue(16)
     tw.analyse()
     assert tw.wait(120_000)
     _pump()
     res = tw.result
     assert res is not None and res.status == "ok"
-    assert res.window == (slice(4, 44), slice(6, 50), slice(8, 56))  # the region's box
+    assert res.settings["range"] == ((8, 56), (6, 50), (4, 44)) and res.settings["max_lag"] == (16, 14, 12)
+    assert all(s.stop - s.start == 16 for s in res.window)  # the 16-voxel window centred in the range
     assert res.length("z") > 2 * res.length("x")
     assert tw.table.item(2, 0).text() != "-" and tw.table.item(3, 0).text() != "-"
     assert tw.recommendation is not None and tw._btn_apply.isEnabled()
@@ -76,18 +80,17 @@ def test_window_analyses_applies_and_exports(qapp, aniso, tmp_path):
     tw._on_save_png()  # headless: writes the default path
     assert (tmp_path / "texture_profiles.png").is_file()
     # the window size analysis runs on its own, next to the autocorrelation analysis
-    tw.sweep_start.setValue(16)
-    tw.sweep_step.setValue(16)
-    tw.sweep_count.setValue(3)
-    tw.sweep_samples.setValue(2)
+    tw.sweep_start.setValue(8)
+    tw.sweep_step.setValue(8)
     tw.run_sweep_analysis()
     assert tw.wait(300_000)
     _pump()
-    assert tw.sweep is not None and len(tw.sweep.levels) == 3 and tw.tabs.currentIndex() == tw.TAB_SWEEP
+    assert tw.sweep is not None and len(tw.sweep.levels) >= 3 and tw.tabs.currentIndex() == tw.TAB_SWEEP
+    assert all(len(lvl.samples) == 1 for lvl in tw.sweep.levels)  # concentric windows, one per size
     assert tw.result is not None and tw._btn_apply.isEnabled()  # the autocorrelation result is untouched
     if tw.sweep_size() is not None:
         tw.use_sweep_size()
-        assert tw.window_edge.value() >= tw.sweep_size()
+        assert tw.window_size.value() >= tw.sweep_size()
     # plot controls: curves off, log scale, background, reset view
     tw.curve_checks["x"].setChecked(False)
     tw.plot_scale.setCurrentIndex(1)
@@ -130,7 +133,9 @@ def test_cli_texture_writes_the_files(aniso, tmp_path, capsys):
     path = tmp_path / "vol.h5"
     save_volume(path, aniso)
     out = tmp_path / "tex"
-    assert main(["texture", str(path), "--max-lag", "12", "--sweep", "--sweep-count", "2", "--samples", "2", "-o", str(out)]) == 0
+    assert (
+        main(["texture", str(path), "--window", "16", "--sweep", "--sweep-start", "8", "--sweep-step", "8", "-o", str(out)]) == 0
+    )
     assert (out / "texture_profiles.csv").is_file() and (out / "texture_profiles.png").is_file()
     summary = json.loads((out / "texture_summary.json").read_text(encoding="utf-8"))
     assert summary["status"] == "ok" and "recommendation" in summary and "sweep" in summary
@@ -139,6 +144,6 @@ def test_cli_texture_writes_the_files(aniso, tmp_path, capsys):
     roi = np.zeros(SHAPE, dtype=np.uint8)
     roi[8:-8, 8:-8, 8:-8] = 1
     save_volume(tmp_path / "roi.h5", roi)
-    assert main(["texture", str(path), "--roi", str(tmp_path / "roi.h5"), "--max-lag", "8", "-o", str(out / "roi")]) == 0
+    assert main(["texture", str(path), "--roi", str(tmp_path / "roi.h5"), "--window", "16", "-o", str(out / "roi")]) == 0
     summary = json.loads((out / "roi" / "texture_summary.json").read_text(encoding="utf-8"))
-    assert summary["settings"]["window"] == [[8, 40], [8, 48], [8, 56]]
+    assert summary["settings"]["range"] == [[8, 56], [8, 48], [8, 40]]  # the region's bounding box (x, y, z)

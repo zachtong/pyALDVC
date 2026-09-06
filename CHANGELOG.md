@@ -80,6 +80,13 @@ All notable changes to pyALDVC are documented here. The format follows
   order (frame2 before frame10).
 
 ### Changed
+- Texture analysis rebuilt around an analysis range and a sliding window. The range is a
+  box of the volume (whole volume, the region of interest's bounding box, or drawn on the
+  slices as dashed rectangles); a window centred in it is compared with its shifted copies,
+  the shifts reaching (range - window) / 2 per axis with a constant number of voxel pairs,
+  so no estimator choice, maximum lag or minimum overlap is needed any more. The window
+  size analysis comes first: concentric windows of growing size, the stable size written
+  into the window with one click. `al-dvc texture` takes `--range` and `--window`.
 - Texture analysis window redesigned: the autocorrelation analysis and the window size
   analysis are two parallel analyses with their own parameters, buttons and progress;
   the window size analysis reports the size from which the correlation length is stable

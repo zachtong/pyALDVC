@@ -42,3 +42,33 @@ __all__ = [
     "size_schedule",
     "sweep_sizes",
 ]
+
+from .sliding import (  # noqa: E402
+    DEFAULT_MIN_LAG,
+    MAX_RANGE_VOXELS,
+    analyse_range,
+    box_of_mask,
+    box_size,
+    centred_window,
+    lag_reach,
+    normalise_box,
+    sliding_autocorrelation,
+    sweep_concentric,
+    sweep_sizes_concentric,
+    whole_box,
+)
+
+__all__ += [
+    "DEFAULT_MIN_LAG",
+    "MAX_RANGE_VOXELS",
+    "analyse_range",
+    "box_of_mask",
+    "box_size",
+    "centred_window",
+    "lag_reach",
+    "normalise_box",
+    "sliding_autocorrelation",
+    "sweep_concentric",
+    "sweep_sizes_concentric",
+    "whole_box",
+]

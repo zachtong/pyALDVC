@@ -27,6 +27,7 @@ NORMAL_OF_PLANE = {"xy": "z", "xz": "y", "yz": "x"}
 MASK_TINT = ListedColormap([[1.0, 0.25, 0.25, 1.0]])
 MASK_EDGE = "#ff5555"
 PREVIEW_COLOR = "#ffd166"
+RANGE_COLOR = "#fbbf24"  # the texture analysis range: a dashed amber box on the three slices
 LATTICE_COLOR = "#7dd3fc"  # the node grid: thin, pale and translucent, so the image stays readable through it
 LATTICE_WIDTH = 0.7
 LATTICE_ALPHA = 0.55
@@ -86,6 +87,8 @@ class SliceViewer(QWidget):
         self.mask_tools = MaskToolbar(state)
         # drawing gesture in progress: plane, shape, points (h, v), preview artists
         self._gesture: dict | None = None
+        self._range_box = None  # ((x0, x1), (y0, y1), (z0, z1)) drawn on the slices (texture analysis range)
+        self._capture = None  # callback(plane, (h0, h1), (v0, v1)) receiving the next rectangle drags
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -342,6 +345,7 @@ class SliceViewer(QWidget):
             self._cbar.set_label(text, color=COLORS.TEXT_SECONDARY, fontsize=8)
             self._cbar.ax.tick_params(colors=COLORS.TEXT_SECONDARY, labelsize=7)
         self._draw_lattice(iz, iy, ix)  # on top of the field, so the grid is legible either way
+        self._draw_range_box()
         # cursor lines showing the other two slice positions
         self.axes[0].axhline(iy, color=COLORS.ACCENT, lw=0.5, alpha=0.6)
         self.axes[0].axvline(ix, color=COLORS.ACCENT, lw=0.5, alpha=0.6)
@@ -358,6 +362,36 @@ class SliceViewer(QWidget):
         else:
             restore_cells(self.axes)
         self.canvas.draw_idle()
+
+    # ------------------------------------------------------------------ analysis range (texture window)
+    def set_range_box(self, box) -> None:
+        """Show ``((x0, x1), (y0, y1), (z0, z1))`` as a dashed box on the three slices (``None`` hides it)."""
+        self._range_box = None if box is None else tuple((int(a), int(b)) for a, b in box)
+        self.redraw()
+
+    def capture_box(self, callback) -> None:
+        """Route the next rectangle drags to ``callback(plane, (h0, h1), (v0, v1))`` instead of the mask
+        (``None`` ends the capture). The drag on a plane sets the two axes of that plane."""
+        self._capture = callback
+        if callback is None:
+            self._cancel_gesture()
+            self.canvas.draw_idle()
+
+    @property
+    def capturing(self) -> bool:
+        return self._capture is not None
+
+    def _draw_range_box(self) -> None:
+        box = self._range_box
+        if box is None:
+            return
+        (x0, x1), (y0, y1), (z0, z1) = box
+        spans = {"xy": ((x0, x1), (y0, y1)), "xz": ((x0, x1), (z0, z1)), "yz": ((y0, y1), (z0, z1))}
+        for plane, ((h0, h1), (v0, v1)) in spans.items():
+            ax = self.axes[PLANE_OF_AXIS.index(plane)]
+            ax.add_patch(
+                Rectangle((h0 - 0.5, v0 - 0.5), h1 - h0, v1 - v0, fill=False, ec=RANGE_COLOR, lw=1.4, ls="--", alpha=0.9)
+            )
 
     def _draw_lattice(self, iz: int, iy: int, ix: int) -> None:
         """The node grid (layer nearest to every slice) and the subset of the crosshair node.
@@ -511,8 +545,21 @@ class SliceViewer(QWidget):
     def _on_press(self, event) -> None:
         if self._volume is None:
             return
-        s = self.mask_tools.settings()
         plane = self._plane_at(event)
+        if self._capture is not None:  # the texture window is asking for a box: a plain rectangle drag
+            if plane is None or event.button != LEFT:
+                return
+            self._cancel_gesture()
+            self._gesture = {
+                "plane": plane,
+                "shape": "rectangle",
+                "points": [_voxel_point(event)],
+                "artists": [],
+                "capture": True,
+            }
+            self._update_preview()
+            return
+        s = self.mask_tools.settings()
         if s.tool == "none" or plane is None:
             return
         try:
@@ -625,8 +672,14 @@ class SliceViewer(QWidget):
         if g is None:
             return
         self._remove_artists(g)
-        ctx = g.get("context") or self._gesture_context(g["plane"])  # the settings the gesture was started with
         pts = g["points"]
+        if g.get("capture"):
+            self.canvas.draw_idle()
+            if len(pts) == 2 and self._capture is not None:
+                (h1, v1), (h2, v2) = pts
+                self._capture(g["plane"], (min(h1, h2), max(h1, h2)), (min(v1, v2), max(v1, v2)))
+            return
+        ctx = g.get("context") or self._gesture_context(g["plane"])  # the settings the gesture was started with
         if g["shape"] in ("rectangle", "ellipse") and len(pts) < 2:
             self.canvas.draw_idle()
             return

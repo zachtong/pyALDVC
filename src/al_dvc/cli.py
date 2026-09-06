@@ -203,27 +203,40 @@ def cmd_texture(args: argparse.Namespace) -> int:
 
     from .gui.texture_window import write_profiles_csv, write_summary_json
     from .io.volume_io import load_volume
-    from .texture import THRESHOLD_LABELS, THRESHOLDS, analyse_texture, recommend_parameters, size_schedule, sweep_sizes
+    from .texture import (
+        THRESHOLD_LABELS,
+        THRESHOLDS,
+        analyse_range,
+        box_of_mask,
+        normalise_box,
+        recommend_parameters,
+        sweep_concentric,
+        whole_box,
+    )
 
     vol = np.asarray(load_volume(args.volume))
-    mask = None
+    box = whole_box(vol.shape)
     if args.roi:
         mask = np.asarray(load_volume(args.roi)) > 0
         if mask.shape != vol.shape:
             print(f"error: region shape {mask.shape} does not match the volume shape {vol.shape}", file=sys.stderr)
             return 2
+        box = box_of_mask(mask)  # the analysis range is the region's bounding box
+    if args.range:
+        x0, x1, y0, y1, z0, z1 = args.range
+        box = ((x0, x1), (y0, y1), (z0, z1))
+    try:
+        box = normalise_box(box, vol.shape)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     spacing = tuple(args.spacing) if args.spacing else 1.0
     t0 = time.perf_counter()
-    result = analyse_texture(vol, spacing, mask, args.max_lag, args.estimator, max_voxels=args.window_edge**3)
+    result = analyse_range(vol, box, args.window, spacing)
     rec = recommend_parameters(result) if result.status == "ok" else None
     sweep = None
     if args.sweep and result.status == "ok":
-        from .texture import analysis_window
-
-        win = analysis_window(vol.shape, mask, max_voxels=vol.size)
-        box = tuple(s.stop - s.start for s in win)[::-1]
-        sizes = size_schedule(box, args.sweep_start, args.sweep_step, args.sweep_count)
-        sweep = sweep_sizes(vol, mask, sizes, args.samples, spacing=spacing, estimator=args.estimator)
+        sweep = sweep_concentric(vol, box, args.sweep_start, args.sweep_step, min_lag=max(8, args.sweep_start), spacing=spacing)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     write_profiles_csv(result, out / "texture_profiles.csv")
@@ -376,16 +389,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     t = sub.add_parser("texture", help="correlation lengths of a volume and a subset suggestion")
     t.add_argument("volume", help="volume file (any supported format)")
-    t.add_argument("--roi", help="region of interest volume (non-zero = analysed)")
+    t.add_argument("--roi", help="region of interest volume: its bounding box becomes the analysis range")
+    t.add_argument(
+        "--range",
+        type=int,
+        nargs=6,
+        metavar=("X0", "X1", "Y0", "Y1", "Z0", "Z1"),
+        help="analysis range (half-open voxel indices)",
+    )
     t.add_argument("--spacing", type=float, nargs=3, metavar=("DX", "DY", "DZ"), help="voxel size")
-    t.add_argument("--estimator", choices=["overlap", "window"], default="overlap")
-    t.add_argument("--max-lag", type=int, default=None, help="largest lag per axis (default: half the window)")
-    t.add_argument("--window-edge", type=int, default=256, help="the region is cropped to this edge cubed")
-    t.add_argument("--sweep", action="store_true", help="also sweep the sub-volume sizes")
-    t.add_argument("--sweep-start", type=int, default=16)
-    t.add_argument("--sweep-step", type=int, default=16)
-    t.add_argument("--sweep-count", type=int, default=8)
-    t.add_argument("--samples", type=int, default=4, help="sub-volumes per size at different positions")
+    t.add_argument("--window", type=int, default=64, help="edge of the window that slides inside the range")
+    t.add_argument("--sweep", action="store_true", help="also run the window size analysis (concentric windows)")
+    t.add_argument("--sweep-start", type=int, default=16, help="edge of the smallest window of the sweep")
+    t.add_argument("--sweep-step", type=int, default=16, help="growth of the window edge per size")
     t.add_argument("-o", "--out", default="texture", help="output directory")
     t.set_defaults(func=cmd_texture)
 
