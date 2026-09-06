@@ -55,20 +55,13 @@ class StrainCancelled(Exception):
     pass
 
 
-class _WindowSpin(QSpinBox):
-    """Odd window widths shown as the full window: 3 x 3 x 3, 5 x 5 x 5, ..."""
-
-    def textFromValue(self, value: int) -> str:  # noqa: N802
-        return f"{value} x {value} x {value}"
-
-    def valueFromText(self, text: str) -> int:  # noqa: N802
-        digits = "".join(ch for ch in text.split("x")[0] if ch.isdigit())
-        return int(digits) if digits else self.minimum()
-
-    def validate(self, text: str, pos: int):  # noqa: N802
-        from PySide6.QtGui import QValidator
-
-        return (QValidator.State.Acceptable, text, pos)
+def _odd_spin() -> QSpinBox:
+    """One axis of the fit window: an odd width in nodes (3, 5, 7, 9)."""
+    w = QSpinBox()
+    w.setRange(3, 9)
+    w.setSingleStep(2)
+    w.setFixedWidth(52)
+    return w
 
 
 class _StrainWorker(QThread):
@@ -170,10 +163,22 @@ class StrainWindow(QMainWindow):
         fill_combo(self.method, "strain_method")
         self.measure = combo([])
         fill_combo(self.measure, "strain_type")
-        self.fit_window = _WindowSpin()  # full width in nodes; the solver takes the half-width (width - 1) / 2
-        self.fit_window.setRange(3, 9)
-        self.fit_window.setSingleStep(2)
-        self.fit_window.setFixedWidth(110)
+        # fit window: full width in nodes per axis (x, y, z); the solver takes the half-width (width - 1) / 2
+        self.fit_window_axes = [_odd_spin() for _ in range(3)]
+        self.fit_window = self.fit_window_axes[0]  # x; drives the three while the lock is on
+        self.fit_window_lock = QCheckBox()
+        self.fit_window_lock.setChecked(True)
+        fit_row = QWidget()
+        fit_layout = QHBoxLayout(fit_row)
+        fit_layout.setContentsMargins(0, 0, 0, 0)
+        fit_layout.setSpacing(4)
+        for k, w in enumerate(self.fit_window_axes):
+            if k:
+                fit_layout.addWidget(QLabel("x"))
+            fit_layout.addWidget(w)
+        fit_layout.addSpacing(6)
+        fit_layout.addWidget(self.fit_window_lock)
+        fit_layout.addStretch(1)
         self.disp_smoothing = dspin(0.0, 10.0, 1)
         self.strain_smoothing = dspin(0.0, 10.0, 1)
         for w in (self.disp_smoothing, self.strain_smoothing):
@@ -182,7 +187,7 @@ class StrainWindow(QMainWindow):
         for key, w in [
             ("method", self.method),
             ("measure", self.measure),
-            ("halfwidth", self.fit_window),
+            ("halfwidth", fit_row),
             ("disp_smoothing", self.disp_smoothing),
             ("strain_smoothing", self.strain_smoothing),
         ]:
@@ -279,7 +284,10 @@ class StrainWindow(QMainWindow):
         self.equal_scale.toggled.connect(lambda _v: self._on_display_changed())
         for w in (self.method, self.measure):
             w.currentIndexChanged.connect(lambda _i: self._mark_stale())
-        for w in (self.fit_window, self.disp_smoothing, self.strain_smoothing):
+        for k, w in enumerate(self.fit_window_axes):
+            w.valueChanged.connect(lambda v, axis=k: self._on_fit_window(axis, v))
+        self.fit_window_lock.toggled.connect(self._on_fit_window_lock)
+        for w in (self.disp_smoothing, self.strain_smoothing):
             w.valueChanged.connect(lambda _v: self._mark_stale())
         self.edge_trim.toggled.connect(lambda _v: self._mark_stale())
         self._btn_export.clicked.connect(self.export_requested.emit)
@@ -302,7 +310,11 @@ class StrainWindow(QMainWindow):
         try:
             select_key(self.method, p.strain_method)
             select_key(self.measure, p.strain_type)
-            self.fit_window.setValue(2 * int(p.strain_plane_fit_halfwidth[0]) + 1)
+            widths = [2 * int(h) + 1 for h in p.strain_plane_fit_halfwidth]
+            if len(set(widths)) > 1:
+                self.fit_window_lock.setChecked(False)  # a non-cubic window unlocks the axes
+            for w, width in zip(self.fit_window_axes, widths):
+                w.setValue(width)
             self.disp_smoothing.setValue(float(p.disp_smoothing))
             self.strain_smoothing.setValue(float(p.strain_smoothing))
             self.edge_trim.setChecked(bool(p.strain_edge_trim))
@@ -311,12 +323,12 @@ class StrainWindow(QMainWindow):
 
     def strain_para(self):
         """The run's parameters with this window's strain settings."""
-        hw = (int(self.fit_window.value()) - 1) // 2
+        hw = tuple((int(w.value()) - 1) // 2 for w in self.fit_window_axes)
         return replace(
             self._source_para(),
             strain_method=str(self.method.currentData()),
             strain_type=str(self.measure.currentData()),
-            strain_plane_fit_halfwidth=(hw, hw, hw),
+            strain_plane_fit_halfwidth=hw,
             disp_smoothing=float(self.disp_smoothing.value()),
             strain_smoothing=float(self.strain_smoothing.value()),
             strain_edge_trim=bool(self.edge_trim.isChecked()),
@@ -340,8 +352,29 @@ class StrainWindow(QMainWindow):
         return any(getattr(now, f) != getattr(para, f) for f in self.STRAIN_FIELDS)
 
     def _set_controls_enabled(self, enabled: bool) -> None:
-        for w in (self.method, self.measure, self.fit_window, self.disp_smoothing, self.strain_smoothing, self.edge_trim):
+        controls = (self.method, self.measure, *self.fit_window_axes, self.fit_window_lock)
+        for w in (*controls, self.disp_smoothing, self.strain_smoothing, self.edge_trim):
             w.setEnabled(enabled)
+
+    def _on_fit_window(self, axis: int, value: int) -> None:
+        """Odd widths only; with the lock on, one box drives the three."""
+        v = int(value)
+        if v % 2 == 0:
+            self.fit_window_axes[axis].setValue(v + 1)  # re-enters with the odd value
+            return
+        if self._updating:
+            return
+        if self.fit_window_lock.isChecked():
+            for j, w in enumerate(self.fit_window_axes):
+                if j != axis and w.value() != v:
+                    w.blockSignals(True)
+                    w.setValue(v)
+                    w.blockSignals(False)
+        self._mark_stale()
+
+    def _on_fit_window_lock(self, locked: bool) -> None:
+        if locked and not self._updating:
+            self._on_fit_window(0, self.fit_window_axes[0].value())
 
     def _mark_stale(self) -> None:
         if self._updating:
@@ -379,7 +412,7 @@ class StrainWindow(QMainWindow):
             self.tr("Strain: {method}, {measure}, window {w}").format(
                 method=label("strain_method", para.strain_method),
                 measure=label("strain_type", para.strain_type),
-                w=int(self.fit_window.value()),
+                w=" x ".join(str(int(w.value())) for w in self.fit_window_axes),
             )
         )
         self._worker.start()
@@ -606,7 +639,7 @@ class StrainWindow(QMainWindow):
         texts = {
             "method": self.tr("Method"),
             "measure": self.tr("Strain measure"),
-            "halfwidth": self.tr("Fit window [nodes]"),
+            "halfwidth": self.tr("Fit window [nodes, x y z]"),
             "disp_smoothing": self.tr("Smooth displacement [sigma, nodes]"),
             "strain_smoothing": self.tr("Smooth strain [sigma, nodes]"),
             "field": self.tr("Field"),
@@ -635,6 +668,8 @@ class StrainWindow(QMainWindow):
                 "(3 x 3 x 3: the direct neighbours). Larger windows smooth more and lose resolution (plane fitting only)."
             )
         )
+        self.fit_window_lock.setText(self.tr("Cube"))
+        self.fit_window_lock.setToolTip(self.tr("Keep the fit window cubic: one width for x, y and z"))
         self.labels["disp_smoothing"].setToolTip(
             self.tr(
                 "Gaussian smoothing of the displacement field before it is differentiated; sigma in node spacings. "

@@ -89,6 +89,9 @@ def test_strain_window_computes_and_publishes(qapp, pair):
     assert not sw.is_stale
     sw.fit_window.setValue(5)  # 5 x 5 x 5: half-width 2
     assert sw.strain_para().strain_plane_fit_halfwidth == (2, 2, 2)
+    sw.fit_window_lock.setChecked(False)
+    sw.fit_window_axes[2].setValue(3)  # 5 x 5 x 3
+    assert sw.strain_para().strain_plane_fit_halfwidth == (2, 2, 1)
     assert sw.is_stale
     sw.frame_slider.setValue(0)
     sw.layout_combo.setCurrentIndex(2)
