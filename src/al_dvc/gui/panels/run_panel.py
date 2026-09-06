@@ -28,6 +28,7 @@ class RunPanel(QWidget):
         self._state = state
         self._worker: PipelineWorker | None = None
         self._started = 0.0
+        self._job: dict | None = None  # what the running worker was given: volume identities, session generation
         self._btn_run = QPushButton()
         self._btn_run.setProperty("class", "btn-primary")
         self._btn_run.setMinimumHeight(32)
@@ -76,18 +77,15 @@ class RunPanel(QWidget):
         if len(entries) < 2:
             self._state.log(self.tr("At least two volumes are needed."), "warning")
             return
-        try:
-            volumes = [e.load() for e in entries]
-            masks_list = [e.load_mask() for e in entries]
-        except Exception as exc:
-            self._state.log(self.tr("Cannot load the volumes: {error}").format(error=exc), "error")
+        shape = self._state.volume_shape()
+        if shape is None:
+            self._state.log(self.tr("Cannot load the volumes: {error}").format(error=entries[0].name), "error")
             return
         from dataclasses import replace
 
         from al_dvc.core.config import validate_dvcpara
         from al_dvc.utils.validation import validate_para_against_volume
 
-        shape = tuple(int(s) for s in volumes[0].shape)
         para = self._state.para
         voi = self._state.effective_voi()
         if voi is not None and (para.voi is None or para.voi.is_whole):
@@ -104,13 +102,29 @@ class RunPanel(QWidget):
         except ValueError as exc:
             self._state.log(self.tr("Parameters do not fit the volume: {error}").format(error=exc), "error")
             return
-        masks = masks_list if any(m is not None for m in masks_list) else None
-        if masks is not None:
-            masks = [m if m is not None else np.ones(v.shape, dtype=bool) for m, v in zip(masks_list, volumes)]
+        # the masks are captured now (copies, so drawing on while the run loads cannot change its input);
+        # the volumes are read on the worker thread
+        masks_now = []
+        for e in entries:
+            try:
+                m = e.load_mask()
+            except Exception as exc:
+                self._state.log(self.tr("Cannot load the volumes: {error}").format(error=exc), "error")
+                return
+            masks_now.append(None if m is None else np.array(m, dtype=bool, copy=True))
+
+        def loader(entries=entries, masks_now=masks_now):
+            volumes = [e.load() for e in entries]
+            masks = None
+            if any(m is not None for m in masks_now):
+                masks = [m if m is not None else np.ones(v.shape, dtype=bool) for m, v in zip(masks_now, volumes)]
+            return volumes, masks
+
         checkpoint = Path(self._state.output_dir) / CHECKPOINT_SUBDIR if self._state.write_checkpoints else None
         self._worker = PipelineWorker(
-            para, volumes, masks, checkpoint_dir=checkpoint, resume="auto", compute_strain=False, parent=self
+            para, None, None, checkpoint_dir=checkpoint, resume="auto", compute_strain=False, parent=self, loader=loader
         )  # strain is computed on demand in the strain post-processing window
+        self._job = {"uids": [e.uid for e in entries], "generation": self._state.session_generation}
         self._worker.progress.connect(self._state.set_progress)
         self._worker.finished_result.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)
@@ -121,7 +135,7 @@ class RunPanel(QWidget):
         self._state.set_progress(0.0, self.tr("Starting..."))
         self._state.log(
             self.tr("Run started: {n} frames, subset {ws}, step {st}").format(
-                n=len(volumes),
+                n=len(entries),
                 ws=" x ".join(str(int(w) + 1) for w in para.winsize),
                 st=" x ".join(str(int(s)) for s in para.winstepsize),
             )
@@ -143,7 +157,17 @@ class RunPanel(QWidget):
     def _on_finished(self, result) -> None:
         self._timer.stop()
         elapsed = time.perf_counter() - self._started
-        self._state.set_results(result)
+        job = self._job or {}
+        if job.get("generation") != self._state.session_generation:
+            # the session or the sequence was replaced while the run was going: the result describes inputs
+            # that are no longer on screen, so it must not be shown as if it were theirs
+            self._state.set_run_state(RunState.DONE)
+            self._state.set_progress(0.0, self.tr("Result discarded"))
+            self._state.log(
+                self.tr("The run finished after the session changed; its result was discarded. Run again."), "warning"
+            )
+            return
+        self._state.set_results(result, uids=job.get("uids"))
         self._state.set_run_state(RunState.DONE)
         self._state.set_progress(1.0, self.tr("Done in {s:.1f} s").format(s=elapsed))
         if result.stopped_early:

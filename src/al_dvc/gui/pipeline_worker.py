@@ -30,18 +30,22 @@ class PipelineWorker(QThread):
     def __init__(
         self,
         para: DVCPara,
-        volumes: list,
+        volumes: list | None,
         masks: list | None,
         checkpoint_dir: str | Path | None = None,
         compute_strain: bool = True,
         resume: bool | str = "auto",
         parent=None,
+        loader=None,
     ) -> None:
+        """``volumes`` / ``masks`` are the arrays, or ``loader()`` returns ``(volumes, masks)`` on the worker
+        thread so the window stays responsive while large files are read."""
         super().__init__(parent)
         self._resume = resume
         self._para = para
         self._volumes = volumes
         self._masks = masks
+        self._loader = loader
         self._checkpoint_dir = checkpoint_dir
         self._compute_strain = compute_strain
         self._stop = False
@@ -56,6 +60,11 @@ class PipelineWorker(QThread):
         from al_dvc.core.pipeline import run_aldvc
 
         try:
+            if self._loader is not None:
+                self.progress.emit(0.0, "loading volumes")
+                self._volumes, self._masks = self._loader()
+                if self._stop:
+                    raise RuntimeError("stopped while loading the volumes")
             result = run_aldvc(
                 self._para,
                 self._volumes,

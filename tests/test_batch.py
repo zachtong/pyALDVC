@@ -46,9 +46,9 @@ def sessions(qapp, tmp_path_factory):
         state.add_volume_paths([str(p0), str(p1)])
         state.set_params(winsize=ws, winstepsize=8, search_radius=4, admm_max_iter=2, verbose=False)
         state.set_output_dir(root / f"out_{name}")
-        if name == "b":  # a drawn mask travels with the session
-            state.set_mask_display(target="all")
+        if name == "b":  # a drawn mask travels with the session (copied to every frame explicitly)
             state.apply_mask_op(MaskOp("rectangle", "xy", ((0, 0), (31, 43))))
+            state.copy_mask_to_all_frames()
         paths.append(save_session(state, root / f"{name}.aldvc"))
     broken = AppState()
     broken.add_volume_paths([str(p0), str(root / "missing.npy")])

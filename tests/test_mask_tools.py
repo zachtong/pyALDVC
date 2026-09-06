@@ -152,9 +152,13 @@ def test_undo_redo_invert_and_target_all_frames(qapp, pair):
     assert state.redo_mask() and state.mask_editor.coverage == cov
     viewer.mask_tools._btn["invert"].click()
     assert state.mask_editor.coverage == pytest.approx(1.0 - cov)
-    viewer.mask_tools.target.setCurrentIndex(1)  # all frames
-    assert state.volumes[1].mask is not None
+    viewer.mask_tools.target.setCurrentIndex(1)  # all frames: where the next operations go, nothing copied yet
+    assert state.volumes[1].mask is None
+    assert state.copy_mask_to_all_frames()  # the explicit, reversible copy
+    assert state.volumes[1].mask is not None and state.volumes[1].mask is not state.volumes[0].mask
     np.testing.assert_array_equal(state.volumes[1].mask, state.volumes[0].mask)
+    assert state.undo_mask() and state.volumes[1].mask is None  # undo reverses the copy first
+    assert state.copy_mask_to_all_frames()
     viewer.mask_tools.show_mask.setChecked(False)
     assert not state.show_mask
     viewer.redraw()
@@ -182,16 +186,17 @@ def test_save_mask_and_session_roundtrip(qapp, pair, tmp_path):
     out = state.save_mask(tmp_path / "mask.tif")
     assert out.exists() and state.volumes[0].mask_path == str(out)
     np.testing.assert_array_equal(load_volume(out) > 0, drawn)
-    # the session stores the drawing operations and the mask file
+    # the saved file is the composed mask: the session points at it and replays nothing on top of it
+    assert state.volumes[0].mask_ops is None
     session = window.save_session_path(tmp_path / "masked.aldvc")
     doc = load_session(session)
-    assert doc.volumes[0]["mask_ops"] is not None and len(doc.volumes[0]["mask_ops"]["ops"]) == 2
+    assert doc.volumes[0]["mask_ops"] is None and doc.volumes[0]["mask"] == str(out)
     window.close()
     window2 = MainWindow()
     window2.show()
     assert window2.open_session_path(str(session)) == []
     entry = window2.state.volumes[0]
-    assert entry.mask_ops is not None
+    assert entry.mask_ops is None
     np.testing.assert_array_equal(entry.mask, drawn)
     np.testing.assert_array_equal(window2.state.current_mask(), drawn)
     window2.close()

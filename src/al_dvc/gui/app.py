@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSettings, Qt, QTimer
+from PySide6.QtCore import QEvent, QSettings, Qt, QThread, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -55,6 +56,7 @@ MIN_WINDOW_HEIGHT = 680
 SETTINGS_ORG = "pyALDVC"
 SETTINGS_APP = "gui"
 MAX_RECENT = 8
+SETTLE_TIMEOUT_MS = 60_000  # how long the window waits for its workers to stop before it refuses to close
 
 
 class _Section(QWidget):
@@ -312,8 +314,37 @@ class MainWindow(QMainWindow):
             mgr.load(code)
 
     # ------------------------------------------------------------------ sessions
+    def _refuse_while_running(self, what: str) -> bool:
+        """True (and a message) when a run is active: the session it was started from must stay on screen."""
+        if not self.state.busy:
+            return False
+        self._message("warning", what, self.tr("A run is in progress. Stop it before changing the session."))
+        return True
+
+    def confirm_discard(self, title: str) -> bool:
+        """Unsaved edits: offer Save / Discard / Cancel; True when the caller may replace the document."""
+        if not self.state.dirty:
+            return True
+        if self.headless:
+            self.state.log(f"{title}: unsaved edits discarded (headless)", "warning")
+            return True
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle(title)
+        box.setText(self.tr("The session has unsaved edits (volumes, region of interest or parameters)."))
+        box.setInformativeText(self.tr("Save them first?"))
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel
+        )
+        box.setDefaultButton(QMessageBox.StandardButton.Save)
+        answer = box.exec()
+        if answer == QMessageBox.StandardButton.Save:
+            self._on_save_session()
+            return not self.state.dirty  # a cancelled file dialog leaves the edits unsaved: stay
+        return answer == QMessageBox.StandardButton.Discard
+
     def _on_new_session(self) -> None:
-        if self.state.run_state in (RunState.RUNNING, RunState.STOPPING):
+        if self._refuse_while_running(self.tr("New session")) or not self.confirm_discard(self.tr("New session")):
             return
         self.state.reset()
         self.setWindowTitle(f"pyALDVC {__version__}")
@@ -324,8 +355,10 @@ class MainWindow(QMainWindow):
             self.open_session_path(path)
 
     def open_session_path(self, path: str) -> list[str]:
+        if self._refuse_while_running(self.tr("Open session")) or not self.confirm_discard(self.tr("Open session")):
+            return []
         try:
-            data = load_session(path)
+            data = load_session(path)  # validated completely before the state is touched
             missing = apply_session(data, self.state, path)
         except SessionError as exc:
             self._message("critical", self.tr("Cannot open session"), str(exc))
@@ -356,8 +389,8 @@ class MainWindow(QMainWindow):
             self.save_session_path(path)
 
     def save_session_path(self, path: str | Path) -> Path | None:
-        results_path = None
-        if self.state.results is not None:
+        results_path = self.state.results_path  # the archive the export dialog or a batch actually wrote
+        if results_path is None and self.state.results is not None:
             candidate = Path(self.state.output_dir) / "aldvc.npz"
             if candidate.exists():
                 results_path = str(candidate)
@@ -448,6 +481,8 @@ class MainWindow(QMainWindow):
         if dialog is None:
             dialog = ExportDialog(self.state, self, preselect_strain=preselect_strain)
             self.export_dialog = dialog
+        elif preselect_strain and hasattr(dialog, "preselect_strain"):
+            dialog.preselect_strain()
         dialog.refresh()
         dialog.show()
         dialog.raise_()
@@ -564,19 +599,67 @@ class MainWindow(QMainWindow):
                 dialog.retranslate_ui()
         super().changeEvent(event)
 
+    def _workers(self) -> list[tuple[str, object, object]]:
+        """(name, is_running, request_stop) of every background job the window may own."""
+        jobs = []
+        batch = getattr(self, "batch_dialog", None)
+        if batch is not None:
+            jobs.append(("batch", lambda: bool(batch.running), batch.stop))
+        jobs.append(
+            (
+                "run",
+                lambda: self.run_panel._worker is not None and self.run_panel._worker.isRunning(),
+                self.run_panel.stop,
+            )
+        )
+        for attr in ("strain_window", "texture_window"):
+            window = getattr(self, attr, None)
+            if window is not None:
+                jobs.append((attr, window._is_running, window.cancel))
+        jobs.append(("recording", self.view3d.recording, self.view3d.cancel_recording))
+        export = getattr(self, "export_dialog", None)
+        if export is not None and hasattr(export, "is_busy"):
+            jobs.append(("export", lambda: bool(export.is_busy), lambda: None))  # an export finishes its files
+        return jobs
+
+    def settle_workers(self, timeout_ms: int = SETTLE_TIMEOUT_MS) -> list[str]:
+        """Ask every background job to stop and wait for the threads while the window stays responsive.
+        Returns the names of the jobs still running when the time is up."""
+        jobs = self._workers()
+        for _name, running, stop in jobs:
+            if running():
+                stop()
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        while time.monotonic() < deadline:
+            pending = [name for name, running, _stop in jobs if running()]
+            if not pending:
+                return []
+            QApplication.processEvents()
+            QThread.msleep(50)
+        return [name for name, running, _stop in jobs if running()]
+
     def closeEvent(self, event) -> None:  # noqa: N802
         if not self.headless:
             self.save_layout()
-        dialog = getattr(self, "batch_dialog", None)
-        if dialog is not None and dialog.running:
-            dialog.stop()
-            dialog.wait(60_000)
-        if self.state.run_state in (RunState.RUNNING, RunState.STOPPING):
+        if self.state.busy:
             if not self._message("question", self.tr("Analysis running"), self.tr("A run is in progress. Stop it and close?")):
                 event.ignore()
                 return
-            self.run_panel.stop()
-            self.run_panel.wait(60_000)
+        if not self.confirm_discard(self.tr("Exit")):
+            event.ignore()
+            return
+        pending = self.settle_workers()
+        if pending:
+            # a thread that does not stop must not be destroyed under the running code: the window stays
+            self._message(
+                "warning",
+                self.tr("Still working"),
+                self.tr("These jobs did not stop in time: {jobs}. Wait for them, then close again.").format(
+                    jobs=", ".join(pending)
+                ),
+            )
+            event.ignore()
+            return
         event.accept()
 
     def retranslate_ui(self) -> None:

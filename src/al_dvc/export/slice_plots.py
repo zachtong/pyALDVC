@@ -96,15 +96,26 @@ def build_axes(fig, layout: str):
     return axes, cax
 
 
+def ordered_limits(lo: float, hi: float) -> tuple[float, float]:
+    """A valid ``(vmin, vmax)`` pair: reversed limits are swapped, equal ones opened by a hair.
+
+    Matplotlib's normalisation misbehaves on ``vmin >= vmax``; every caller that takes a user
+    colour range passes it through here, so a typo never reaches the renderer.
+    """
+    lo, hi = float(lo), float(hi)
+    if hi < lo:
+        lo, hi = hi, lo
+    if hi <= lo:
+        hi = lo + 1e-12
+    return lo, hi
+
+
 def auto_range(values: NDArray, low: float = 1.0, high: float = 99.0) -> tuple[float, float]:
     """Percentile colour range of the finite values (``(0, 1)`` when nothing is finite)."""
     finite = np.asarray(values)[np.isfinite(values)]
     if finite.size == 0:
         return 0.0, 1.0
-    lo, hi = float(np.percentile(finite, low)), float(np.percentile(finite, high))
-    if hi <= lo:
-        hi = lo + 1e-12
-    return lo, hi
+    return ordered_limits(float(np.percentile(finite, low)), float(np.percentile(finite, high)))
 
 
 def slice_indices(shape: tuple[int, int, int], indices: dict[str, int | None] | None) -> tuple[int, int, int]:
@@ -185,7 +196,7 @@ def draw_field_planes(
     iz, iy, ix = slice_indices(shape, indices)
     values = field_array(result, frame, field)
     grid = mesh.to_grid(values)
-    lo, hi = clim if clim is not None else auto_range(grid)
+    lo, hi = ordered_limits(*clim) if clim is not None else auto_range(grid)
     x0, y0, z0 = mesh.x0, mesh.y0, mesh.z0
     hx, hy, hz = mesh.spacing
     kz = int(np.argmin(np.abs(z0 - iz)))

@@ -200,8 +200,13 @@ class BatchDialog(QDialog):
             self.add_sessions(files)
 
     def _on_add_current(self) -> None:
-        if self._state.session_path is not None:
-            self.add_sessions([str(self._state.session_path)])
+        """Queue the session file on disk: unsaved edits are not part of the batch, and an unsaved session cannot be."""
+        path = self._state.session_path
+        if path is None:
+            self.append_log(self.tr("Save the session first: the batch runs the file on disk."))
+            return
+        if self.add_sessions([str(path)]):
+            self.append_log(self.tr("Queued the saved file {path}; edits not yet saved are not included.").format(path=path))
 
     def _on_open_selected(self) -> None:
         rows = sorted({i.row() for i in self.table.selectedItems()})
@@ -234,6 +239,9 @@ class BatchDialog(QDialog):
         self._worker.job_changed.connect(self._on_job_changed)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_all.connect(self._on_finished)
+        # the buttons settle on the thread's own termination: ``finished_all`` is emitted inside ``run`` while
+        # ``isRunning()`` can still be true
+        self._worker.finished.connect(self._update_buttons)
         self._worker.start()
         self._update_buttons()
         return True
@@ -308,6 +316,9 @@ class BatchDialog(QDialog):
         self._btn["add"].setEnabled(not running)
         self._btn["add_current"].setEnabled(not running and self._state.session_path is not None)
         self._btn["open"].setEnabled(selected and self._open_session is not None and not running)
+        # the options were captured when the batch started: editing them now would describe the next batch only
+        for w in (*self.exports.values(), self.checkpoints, self.strain):
+            w.setEnabled(not running)
 
     def closeEvent(self, event) -> None:  # noqa: N802
         if self.running:
@@ -340,6 +351,9 @@ class BatchDialog(QDialog):
         }
         for k, t in texts.items():
             self._btn[k].setText(t)
+        self._btn["add_current"].setToolTip(
+            self.tr("Queues the session file saved on disk; edits not yet saved are not part of the batch")
+        )
         self._exports_label.setText(self.tr("Exports:"))
         self._queue_group.setTitle(self.tr("Queue"))
         self._options_group.setTitle(self.tr("Options"))

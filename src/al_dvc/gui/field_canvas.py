@@ -15,7 +15,7 @@ from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
-from al_dvc.export.slice_plots import LAYOUTS, PlaneStyle, build_axes, draw_field_planes
+from al_dvc.export.slice_plots import LAYOUTS, PlaneStyle, build_axes, draw_field_planes, ordered_limits
 
 from .theme import COLORS
 
@@ -109,7 +109,7 @@ class FieldSliceCanvas(QWidget):
         if cmap is not None:
             self._cmap = str(cmap)
         if clim != "keep":
-            self._clim = None if clim is None else (float(clim[0]), float(clim[1]))
+            self._clim = None if clim is None else ordered_limits(float(clim[0]), float(clim[1]))
         if alpha is not None:
             self._alpha = float(alpha)
         if equal_scale is not None:

@@ -4,6 +4,74 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- Region of interest persistence: a drawn mask is saved next to the session as a
+  composed mask file, so a region drawn before switching frames is no longer
+  lost, and a mask saved with "Save mask" is no longer inverted or doubled when
+  the session is reopened. Undo history stays in memory; sessions of older
+  versions are still replayed.
+- "Mask for: All frames" no longer overwrites the other frames' masks the moment
+  it is selected; it only says where the next drawing operations go. A new
+  "Copy to all frames" button does the copy explicitly, and the undo button
+  reverses it.
+- Results keep the identity of the volumes they were computed from: removing,
+  adding or reordering volumes after a run no longer pairs a field with the
+  wrong image; a volume without a result says so (slices, 3-D view, results
+  panel). The volume list is locked while a run is active.
+- A run, a strain computation or a texture analysis that finishes after its
+  session, result or sequence was replaced is discarded with a message instead
+  of being published into the new context. Opening a session during a run is
+  refused.
+- Strain: the metadata of a computed strain comes from the parameters the
+  worker used, not from controls edited meanwhile (which are disabled during
+  the computation); a cancel that arrives during the last frame is honoured;
+  the buttons settle on every outcome; the settings start from the result's
+  own parameters.
+- Texture analysis: the result is tagged with its input (reference volume,
+  region revision, calibration, settings); a suggestion from a previous input
+  cannot be applied, exports say so, and units come from the analysis time.
+  An empty or mismatching region stops with a message instead of silently
+  taking the whole volume; a cancel without the sweep is honoured; the sweep
+  plot states each threshold's verdict; file errors are reported.
+- 3-D view: the frames animation advances by elapsed time (it advanced
+  cumulatively at the tick rate); changing the animation kind or the result
+  while paused starts afresh; a hidden view pauses; a mouse drag, a camera
+  preset, Turn / Tilt / Zoom, speed, direction or axis changes continue the
+  running animation from what is on screen; screenshots of a paused animation
+  show the paused frame; a frames recording draws every field on its own
+  volume; MP4 recordings stream to disk and every format has a frame limit
+  shown in the dialog; Play is refused while recording, the Record button
+  cancels a recording, and the preview resumes afterwards.
+- Export dialog: the job's settings are frozen while it runs and the completion
+  message names the folder actually written; no fields selected is rejected;
+  the frame range says which formats it applies to; base names must be file
+  names; existing files are replaced only after a question; a failure after
+  some formats were written lists what was written.
+- Batch: CSV and VTK outputs carry the session name (two sessions sharing a
+  folder no longer overwrite each other); threshold masks replay; the buttons
+  settle on the thread's own end; queueing the current session says the saved
+  file is used.
+- Sessions: written atomically, validated completely before the document is
+  replaced, newer formats refused with a message; New / Open / Exit ask before
+  unsaved edits are lost; the session remembers the results archive the export
+  dialog wrote.
+- Application exit cancels and waits for every worker (strain, texture,
+  recording, export, batch, run) while the window stays responsive, and stays
+  open when a thread does not stop.
+- Display: a loaded session restores the colour range, alpha, overlay and
+  lattice toggles into the controls; reversed colour limits are corrected;
+  the field label uses the result's units; drawing gestures commit with the
+  slice, depth, mode and tool they started with; files are added in natural
+  order (frame2 before frame10).
+
+### Changed
+- Subset step is set per axis like the subset size (three boxes and a "Same"
+  lock), so an anisotropic step from the texture analysis is visible and
+  survives edits.
+- Mask tool hints say what Fill, Clear and Remove mask mean for the analysis.
+
 ## [0.5.0] - 2026-09-05
 
 ### Added

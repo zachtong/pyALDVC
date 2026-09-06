@@ -114,6 +114,11 @@ class ResultsPanel(QWidget):
         self.alpha.setValue(int(100 * state.overlay_alpha))
         self.show_overlay = QCheckBox()
         self.show_overlay.setChecked(True)
+        self._no_result = QLabel()  # shown when the selected volume has no computed field (reference, uncomputed frame)
+        self._no_result.setObjectName("hint")
+        self._no_result.setWordWrap(True)
+        self._no_result.hide()
+        form.addRow(self._no_result)
         self._labels: dict[str, QLabel] = {}
         for key, widget in [
             ("frame", frame_widget),
@@ -167,13 +172,14 @@ class ResultsPanel(QWidget):
         self.field.currentIndexChanged.connect(self._on_field_index)
         self.colormap.currentTextChanged.connect(lambda v: self._set(colormap=v))
         self.auto_range.toggled.connect(self._on_auto)
-        self.vmin.valueChanged.connect(lambda v: self._set(color_min=float(v)))
-        self.vmax.valueChanged.connect(lambda v: self._set(color_max=float(v)))
+        self.vmin.valueChanged.connect(lambda v: self._on_limit("min", float(v)))
+        self.vmax.valueChanged.connect(lambda v: self._on_limit("max", float(v)))
         self.alpha.valueChanged.connect(lambda v: self._set(overlay_alpha=v / 100.0))
         self.show_overlay.toggled.connect(lambda v: self._set(show_overlay=bool(v)))
         self._state.results_changed.connect(self.refresh)
         self._state.current_frame_changed.connect(lambda _i: self.refresh())
         self._state.volumes_changed.connect(self.refresh)
+        self._state.display_changed.connect(self._sync_display)  # a loaded session, a change made elsewhere
         self.retranslate_ui()
         self.refresh()
 
@@ -212,6 +218,51 @@ class ResultsPanel(QWidget):
         self.vmax.setEnabled(not auto)
         self._set(color_auto=bool(auto))
 
+    @staticmethod
+    def _limit_gap(value: float) -> float:
+        """Smallest distance kept between the two colour limits."""
+        return max(abs(value) * 1e-3, 1e-6)
+
+    @staticmethod
+    def _set_spin(spin, value: float) -> None:
+        spin.blockSignals(True)
+        spin.setValue(float(value))
+        spin.blockSignals(False)
+
+    def _on_limit(self, which: str, value: float) -> None:
+        """Keep min < max: editing one bound pushes the other, so a reversed pair never reaches the display."""
+        if self._updating:
+            return
+        lo, hi = float(self.vmin.value()), float(self.vmax.value())
+        if which == "min" and lo >= hi:
+            hi = lo + self._limit_gap(lo)
+            self._set_spin(self.vmax, hi)
+        elif which == "max" and hi <= lo:
+            lo = hi - self._limit_gap(hi)
+            self._set_spin(self.vmin, lo)
+        self._set(color_min=lo, color_max=hi)
+
+    def _sync_display(self) -> None:
+        """Every display control shows the state's value: what is rendered is what the widgets say."""
+        st = self._state
+        lo, hi = float(st.color_min), float(st.color_max)
+        if hi <= lo:  # a session edited by hand: repair the pair before it is shown
+            hi = lo + self._limit_gap(lo)
+            st.color_max = hi
+        was = self._updating
+        self._updating = True
+        try:
+            self.colormap.setCurrentText(st.colormap)
+            self.auto_range.setChecked(bool(st.color_auto))
+            self.vmin.setEnabled(not st.color_auto)
+            self.vmax.setEnabled(not st.color_auto)
+            self._set_spin(self.vmin, lo)
+            self._set_spin(self.vmax, hi)
+            self.alpha.setValue(int(round(100 * float(st.overlay_alpha))))
+            self.show_overlay.setChecked(bool(st.show_overlay))
+        finally:
+            self._updating = was
+
     # ------------------------------------------------------------------ view
     def refresh(self) -> None:
         res = self._state.results
@@ -237,9 +288,12 @@ class ResultsPanel(QWidget):
                     self._state.display_field = fields[0]
                 self.frame.setRange(1, len(res.result_disp))
                 self.frame.setValue(max(1, min(self._state.current_frame, len(res.result_disp))))
-            self.colormap.setCurrentText(self._state.colormap)
+            self._sync_display()
         finally:
             self._updating = False
+        # the selected volume may have no field of its own: the reference row, a row added after the run, a
+        # frame the run never reached. Nothing is substituted; the hint says so.
+        self._no_result.setVisible(has and self._state.result_frame() is None)
         if has:
             short, details = self._summary_text()
             self._summary.setText(short)
@@ -384,6 +438,7 @@ class ResultsPanel(QWidget):
         }
         for key, label in self._labels.items():
             label.setText(texts[key])
+        self._no_result.setText(self.tr("No result for this volume"))
         self._btn_export.setText(self.tr("Export results..."))
         self._export_status.setText(self.tr("npz, mat, CSV, ParaView, PDF report and slice images"))
         if self._state.results is None:

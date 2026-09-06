@@ -44,6 +44,7 @@ SVG: dict[str, str] = {
     "stop": f'<rect x="5" y="5" width="10" height="10" rx="1" {_STROKE}/>',
     "pause": f'<rect x="5" y="4" width="3.5" height="12" rx="1" {_STROKE}/><rect x="11.5" y="4" width="3.5" height="12" rx="1" {_STROKE}/>',
     "record": f'<circle cx="10" cy="10" r="6" {_STROKE}/><circle cx="10" cy="10" r="2.5" fill="{{c}}" stroke="none"/>',
+    "copy": f'<rect x="7" y="7" width="9.5" height="9.5" rx="1.5" {_STROKE}/><path d="M4 13 V4 H13" {_STROKE}/>',
     "eye": f'<path d="M2.5 10 C5 6 8 4.5 10 4.5 C12 4.5 15 6 17.5 10 C15 14 12 15.5 10 15.5 C8 15.5 5 14 2.5 10 Z" {_STROKE}/><circle cx="10" cy="10" r="2.5" {_STROKE}/>',
 }
 

@@ -1,14 +1,18 @@
 """Export dialog: destination, data formats, fields, frames, images and the PDF report in one place.
 
 Follows pyALDIC's ``ExportDialog``: everything is chosen up front, the work runs on a worker
-thread with progress, and the folder can be opened when done. Headless (tests) the dialog
-works without any file chooser.
+thread with progress, and the folder can be opened when done. The settings of a running job are
+frozen (the controls are disabled) and every message about the job reads the captured
+configuration, never the widgets. Every format is attempted even when one fails, and the outcome
+lists what was written and what was not. Headless (tests) the dialog works without any file
+chooser or question box.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import sys
 import traceback
@@ -26,6 +30,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QSpinBox,
@@ -43,7 +48,20 @@ from ..widgets import combo, guard_wheel, headless, spin
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["ExportConfig", "ExportDialog", "run_export"]
+__all__ = [
+    "ExportConfig",
+    "ExportDialog",
+    "ExportError",
+    "ExportOutcome",
+    "existing_outputs",
+    "export_formats",
+    "run_export",
+    "validate_basename",
+]
+
+FIELD_FORMATS = ("csv", "vtk", "report", "images")  # the formats that take the field selection
+FRAME_FORMATS = ("csv", "vtk", "images")  # the formats that take the frame range; npz / mat / report hold every frame
+_BAD_NAME_CHARS = re.compile(r'[<>:"|?*\\/\x00-\x1f]')
 
 
 @dataclass
@@ -70,61 +88,152 @@ class ExportConfig:
     def formats(self) -> list[str]:
         return [k for k in ("npz", "mat", "csv", "vtk", "report", "images") if getattr(self, k)]
 
+    def needs_fields(self) -> bool:
+        return any(getattr(self, k) for k in FIELD_FORMATS)
 
-def run_export(result: PipelineResult, cfg: ExportConfig, background=None, progress_fn=None, log_fn=None) -> list[Path]:
-    """Write every selected format and return the paths (files or folders) produced."""
+
+@dataclass
+class ExportOutcome:
+    """What one export job produced, format by format (a failed format does not stop the others)."""
+
+    written: dict[str, list[Path]] = field(default_factory=dict)  # format -> files or folders
+    errors: dict[str, str] = field(default_factory=dict)  # format -> "ExcType: message"
+    tracebacks: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def paths(self) -> list[Path]:
+        return [p for paths in self.written.values() for p in paths]
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors
+
+
+class ExportError(RuntimeError):
+    """A format failed; ``outcome`` still lists what the other formats wrote."""
+
+    def __init__(self, outcome: ExportOutcome) -> None:
+        super().__init__("; ".join(f"{k}: {v}" for k, v in outcome.errors.items()))
+        self.outcome = outcome
+
+
+def validate_basename(name: str) -> str | None:
+    """Why ``name`` cannot be the base of the output files (``None`` when it can).
+
+    Only a leaf file name is accepted: no folder separators (a pasted path would escape the
+    chosen folder), no ``.`` / ``..``, none of the characters Windows refuses, not empty.
+    Returns one of ``"empty"``, ``"dots"``, ``"characters"``.
+    """
+    text = name.strip()
+    if not text:
+        return "empty"
+    if text in (".", ".."):
+        return "dots"
+    if _BAD_NAME_CHARS.search(text):
+        return "characters"
+    return None
+
+
+def existing_outputs(cfg: ExportConfig) -> list[Path]:
+    """Files an export with ``cfg`` would overwrite: the archive / report names, the per-frame files by pattern."""
+    out = Path(cfg.out_dir)
+    found: list[Path] = []
+    for key, name in (("npz", f"{cfg.basename}.npz"), ("mat", f"{cfg.basename}.mat"), ("report", f"{cfg.basename}_report.pdf")):
+        if getattr(cfg, key) and (out / name).exists():
+            found.append(out / name)
+    if cfg.csv:
+        found += sorted((out / "csv").glob(f"{cfg.basename}_*.csv"))
+    if cfg.vtk:
+        found += sorted((out / "vtk").glob(f"{cfg.basename}*.pvd")) + sorted((out / "vtk").glob(f"{cfg.basename}_*.vti"))
+    if cfg.images:
+        for name in cfg.fields:
+            found += sorted((out / "images").glob(f"{name}_frame_*.png"))
+    return found
+
+
+def _write_format(step: str, result, cfg: ExportConfig, out: Path, fields: list[str], background, progress_fn, i: int, n: int):
     from al_dvc.export import export_csv, export_mat, export_npz, export_report, export_vtk
     from al_dvc.export.slice_plots import export_field_images
 
-    out = Path(cfg.out_dir)
-    out.mkdir(parents=True, exist_ok=True)
+    if step == "npz":
+        return [Path(export_npz(result, out / f"{cfg.basename}.npz"))]
+    if step == "mat":
+        return [Path(export_mat(result, out / f"{cfg.basename}.mat"))]
+    if step == "csv":
+        return [Path(export_csv(result, out / "csv", cfg.basename, fields=fields, frames=cfg.frames)[0]).parent]
+    if step == "vtk":
+        return [Path(export_vtk(result, out / "vtk", cfg.basename, fields=fields, frames=cfg.frames)[0]).parent]
+    if step == "report":
+        return [Path(export_report(result, out / f"{cfg.basename}_report.pdf", fields=fields))]
+    if step == "images":
+        files = export_field_images(
+            result,
+            out / "images",
+            fields,
+            frames=cfg.frames,
+            layout=cfg.image_layout,
+            cmap=cfg.image_cmap,
+            background=background if cfg.image_background else None,
+            dpi=cfg.image_dpi,
+            light=cfg.image_light,
+            equal_scale=cfg.image_equal_scale,
+            progress_fn=(lambda f, m: progress_fn((i + f) / n, f"images: {m}")) if progress_fn else None,
+        )
+        return [Path(files[0]).parent] if files else []
+    raise ValueError(f"unknown export format {step!r}")
+
+
+def export_formats(result: PipelineResult, cfg: ExportConfig, background=None, progress_fn=None, log_fn=None) -> ExportOutcome:
+    """Write every selected format, going on after a failure; the outcome says what was written and what failed.
+
+    Raises ``ValueError`` before writing anything when nothing is selected or when a format that
+    takes fields has none.
+    """
     steps = cfg.formats()
     if not steps:
         raise ValueError("nothing selected to export")
-    written: list[Path] = []
     fields = [f for f in cfg.fields if f in DISP_FIELDS or f in STD_FIELDS or (f in STRAIN_FIELDS and result.result_strain)]
-    if not fields:
-        fields = ["disp_u", "disp_v", "disp_w"]
+    if not fields and cfg.needs_fields():
+        raise ValueError("no field selected: CSV, ParaView, images and the report need at least one")
+    out = Path(cfg.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    outcome = ExportOutcome()
     for i, step in enumerate(steps):
         if progress_fn is not None:
             progress_fn(i / len(steps), step)
-        if step == "npz":
-            written.append(export_npz(result, out / f"{cfg.basename}.npz"))
-        elif step == "mat":
-            written.append(export_mat(result, out / f"{cfg.basename}.mat"))
-        elif step == "csv":
-            written.append(export_csv(result, out / "csv", cfg.basename, fields=fields, frames=cfg.frames)[0].parent)
-        elif step == "vtk":
-            written.append(export_vtk(result, out / "vtk", cfg.basename, fields=fields, frames=cfg.frames)[0].parent)
-        elif step == "report":
-            written.append(export_report(result, out / f"{cfg.basename}_report.pdf", fields=fields))
-        elif step == "images":
-            files = export_field_images(
-                result,
-                out / "images",
-                fields,
-                frames=cfg.frames,
-                layout=cfg.image_layout,
-                cmap=cfg.image_cmap,
-                background=background if cfg.image_background else None,
-                dpi=cfg.image_dpi,
-                light=cfg.image_light,
-                equal_scale=cfg.image_equal_scale,
-                progress_fn=(lambda f, m: progress_fn((i + f) / len(steps), f"images: {m}")) if progress_fn else None,
-            )
-            if files:
-                written.append(files[0].parent)
-        if log_fn is not None:
-            log_fn(f"exported {step}: {written[-1]}")
+        try:
+            paths = _write_format(step, result, cfg, out, fields, background, progress_fn, i, len(steps))
+        except Exception as exc:
+            logger.exception("export %s failed", step)
+            outcome.errors[step] = f"{type(exc).__name__}: {exc}"
+            outcome.tracebacks[step] = traceback.format_exc()
+            if log_fn is not None:
+                log_fn(f"export {step} failed: {outcome.errors[step]}")
+            continue
+        outcome.written[step] = paths
+        if log_fn is not None and paths:
+            log_fn(f"exported {step}: {paths[-1]}")
     if progress_fn is not None:
         progress_fn(1.0, "done")
-    return written
+    return outcome
+
+
+def run_export(result: PipelineResult, cfg: ExportConfig, background=None, progress_fn=None, log_fn=None) -> list[Path]:
+    """Write every selected format and return the paths (files or folders) produced.
+
+    Every format is attempted; a failure is raised afterwards as :class:`ExportError`, whose
+    ``outcome`` still lists the files that were written.
+    """
+    outcome = export_formats(result, cfg, background, progress_fn, log_fn)
+    if outcome.errors:
+        raise ExportError(outcome)
+    return outcome.paths
 
 
 class _ExportWorker(QThread):
     progress = Signal(float, str)
-    finished_paths = Signal(object)
-    failed = Signal(str, str)
+    finished_outcome = Signal(object)  # ExportOutcome, complete or partial
+    failed = Signal(str, str)  # nothing could be written: message, traceback
     log = Signal(str)
 
     def __init__(self, result, cfg: ExportConfig, background, parent=None) -> None:
@@ -135,7 +244,7 @@ class _ExportWorker(QThread):
 
     def run(self) -> None:  # noqa: D401 - QThread entry point
         try:
-            paths = run_export(
+            outcome = export_formats(
                 self._result,
                 self._cfg,
                 self._background,
@@ -146,7 +255,7 @@ class _ExportWorker(QThread):
             logger.exception("Export failed")
             self.failed.emit(f"{type(exc).__name__}: {exc}", traceback.format_exc())
             return
-        self.finished_paths.emit(paths)
+        self.finished_outcome.emit(outcome)
 
 
 def open_folder(path: Path) -> None:
@@ -171,6 +280,8 @@ class ExportDialog(QDialog):
         super().__init__(parent)
         self._state = state
         self._worker: _ExportWorker | None = None
+        self._job_cfg: ExportConfig | None = None  # the configuration of the running (or last) job
+        self._n_frames = 1
         self.setModal(False)
         self.resize(560, 640)
 
@@ -293,10 +404,26 @@ class ExportDialog(QDialog):
         buttons.addWidget(self._btn_close)
         layout.addLayout(buttons)
         guard_wheel(self)
+        # the settings of a job are frozen while it runs: these controls are disabled together
+        self._job_controls: list[QWidget] = [
+            self.folder,
+            self._btn_browse,
+            self.basename,
+            *self.checks.values(),
+            self.fields,
+            self._btn_all,
+            self._btn_none,
+            self._btn_disp,
+            self._btn_strain,
+            self.all_frames,
+            self.frame_from,
+            self.frame_to,
+            self._image_group,
+        ]
 
         # ---- wiring
         self._btn_browse.clicked.connect(self._on_browse)
-        self._btn_open.clicked.connect(lambda: open_folder(Path(self.folder.text() or ".")))
+        self._btn_open.clicked.connect(self._open_folder)
         self._btn_export.clicked.connect(self.start)
         self._btn_close.clicked.connect(self.close)
         self._btn_all.clicked.connect(lambda: self._check_fields(lambda _n: True))
@@ -304,16 +431,20 @@ class ExportDialog(QDialog):
         self._btn_disp.clicked.connect(lambda: self._check_fields(lambda n: n in DISP_FIELDS))
         self._btn_strain.clicked.connect(lambda: self._check_fields(lambda n: n in STRAIN_FIELDS))
         self.all_frames.toggled.connect(self._on_all_frames)
-        self.checks["images"].toggled.connect(lambda v: self._image_group.setEnabled(v))
+        self.checks["images"].toggled.connect(lambda v: self._image_group.setEnabled(v and not self._running()))
         self._image_group.setEnabled(False)
         self._state.results_changed.connect(self.refresh)
         self.retranslate_ui()
         self.refresh()
         if preselect_strain:
-            self._check_fields(lambda n: n in STRAIN_FIELDS or n in DISP_FIELDS)
-            self.checks["csv"].setChecked(True)
+            self.preselect_strain()
 
     # ------------------------------------------------------------------ fields
+    def preselect_strain(self) -> None:
+        """Tick the displacement and strain fields and the CSV format (the Strain window's export entry)."""
+        self._check_fields(lambda n: n in STRAIN_FIELDS or n in DISP_FIELDS)
+        self.checks["csv"].setChecked(True)
+
     def refresh(self) -> None:
         res = self._state.results
         has = res is not None and bool(res.result_disp)
@@ -337,12 +468,17 @@ class ExportDialog(QDialog):
             default = name in ("disp_u", "disp_v", "disp_w") if not checked else name in checked
             item.setCheckState(Qt.CheckState.Checked if default else Qt.CheckState.Unchecked)
             self.fields.addItem(item)
-        n = len(res.result_disp) if has else 1
+        n = max(1, len(res.result_disp) if has else 1)
+        previous, self._n_frames = self._n_frames, n
         for s in (self.frame_from, self.frame_to):
-            s.setRange(1, max(1, n))
-        self.frame_to.setValue(max(1, n))
+            s.setRange(1, n)
+        # a range the user narrowed survives a refresh; "up to the last frame" follows the frame count
+        if self.frame_to.value() > n or self.frame_to.value() == previous:
+            self.frame_to.setValue(n)
+        if self.frame_from.value() > n:
+            self.frame_from.setValue(1)
         self._btn_export.setEnabled(has and not self._running())
-        self._btn_strain.setEnabled(has and bool(res.result_strain))
+        self._btn_strain.setEnabled(has and bool(res.result_strain) and not self._running())
         if not has:
             self._status.setText(self.tr("No results to export yet."))
         elif not res.result_strain:
@@ -364,8 +500,9 @@ class ExportDialog(QDialog):
         ]
 
     def _on_all_frames(self, all_frames: bool) -> None:
-        self.frame_from.setEnabled(not all_frames)
-        self.frame_to.setEnabled(not all_frames)
+        enabled = not all_frames and not self._running()
+        self.frame_from.setEnabled(enabled)
+        self.frame_to.setEnabled(enabled)
 
     def config(self) -> ExportConfig:
         frames = None
@@ -391,6 +528,11 @@ class ExportDialog(QDialog):
             image_equal_scale=self.image_equal.isChecked(),
         )
 
+    @property
+    def job_config(self) -> ExportConfig | None:
+        """The configuration captured when the running (or last) job started."""
+        return self._job_cfg
+
     # ------------------------------------------------------------------ run
     def _running(self) -> bool:
         return self._worker is not None and self._worker.isRunning()
@@ -402,13 +544,62 @@ class ExportDialog(QDialog):
         if folder:
             self.folder.setText(folder)
 
+    def _open_folder(self) -> None:
+        """While a job runs the button opens the job's folder; idle, the folder in the box."""
+        if self._running() and self._job_cfg is not None:
+            open_folder(Path(self._job_cfg.out_dir))
+        else:
+            open_folder(Path(self.folder.text() or "."))
+
+    def _set_job_controls_enabled(self, enabled: bool) -> None:
+        for w in self._job_controls:
+            w.setEnabled(enabled)
+        if enabled:
+            res = self._state.results
+            self._btn_strain.setEnabled(res is not None and bool(res.result_strain))
+            self._image_group.setEnabled(self.checks["images"].isChecked())
+            self._on_all_frames(self.all_frames.isChecked())
+
+    def _basename_message(self, problem: str) -> str:
+        return {
+            "empty": self.tr("Base name: type a file name."),
+            "dots": self.tr("Base name: '.' and '..' are not file names."),
+            "characters": self.tr('Base name: a file name only, without folder separators or the characters < > : " | ? *'),
+        }[problem]
+
+    def _confirm_overwrite(self, cfg: ExportConfig) -> bool:
+        """Ask before files of an earlier export are replaced (headless: go ahead)."""
+        clashes = existing_outputs(cfg)
+        if not clashes or headless():
+            return True
+        answer = QMessageBox.question(
+            self,
+            self.tr("Overwrite files?"),
+            self.tr("{n} file(s) in {folder} would be overwritten, e.g. {name}. Continue?").format(
+                n=len(clashes), folder=cfg.out_dir, name=clashes[0].name
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
     def start(self) -> None:
         res = self._state.results
         if res is None or self._running():
             return
+        problem = validate_basename(self.basename.text())
+        if problem is not None:
+            self._status.setText(self._basename_message(problem))
+            return
         cfg = self.config()
         if not cfg.formats():
             self._status.setText(self.tr("Select at least one format."))
+            return
+        if cfg.needs_fields() and not cfg.fields:
+            self._status.setText(self.tr("Select at least one field: CSV, ParaView, images and the report need one."))
+            return
+        if not self._confirm_overwrite(cfg):
+            self._status.setText(self.tr("Export cancelled: choose another base name or folder."))
             return
         background = None
         if cfg.images and cfg.image_background and self._state.volumes:
@@ -419,14 +610,16 @@ class ExportDialog(QDialog):
             except Exception as exc:
                 self._state.log(f"export: cannot load the reference volume for the images: {exc}", "warning")
         self._state.set_output_dir(cfg.out_dir)
+        self._job_cfg = cfg
         self._worker = _ExportWorker(res, cfg, background, parent=self)
         self._worker.progress.connect(self._on_progress)
-        self._worker.finished_paths.connect(self._on_finished)
+        self._worker.finished_outcome.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)
         self._worker.log.connect(lambda m: self._state.log(m))
+        self._set_job_controls_enabled(False)
         self._btn_export.setEnabled(False)
         self._progress.setValue(0)
-        self._status.setText(self.tr("Exporting..."))
+        self._status.setText(self.tr("Exporting to {folder}...").format(folder=cfg.out_dir))
         self._worker.start()
 
     def wait(self, timeout_ms: int = 300_000) -> bool:
@@ -436,14 +629,32 @@ class ExportDialog(QDialog):
         self._progress.setValue(int(round(1000 * fraction)))
         self._status.setText(self.tr("Exporting: {msg}").format(msg=message))
 
-    def _on_finished(self, paths) -> None:
-        self._btn_export.setEnabled(True)
+    def _job_folder(self) -> Path:
+        return Path(self._job_cfg.out_dir) if self._job_cfg is not None else Path(self.folder.text() or ".")
+
+    def _on_finished(self, outcome: ExportOutcome) -> None:
+        folder = self._job_folder()
+        self._set_job_controls_enabled(True)
+        self._btn_export.setEnabled(self._state.results is not None)
         self._progress.setValue(1000)
-        self._status.setText(self.tr("Done: {n} item(s) written to {folder}").format(n=len(paths), folder=self.folder.text()))
-        self._state.log(self.tr("Export finished: {folder}").format(folder=self.folder.text()), "success")
+        names = ", ".join(p.name for p in outcome.paths) or "-"
+        if outcome.ok:
+            self._status.setText(self.tr("Done: {names} written to {folder}").format(names=names, folder=folder))
+            self._state.log(self.tr("Export finished: {names} in {folder}").format(names=names, folder=folder), "success")
+        else:
+            failed = "; ".join(f"{k}: {v}" for k, v in outcome.errors.items())
+            text = self.tr("Export incomplete. Written: {names}. Failed: {failed}").format(names=names, failed=failed)
+            self._status.setText(text)
+            self._state.log(text, "error")
+            for tb in outcome.tracebacks.values():
+                self._state.log(tb, "debug")
+        npz = outcome.written.get("npz")
+        if npz and hasattr(self._state, "results_path"):
+            self._state.results_path = str(npz[0])
 
     def _on_failed(self, message: str, detail: str) -> None:
-        self._btn_export.setEnabled(True)
+        self._set_job_controls_enabled(True)
+        self._btn_export.setEnabled(self._state.results is not None)
         self._status.setText(self.tr("Export failed: {error}").format(error=message))
         self._state.log(self.tr("Export failed: {error}").format(error=message), "error")
         self._state.log(detail, "debug")
@@ -455,6 +666,7 @@ class ExportDialog(QDialog):
         self._btn_browse.setText(self.tr("Browse..."))
         self._btn_open.setText(self.tr("Open folder"))
         self._name_label.setText(self.tr("Base name"))
+        self.basename.setToolTip(self.tr("File name without folder or extension; existing files are replaced after a question"))
         self._format_group.setTitle(self.tr("Formats"))
         texts = {
             "npz": self.tr("NumPy archive (.npz)"),
@@ -473,7 +685,13 @@ class ExportDialog(QDialog):
         self._btn_none.setText(self.tr("None"))
         self._btn_disp.setText(self.tr("Displacement"))
         self._btn_strain.setText(self.tr("Strain"))
-        self._frames_label.setText(self.tr("Frames"))
+        self._frames_label.setText(self.tr("Frames (CSV, ParaView, images)"))
+        frames_tip = self.tr(
+            "The frame range applies to CSV, ParaView and the slice images; the NumPy archive, the MATLAB file "
+            "and the PDF report always hold every frame."
+        )
+        for w in (self._frames_label, self.all_frames, self.frame_from, self.frame_to):
+            w.setToolTip(frames_tip)
         self.all_frames.setText(self.tr("all"))
         self._image_group.setTitle(self.tr("Images"))
         self._layout_label.setText(self.tr("Layout"))

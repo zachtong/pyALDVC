@@ -52,7 +52,19 @@ class ParamPanel(QWidget):
             winsize_row.addWidget(w)
         winsize_row.addSpacing(4)
         winsize_row.addWidget(self.winsize_lock)
-        self.winstepsize = spin(1, 128, 1)
+        # the node step per axis (x, y, z), like the subset size: with the lock on, the x box drives all three
+        self.winstepsize_axes = [spin(1, 128, 1, width=SUBSET_FIELD_WIDTH) for _ in range(3)]
+        self.winstepsize = self.winstepsize_axes[0]
+        self.winstepsize_lock = QCheckBox()
+        self.winstepsize_lock.setChecked(True)
+        winstep_widget = QWidget()
+        winstep_row = QHBoxLayout(winstep_widget)
+        winstep_row.setContentsMargins(0, 0, 0, 0)
+        winstep_row.setSpacing(4)
+        for w in self.winstepsize_axes:
+            winstep_row.addWidget(w)
+        winstep_row.addSpacing(4)
+        winstep_row.addWidget(self.winstepsize_lock)
         self.search_radius = spin(1, 128, 1)
         self.init_method = self._choice("init")
         self.interp = self._choice("interp")
@@ -61,7 +73,7 @@ class ParamPanel(QWidget):
             layout,
             [
                 ("winsize", winsize_widget),
-                ("winstepsize", self.winstepsize),
+                ("winstepsize", winstep_widget),
                 ("search_radius", self.search_radius),
                 ("init_method", self.init_method),
                 ("interp", self.interp),
@@ -187,7 +199,9 @@ class ParamPanel(QWidget):
         for i, w in enumerate(self.winsize_axes):
             w.valueChanged.connect(lambda v, i=i: self._on_winsize(i, v))
         self.winsize_lock.toggled.connect(self._on_winsize_lock)
-        self.winstepsize.valueChanged.connect(lambda v: self._set("winstepsize", int(v)))
+        for i, w in enumerate(self.winstepsize_axes):
+            w.valueChanged.connect(lambda v, i=i: self._on_winstepsize(i, v))
+        self.winstepsize_lock.toggled.connect(self._on_winstepsize_lock)
         self.search_radius.valueChanged.connect(lambda v: self._set("search_radius", int(v)))
         self.interp.currentIndexChanged.connect(lambda _i: self._set("interp_method", self.interp.currentData()))
         self.init_method.currentIndexChanged.connect(lambda _i: self._set("init_guess_method", self.init_method.currentData()))
@@ -251,6 +265,24 @@ class ParamPanel(QWidget):
         if locked and not self._updating:
             self._on_winsize(0, self.winsize_axes[0].value())
 
+    def _on_winstepsize(self, axis: int, value: int) -> None:
+        """One step per axis; with the lock on, the x box drives the three. Editing one axis never touches the others."""
+        if self._updating:
+            return
+        v = int(value)
+        if self.winstepsize_lock.isChecked():
+            for j, w in enumerate(self.winstepsize_axes):
+                if j != axis and w.value() != v:
+                    w.blockSignals(True)
+                    w.setValue(v)
+                    w.blockSignals(False)
+        self._set("winstepsize", tuple(int(w.value()) for w in self.winstepsize_axes))
+
+    def _on_winstepsize_lock(self, locked: bool) -> None:
+        """Locking gives the three axes the x step again."""
+        if locked and not self._updating:
+            self._on_winstepsize(0, self.winstepsize_axes[0].value())
+
     # ------------------------------------------------------------------ view
     def refresh(self) -> None:
         p = self._state.para
@@ -260,7 +292,10 @@ class ParamPanel(QWidget):
                 w.setValue(int(v) + 1)
             if len(set(int(v) for v in p.winsize)) > 1:
                 self.winsize_lock.setChecked(False)  # a non-cubic subset (session, script) unlocks the axes
-            self.winstepsize.setValue(int(p.winstepsize[0]))
+            for w, v in zip(self.winstepsize_axes, p.winstepsize):
+                w.setValue(int(v))
+            if len(set(int(v) for v in p.winstepsize)) > 1:
+                self.winstepsize_lock.setChecked(False)  # an anisotropic step (texture analysis, session) unlocks the axes
             self.search_radius.setValue(int(p.search_radius[0]))
             select_key(self.interp, p.interp_method)
             select_key(self.init_method, p.init_guess_method)
@@ -326,6 +361,8 @@ class ParamPanel(QWidget):
     def retranslate_ui(self) -> None:
         self.winsize_lock.setText(self.tr("Cube"))
         self.winsize_lock.setToolTip(self.tr("Keep the subset cubic: one size for x, y and z"))
+        self.winstepsize_lock.setText(self.tr("Same"))
+        self.winstepsize_lock.setToolTip(self.tr("Keep the same step along x, y and z"))
         texts = {
             "winsize": self.tr("Subset size [voxel]"),
             "winstepsize": self.tr("Subset step [voxel]"),
@@ -362,7 +399,10 @@ class ParamPanel(QWidget):
                 "Subset edge along x, y and z in voxels (odd: 2h+1 centred on the node). "
                 "Lock it to keep the subset cubic; unlock for a flat or elongated subset, e.g. on anisotropic voxels."
             ),
-            "winstepsize": self.tr("Distance between neighbouring nodes in voxels."),
+            "winstepsize": self.tr(
+                "Distance between neighbouring nodes along x, y and z in voxels. Unlock for a different step per "
+                "axis (the texture analysis may suggest one)."
+            ),
             "search_radius": self.tr("Largest displacement the initial guess can find, in voxels."),
             "init_method": self.tr(
                 "Pyramid: coarse-to-fine correlation search (robust to large motion). Single-level: one search at "

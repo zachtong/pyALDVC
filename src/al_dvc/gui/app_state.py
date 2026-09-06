@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import enum
 import logging
-from dataclasses import dataclass, replace
+import uuid
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +44,8 @@ class VolumeEntry:
     mask_path: str | None = None
     mask: NDArray[np.bool_] | None = None
     label: str = ""
-    mask_ops: dict | None = None  # drawing operations that produced ``mask`` (session persistence)
+    mask_ops: dict | None = None  # drawing operations that produced ``mask`` (undo history; legacy sessions)
+    uid: str = field(default_factory=lambda: uuid.uuid4().hex)  # identity, so results stay attached to their volumes
 
     def load(self) -> NDArray:
         if self.array is None:
@@ -89,6 +91,11 @@ class AppState(QObject):
         self.progress: float = 0.0
         self.progress_message: str = ""
         self.results: PipelineResult | None = None
+        self.result_uids: list[str] = []  # ``uid`` of the volumes the results describe (frame k <-> result k-1)
+        self.results_path: str | None = None  # the last exported results archive (session pointer)
+        self.session_generation: int = 0  # bumped whenever the session context is replaced or the sequence changes
+        self.mask_revision: int = 0  # bumped whenever any mask changes (analyses tag their input with it)
+        self.dirty: bool = False  # unsaved edits (volumes, masks, parameters, output folder)
         self.output_dir: Path = Path("aldvc_results")
         self.session_path: Path | None = None
         self.write_checkpoints: bool = False  # advanced option; results live in memory and are exported afterwards
@@ -112,10 +119,34 @@ class AppState(QObject):
         self.mask_alpha: float = 0.35
 
     # ------------------------------------------------------------------ volumes
+    @property
+    def busy(self) -> bool:
+        """A run is active: the sequence, the session and the parameters it captured must not change."""
+        return self.run_state in (RunState.RUNNING, RunState.STOPPING)
+
+    def _locked(self, what: str) -> bool:
+        if self.busy:
+            self.log(f"{what}: the volume list is locked while a run is active (stop it first)", "warning")
+            return True
+        return False
+
+    def _sequence_changed(self) -> None:
+        """The sequence is different: a run started before this must not publish into it."""
+        self.session_generation += 1
+        self.dirty = True
+
+    def mark_clean(self) -> None:
+        self.dirty = False
+
     def add_volume_paths(self, paths: list[str]) -> None:
+        if not paths or self._locked("add volumes"):
+            return
         for p in paths:
             self.volumes.append(VolumeEntry(path=str(p)))
+        self._sequence_changed()
         self.volumes_changed.emit()
+        if self.results is not None:
+            self.results_changed.emit()  # the new rows have no result; the views re-map
 
     def set_volume_arrays(self, arrays: list[NDArray], labels: list[str] | None = None) -> None:
         self.volumes = [
@@ -123,36 +154,53 @@ class AppState(QObject):
         ]
         self.current_frame = 0
         self.results = None
+        self.result_uids = []
         self.mask_editor = None
+        self._sequence_changed()
         self.volumes_changed.emit()
         self.results_changed.emit()
         self.mask_changed.emit()
 
     def remove_volume(self, index: int) -> None:
-        if 0 <= index < len(self.volumes):
-            del self.volumes[index]
-            self.current_frame = min(self.current_frame, max(0, len(self.volumes) - 1))
-            self.volumes_changed.emit()
+        if not (0 <= index < len(self.volumes)) or self._locked("remove volume"):
+            return
+        del self.volumes[index]
+        self.current_frame = min(self.current_frame, max(0, len(self.volumes) - 1))
+        self.mask_editor = None
+        self._sequence_changed()
+        self.volumes_changed.emit()
+        self.current_frame_changed.emit(self.current_frame)
+        self.mask_changed.emit()
+        if self.results is not None:
+            self.results_changed.emit()  # the results keep their identity; the removed row's field is gone
 
     def move_volume(self, index: int, new_index: int) -> None:
         """Reorder the sequence (frame 0 stays the reference of the run); the moved frame stays current."""
         n = len(self.volumes)
-        if not (0 <= index < n) or not (0 <= new_index < n) or index == new_index:
+        if not (0 <= index < n) or not (0 <= new_index < n) or index == new_index or self._locked("reorder volumes"):
             return
         entry = self.volumes.pop(index)
         self.volumes.insert(new_index, entry)
         self.current_frame = new_index
         self.mask_editor = None
+        self._sequence_changed()
         self.volumes_changed.emit()
         self.current_frame_changed.emit(new_index)
         self.mask_changed.emit()
+        if self.results is not None:
+            self.results_changed.emit()  # every row keeps the result it was computed for
 
     def clear_volumes(self) -> None:
+        if self._locked("clear volumes"):
+            return
         self.volumes = []
         self.current_frame = 0
         self.mask_editor = None
+        self._sequence_changed()
         self.volumes_changed.emit()
         self.mask_changed.emit()
+        if self.results is not None:
+            self.results_changed.emit()
 
     def set_mask(self, index: int, path: str | None = None, mask: NDArray[np.bool_] | None = None) -> None:
         entry = self.volumes[index]
@@ -161,8 +209,13 @@ class AppState(QObject):
         entry.mask_ops = None
         if index == self.current_frame:
             self.mask_editor = None
+        self._mask_changed()
         self.volumes_changed.emit()
         self.mask_changed.emit()
+
+    def _mask_changed(self) -> None:
+        self.mask_revision += 1
+        self.dirty = True
 
     # ------------------------------------------------------------------ mask drawing
     def current_mask(self) -> NDArray[np.bool_] | None:
@@ -230,21 +283,60 @@ class AppState(QObject):
         return list(range(len(self.volumes))) if self.mask_target == "all" else [self.current_frame]
 
     def _push_mask(self) -> None:
+        """The editor's mask onto the target frames: the current frame shares the editor's array, the other
+        frames (target ``all``) get their own copy so a later edit cannot change them behind the user's back."""
         ed = self.mask_editor
         if ed is None:
             return
         ops = ed.to_dict()
         for i in self._target_frames():
             if i < len(self.volumes):
-                self.volumes[i].mask = ed.mask
+                self.volumes[i].mask = ed.mask if i == self.current_frame else ed.mask.copy()
                 self.volumes[i].mask_ops = ops
+        self._mask_copy_backup = None  # a new drawing supersedes an undoable copy
+        self._mask_changed()
         self.mask_changed.emit()
+
+    def copy_mask_to_all_frames(self) -> bool:
+        """Give every frame a copy of the current frame's mask (explicit, reversible with :meth:`undo_mask`)."""
+        mask = self.current_mask()
+        if mask is None or len(self.volumes) < 2:
+            return False
+        ops = self.mask_editor.to_dict() if self.mask_editor is not None else self.volumes[self.current_frame].mask_ops
+        self._mask_copy_backup = [(v.mask_path, v.mask, v.mask_ops) for v in self.volumes]
+        for i, entry in enumerate(self.volumes):
+            if i == self.current_frame:
+                continue
+            entry.mask_path = None
+            entry.mask = mask.copy()
+            entry.mask_ops = ops
+        self._mask_changed()
+        self.log(f"mask of frame {self.current_frame} copied to the other {len(self.volumes) - 1} frame(s)")
+        self.volumes_changed.emit()
+        self.mask_changed.emit()
+        return True
+
+    def _undo_mask_copy(self) -> bool:
+        backup = getattr(self, "_mask_copy_backup", None)
+        if not backup or len(backup) != len(self.volumes):
+            self._mask_copy_backup = None
+            return False
+        for entry, (path, mask, ops) in zip(self.volumes, backup):
+            entry.mask_path, entry.mask, entry.mask_ops = path, mask, ops
+        self._mask_copy_backup = None
+        self._mask_changed()
+        self.log("mask copy undone: every frame has its previous mask again")
+        self.volumes_changed.emit()
+        self.mask_changed.emit()
+        return True
 
     def apply_mask_op(self, op: MaskOp) -> None:
         self.ensure_mask_editor().apply(op)
         self._push_mask()
 
     def undo_mask(self) -> bool:
+        if getattr(self, "_mask_copy_backup", None):
+            return self._undo_mask_copy()
         ok = self.mask_editor is not None and self.mask_editor.undo()
         if ok:
             self._push_mask()
@@ -272,6 +364,7 @@ class AppState(QObject):
             entry.mask_ops = None
         if i == self.current_frame:
             self.mask_editor = None
+        self._mask_changed()
         self.volumes_changed.emit()
         self.mask_changed.emit()
 
@@ -287,7 +380,11 @@ class AppState(QObject):
         for i in self._target_frames():
             if i < len(self.volumes):
                 self.volumes[i].mask_path = str(out)
-                self.volumes[i].mask = mask
+                self.volumes[i].mask = mask if i == self.current_frame else mask.copy()
+                self.volumes[i].mask_ops = None  # the file is the composed mask: nothing to replay on top of it
+        if self.mask_editor is not None:
+            self.mask_editor.reset(mask)  # drawing continues from the saved file; the undo history restarts
+        self.dirty = True
         self.volumes_changed.emit()
         return out
 
@@ -299,8 +396,7 @@ class AppState(QObject):
         if target is not None:
             if target not in ("current", "all"):
                 raise ValueError(f"mask target must be 'current' or 'all', got {target!r}")
-            self.mask_target = target
-            self._push_mask()
+            self.mask_target = target  # where the next drawing operations go; copying now is an explicit action
         self.mask_changed.emit()
 
     def volume_array(self, index: int) -> NDArray:
@@ -317,19 +413,40 @@ class AppState(QObject):
 
     @property
     def display_frame(self) -> int:
-        """Result frame of the selected volume: frame k is the deformed volume k against the reference.
-
-        Selecting a volume in the list selects its result (like pyALDIC); the reference volume has
-        none, so it shows frame 0's field greyed out by :meth:`result_frame` being ``None``.
-        """
-        return max(0, self.current_frame - 1)
+        """Result frame of the selected volume (0 when it has none): frame k is the deformed volume k against the
+        reference. Selecting a volume in the list selects its result (like pyALDIC); :meth:`result_frame` says
+        whether the selected volume has one at all."""
+        frame = self.result_frame()
+        return 0 if frame is None else frame
 
     def result_frame(self) -> int | None:
-        """Index into ``results.result_disp`` for the selected volume, ``None`` for the reference or without results."""
+        """Index into ``results.result_disp`` for the selected volume, ``None`` when it has no computed result
+        (the reference, a volume added or reordered after the run, a frame the run never reached)."""
         res = self.results
-        if res is None or not res.result_disp or self.current_frame < 1:
+        if res is None or not res.result_disp or not self.volumes or self.current_frame >= len(self.volumes):
             return None
-        return min(self.current_frame - 1, len(res.result_disp) - 1)
+        uid = self.volumes[self.current_frame].uid
+        if self.result_uids:
+            if uid not in self.result_uids:
+                return None
+            k = self.result_uids.index(uid)
+        else:
+            k = self.current_frame
+        if k < 1 or k - 1 >= len(res.result_disp):
+            return None
+        return k - 1
+
+    def volume_for_result(self, frame: int) -> int | None:
+        """Index in ``volumes`` of the deformed volume that result frame ``frame`` describes (``None`` if gone)."""
+        if self.result_uids:
+            if frame + 1 >= len(self.result_uids):
+                return None
+            uid = self.result_uids[frame + 1]
+            for i, v in enumerate(self.volumes):
+                if v.uid == uid:
+                    return i
+            return None
+        return frame + 1 if frame + 1 < len(self.volumes) else None
 
     def set_current_frame(self, index: int) -> None:
         if self.volumes and 0 <= index < len(self.volumes) and index != self.current_frame:
@@ -343,14 +460,17 @@ class AppState(QObject):
         """Replace one parameter; raises ``ValueError`` (validation) without changing the state."""
         new = replace(self.para, **{name: value})
         self.para = new
+        self.dirty = True
         self.params_changed.emit()
 
     def set_params(self, **values: Any) -> None:
         self.para = replace(self.para, **values)
+        self.dirty = True
         self.params_changed.emit()
 
     def set_para(self, para: DVCPara) -> None:
         self.para = para
+        self.dirty = True
         self.params_changed.emit()
 
     # ------------------------------------------------------------------ run
@@ -363,17 +483,29 @@ class AppState(QObject):
         self.progress_message = message
         self.progress_updated.emit(self.progress, message)
 
-    def set_results(self, results: PipelineResult | None) -> None:
+    def set_results(self, results: PipelineResult | None, uids: list[str] | None = None) -> None:
+        """Publish results. ``uids`` names the volumes they were computed from (a run passes the ones it
+        captured); without it a replacement (strain added) keeps the existing identity and a fresh result
+        takes the current sequence."""
         self.results = results
+        if uids is not None:
+            self.result_uids = list(uids)
+        elif results is None:
+            self.result_uids = []
+        elif not self.result_uids:
+            self.result_uids = [v.uid for v in self.volumes]
         if results is not None and results.result_disp:
             self.show_mask = False  # a field is on the slices now; the region tint would only muddy it
-            if self.current_frame < 1 and len(self.volumes) > 1:
-                self.set_current_frame(1)  # the first deformed volume carries the first result
+            if self.result_frame() is None:
+                first = self.volume_for_result(0)
+                if first is not None:
+                    self.set_current_frame(first)  # the first deformed volume carries the first result
         self.results_changed.emit()
         self.mask_changed.emit()
 
     def set_output_dir(self, path: str | Path) -> None:
         self.output_dir = Path(path)
+        self.dirty = True
         self.output_dir_changed.emit(str(self.output_dir))
 
     # ------------------------------------------------------------------ display
@@ -398,9 +530,15 @@ class AppState(QObject):
         self.current_frame = 0
         self.para = dvcpara_default()
         self.results = None
+        self.result_uids = []
+        self.results_path = None
         self.session_path = None
         self.run_state = RunState.IDLE
         self.mask_editor = None
+        self._mask_copy_backup = None
+        self.session_generation += 1
+        self.mask_revision += 1
+        self.dirty = False
         self.volumes_changed.emit()
         self.mask_changed.emit()
         self.params_changed.emit()

@@ -221,7 +221,8 @@ measure, smoothing chosen after the run, computed on demand; Ctrl+T) and an
 export dialog (npz, mat, CSV, ParaView, PDF report, slice images; Ctrl+E),
 and a batch dialog that runs several saved sessions one after another
 (`File > Batch run...`, the same as `al-dvc batch`; `reports/batch.pdf`). Sessions (`.aldvc`) keep volumes, parameters, export
-folder and display state; checkpoints (resume after an interruption) are an
+folder and display state, and store a drawn region of interest as a mask file next to the session so it
+comes back exactly; New / Open / Exit ask before unsaved edits are lost; checkpoints (resume after an interruption) are an
 advanced option, and a checkpoint folder left by a different run is replaced; `Help > Run self-test` (or `al-dvc-gui --self-test`)
 checks an installation. Seven languages (English, Simplified and Traditional
 Chinese, Japanese, German, French, Spanish; `View > Language`, or the system

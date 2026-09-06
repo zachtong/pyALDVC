@@ -27,6 +27,7 @@ play; recording renders the same sequence off-screen.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -59,6 +60,7 @@ from ..names import field_name, fill_combo, retranslate_combo
 from ..view3d_animation import (
     DEFAULT_SPEEDS,
     FORMATS,
+    MAX_FRAMES,
     SIZES,
     SPEED_RANGES,
     AnimationSpec,
@@ -122,7 +124,7 @@ class _RecordWorker(QThread):
 class RecordDialog(QDialog):
     """Format, length, rate and size of the recording; the animation itself comes from the panel."""
 
-    def __init__(self, spec: AnimationSpec, parent=None) -> None:
+    def __init__(self, spec: AnimationSpec, parent=None, view_size: tuple[int, int] = RECORD_SIZE) -> None:
         super().__init__(parent)
         self.setModal(True)
         form = QFormLayout(self)
@@ -149,6 +151,10 @@ class RecordDialog(QDialog):
         form.addRow(self._labels["duration"], self.duration)
         form.addRow(self._labels["size"], self.size)
         form.addRow(self.loop)
+        self._estimate = QLabel()
+        self._estimate.setObjectName("hint")
+        self._estimate.setWordWrap(True)
+        form.addRow(self._estimate)
         self._hint = QLabel()
         self._hint.setObjectName("hint")
         self._hint.setWordWrap(True)
@@ -157,9 +163,33 @@ class RecordDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
+        self._view_size = view_size
+        self.format.currentIndexChanged.connect(lambda _i: self._update_estimate())
+        self.fps.valueChanged.connect(lambda _v: self._update_estimate())
+        self.duration.valueChanged.connect(lambda _v: self._update_estimate())
+        self.size.currentIndexChanged.connect(lambda _i: self._update_estimate())
         self.retranslate_ui()
 
+    def _update_estimate(self) -> None:
+        """Keep the length within the format's frame limit and say how big the recording is."""
+        fmt = str(self.format.currentData() or "gif")
+        longest = AnimationSpec.max_duration(fmt, int(self.fps.value()))
+        limited = self.duration.value() > longest
+        if limited:
+            self.duration.blockSignals(True)
+            self.duration.setValue(longest)
+            self.duration.blockSignals(False)
+        n = max(2, int(round(self.fps.value() * self.duration.value())))
+        w, h = SIZES[str(self.size.currentData() or "view")] or self._view_size
+        text = self.tr("{n} frames of {w} x {h}").format(n=n, w=w, h=h)
+        if fmt == "gif":
+            text += self.tr(", about {mb} MB held in memory while the GIF is assembled").format(mb=f"{n * w * h * 3 / 1e6:.0f}")
+        if limited:
+            text += self.tr(" (limited to {n} frames for {fmt})").format(n=MAX_FRAMES[fmt], fmt=fmt.upper())
+        self._estimate.setText(text)
+
     def values(self) -> dict:
+        self._update_estimate()
         return {
             "format": str(self.format.currentData() or "gif"),
             "fps": int(self.fps.value()),
@@ -177,6 +207,7 @@ class RecordDialog(QDialog):
         for i, text in enumerate((self.tr("Current view"), "1280 x 960", "1920 x 1440")):
             self.size.setItemText(i, text)
         self.loop.setText(self.tr("Loop the GIF"))
+        self._update_estimate()
         self._hint.setText(
             self.tr(
                 "GIF plays everywhere; MP4 needs imageio-ffmpeg (pip install imageio imageio-ffmpeg); "
@@ -286,7 +317,10 @@ class View3DPanel(QWidget):
         self._play_clock = QElapsedTimer()
         self._play_offset = 0.0  # seconds already played before the current pause
         self._play_base: tuple | None = None  # (camera, SceneOptions) the animation started from
+        self._play_kind: str | None = None  # the kind that was started (the combo may change meanwhile)
+        self._last_frame = None  # the Frame shown by the last tick (screenshots, rebasing)
         self._recorder: _RecordWorker | None = None
+        self._resume_after_record = False
         self._playing = False
         self._labels: dict[str, QLabel] = {
             k: QLabel()
@@ -433,6 +467,9 @@ class View3DPanel(QWidget):
             w.valueChanged.connect(lambda _v: self._on_camera_tweak())
         self._btn_reset_camera.clicked.connect(self.reset_camera)
         self.anim_kind.currentIndexChanged.connect(lambda _i: self._on_anim_kind())
+        self.anim_axis.currentIndexChanged.connect(lambda _i: self._on_anim_param())
+        self.anim_direction.currentIndexChanged.connect(lambda _i: self._on_anim_param())
+        self.anim_speed.valueChanged.connect(lambda _v: self._on_anim_param())
         self._btn_play.clicked.connect(self.toggle_play)
         self._btn_stop.clicked.connect(self.stop_animation)
         self._btn_record.clicked.connect(self._on_record)
@@ -527,6 +564,19 @@ class View3DPanel(QWidget):
             self._state.log(f"3-D view: cannot load the volume for the slices: {exc}", "warning")
             return None
 
+    def _volumes_per_result_frame(self, fallback):
+        """One volume per result frame (the deformed volume each field describes), for a frames recording."""
+        res = self._state.results
+        out = []
+        for k in range(len(res.result_disp)):
+            idx = self._state.volume_for_result(k)
+            try:
+                out.append(fallback if idx is None else self._state.volume_array(idx))
+            except Exception as exc:
+                self._state.log(f"3-D view: cannot load the volume of frame {k + 1}: {exc}", "warning")
+                out.append(fallback)
+        return out
+
     # ------------------------------------------------------------------ slice positions (shared with the Slices tab)
     def _sync_slice_spins(self) -> None:
         """Ranges from the loaded volume, values from ``state.slice_index`` (without re-emitting)."""
@@ -566,8 +616,7 @@ class View3DPanel(QWidget):
             self.refresh()
 
     def _on_results_changed(self) -> None:
-        if self._playing:
-            self.stop_animation()
+        self._clear_playback()  # playing or paused: the old baseline belongs to the old result
         self._camera_reset_pending = True
         self._live_state = None
         self._update_enabled()
@@ -584,16 +633,24 @@ class View3DPanel(QWidget):
             self._interactor.set_background(colour, all_renderers=True)
         self.invalidate()
 
+    def _camera_edited(self) -> None:
+        """A camera control changed: redraw, or make it the new start of a running animation."""
+        self._camera_reset_pending = True
+        if self._play_base is not None:
+            if self.backend == "interactive" and self._interactor is not None:
+                self._apply_interactor_camera()
+            self._rebase_playback()
+            return
+        self.invalidate()
+
     def _on_camera(self, camera: str) -> None:
         self._camera = camera
-        self._camera_reset_pending = True
-        self.invalidate()
+        self._camera_edited()
 
     def _on_camera_tweak(self) -> None:
         if self._updating:
             return
-        self._camera_reset_pending = True
-        self.invalidate()
+        self._camera_edited()
 
     def reset_camera(self) -> None:
         """Back to the untouched preset."""
@@ -604,12 +661,12 @@ class View3DPanel(QWidget):
             self.zoom.setValue(1.0)
         finally:
             self._updating = False
-        self._camera_reset_pending = True
-        self.invalidate()
+        self._camera_edited()
 
     def _on_user_camera(self) -> None:
-        """The mouse moved the interactive camera: remember it and show it in the camera row."""
-        if self._interactor is None or self._playing:
+        """The mouse moved the interactive camera: remember it, show it in the camera row and, while an
+        animation plays, continue the animation from this view."""
+        if self._interactor is None:
             return
         self._live_state = CameraState.from_camera(self._interactor.camera)
         if self._preset_state is not None:
@@ -621,17 +678,25 @@ class View3DPanel(QWidget):
                 self.zoom.setValue(float(min(5.0, max(0.2, zoom))))
             finally:
                 self._updating = False
+        if self._play_base is not None:
+            self._rebase_playback()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
         if self._dirty and not self._playing:
             self.refresh()
 
+    def hideEvent(self, event) -> None:  # noqa: N802
+        """A hidden view must not keep changing the application's frame: playback pauses (Play resumes it)."""
+        if self._playing:
+            self.toggle_play()
+        super().hideEvent(event)
+
     def refresh(self) -> None:
         """Rebuild the scene from the state (no-op without results or pyvista)."""
         self._dirty = False
         res = self._state.results
-        if self.backend == "unavailable" or res is None or not res.result_disp:
+        if self.backend == "unavailable" or res is None or not res.result_disp or self._state.result_frame() is None:
             self._last_info = None
             self._last_options = None
             self._stack.setCurrentWidget(self._hint)
@@ -713,10 +778,18 @@ class View3DPanel(QWidget):
         if out.suffix.lower() != ".png":
             out = out.with_suffix(".png")
         out.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            render_image(
-                res, self.options(), self._volume_for_scene(), window_size=(1600, 1200), camera=self.base_camera(), path=out
+        shown = self._last_frame if self._play_base is not None else None  # a playing or paused animation frame
+        opts = self.options()
+        if shown is not None:
+            opts = replace(
+                opts,
+                frame=shown.options.frame,
+                slice_index=dict(shown.options.slice_index),
+                warp_scale=shown.options.warp_scale,
             )
+        camera = self.base_camera() if shown is None else shown.camera
+        try:
+            render_image(res, opts, self._volume_for_scene(), window_size=(1600, 1200), camera=camera, path=out)
         except Exception as exc:
             self._state.log(f"screenshot failed: {exc}", "error")
             return None
@@ -761,14 +834,55 @@ class View3DPanel(QWidget):
         self.anim_axis.setVisible(kind in ("orbit", "slice"))
         self.anim_direction.setVisible(kind in ("orbit", "frames", "slice"))
         self.anim_speed.setSuffix({"orbit": " °/s", "frames": " f/s", "slice": " vx/s", "warp": " /s"}[kind])
-        if self._playing:
+        if self._play_base is not None:  # playing or paused: another kind is a new animation, from the start
             self.stop_animation()
 
+    def _on_anim_param(self) -> None:
+        """Axis, direction or speed changed: a running animation continues from where it is."""
+        if self._updating or self._play_base is None:
+            return
+        self._rebase_playback()
+
+    def _current_camera(self):
+        if self.backend == "interactive" and self._interactor is not None:
+            return CameraState.from_camera(self._interactor.camera)
+        return self.camera_spec()
+
+    def _rebase_playback(self) -> None:
+        """Continue the animation from what is on screen: the current camera and frame become the new start
+        and the clock restarts, so a drag, a preset, a speed or a direction change never jumps."""
+        if self._play_base is None:
+            return
+        last = self._last_frame
+        opts = last.options if last is not None else self._play_base[1]
+        self._play_base = (self._current_camera(), opts)
+        self._play_offset = 0.0
+        if self._playing:
+            self._play_clock.restart()
+        elif self.backend == "static":
+            self.invalidate()
+
     def _play_frame(self, t: float):
-        """The animation at time ``t``, built on the controls as they are now (only the animated quantity is imposed)."""
-        base_cam, _base_opts = self._play_base
+        """The animation at time ``t``: the controls as they are now, except the result frame, which comes from
+        the start of the animation (the tick writes the played frame into the application, so reading it back
+        would advance cumulatively)."""
+        base_cam, base_opts = self._play_base
         res = self._state.results
-        return frame_at(self.animation_spec(), t, base_cam, self.options(), len(res.result_disp), tuple(res.volume_shape))
+        opts = replace(self.options(), frame=base_opts.frame)
+        return frame_at(self.animation_spec(), t, base_cam, opts, len(res.result_disp), tuple(res.volume_shape))
+
+    def _fit_mode_to_animation(self, kind: str) -> None:
+        """A slice sweep needs slices and a growing lattice needs the deformed lattice: switch the mode."""
+        wanted = {"warp": "warped", "slice": "slices"}.get(kind)
+        if wanted is None or self.mode_key() == wanted or (kind == "slice" and self.volume_slices.isChecked()):
+            return
+        idx = self.mode.findData(wanted)
+        if idx >= 0:
+            self.mode.setCurrentIndex(idx)
+            self._state.log(self.tr("3-D view: mode switched to {mode} for the animation").format(mode=self.mode.currentText()))
+
+    def recording(self) -> bool:
+        return self._recorder is not None and self._recorder.isRunning()
 
     def toggle_play(self) -> None:
         """Play or pause the animation described by the controls."""
@@ -779,27 +893,41 @@ class View3DPanel(QWidget):
         else:
             if self._state.results is None or self.backend == "unavailable":
                 return
+            if self.recording():
+                self._status.setText(self.tr("Recording in progress: wait for it to finish or cancel it."))
+                return
             if self._play_base is None:
+                self._fit_mode_to_animation(self.anim_kind_key())
+                self._play_kind = self.anim_kind_key()
                 self._play_base = (self.base_camera(), self.options())
+                self._last_frame = None
             self._play_clock.start()
             self._play_timer.start(PLAY_INTERVAL_MS.get(self.backend, 100))
             self._playing = True
         self._btn_play.setIcon(icon("pause" if self._playing else "play"))
         self._btn_play.setToolTip(self.tr("Pause") if self._playing else self.tr("Play"))
 
-    def stop_animation(self) -> None:
-        """Stop and return to where the animation started."""
+    def _clear_playback(self) -> None:
+        """Forget the animation (playing or paused) without touching the application's frame."""
         self._play_timer.stop()
         self._playing = False
         self._play_offset = 0.0
-        base = self._play_base
         self._play_base = None
+        self._play_kind = None
+        self._last_frame = None
         self._btn_play.setIcon(icon("play"))
         self._btn_play.setToolTip(self.tr("Play"))
+
+    def stop_animation(self) -> None:
+        """Stop and return to where the animation started."""
+        base, kind = self._play_base, self._play_kind
+        self._clear_playback()
         if base is not None:
             base_cam, base_opts = base
-            if self.anim_kind_key() == "frames" and base_opts.frame != self._state.display_frame:
-                self._state.set_current_frame(base_opts.frame + 1)
+            if kind == "frames":
+                target = self._state.volume_for_result(base_opts.frame)
+                if target is not None and target != self._state.current_frame:
+                    self._state.set_current_frame(target)
             if isinstance(base_cam, CameraState):
                 self._live_state = base_cam
             self.invalidate()
@@ -818,10 +946,13 @@ class View3DPanel(QWidget):
         if res is None or self._play_base is None:
             self.stop_animation()
             return
-        frame = self._play_frame(self.play_time)
         try:
-            if self.anim_kind_key() == "frames" and frame.options.frame != self._state.display_frame:
-                self._state.set_current_frame(frame.options.frame + 1)  # the Slices tab and the Frame box follow
+            frame = self._play_frame(self.play_time)
+            self._last_frame = frame
+            if self._play_kind == "frames":
+                target = self._state.volume_for_result(frame.options.frame)
+                if target is not None and target != self._state.current_frame:
+                    self._state.set_current_frame(target)  # the Slices tab and the Frame box follow
             if self.backend == "interactive":
                 if frame.options != self._last_options:
                     self._build_interactive(frame.options, self._volume_for_scene())
@@ -840,22 +971,32 @@ class View3DPanel(QWidget):
     def record(self, path, **overrides):
         """Record the animation to ``path`` on a worker thread (``overrides``: format, fps, duration, size, loop)."""
         res = self._state.results
-        if res is None or self.backend == "unavailable" or (self._recorder is not None and self._recorder.isRunning()):
+        if res is None or self.backend == "unavailable" or self.recording():
             return None
+        self._resume_after_record = self._playing
         if self._playing:
             self.toggle_play()  # the frames are rendered off-screen; the live view waits
         base_cam = self._play_base[0] if self._play_base is not None else self.base_camera()
-        spec = self.animation_spec(**overrides)
+        base_opts = self.options()
+        if self._play_base is not None:
+            base_opts = replace(base_opts, frame=self._play_base[1].frame)
+        try:
+            spec = self.animation_spec(**overrides)
+        except ValueError as exc:
+            self._state.log(self.tr("Recording: {error}").format(error=exc), "error")
+            return None
         size = STATIC_SIZE if self.backend == "static" else RECORD_SIZE
-        self._recorder = _RecordWorker(
-            res, self._volume_for_scene(), spec, base_cam, self.options(), Path(path), size, parent=self
-        )
+        volume = self._volume_for_scene()
+        if spec.kind == "frames" and volume is not None:
+            volume = self._volumes_per_result_frame(volume)  # every field on the volume it describes
+        self._recorder = _RecordWorker(res, volume, spec, base_cam, base_opts, Path(path), size, parent=self)
         self._recorder.progress.connect(self._on_record_progress)
         self._recorder.finished_record.connect(self._on_record_finished)
         self._recorder.failed.connect(self._on_record_failed)
         self._record_progress.setValue(0)
         self._record_progress.setVisible(True)
-        self._btn_record.setEnabled(False)
+        self._btn_record.setText(self.tr("Cancel recording"))
+        self._btn_record.setToolTip(self.tr("Stop the recording; nothing is written"))
         self._status.setText(
             self.tr("Recording {n} frames off-screen; the view resumes when the file is written.").format(n=spec.n_frames)
         )
@@ -868,15 +1009,40 @@ class View3DPanel(QWidget):
     def wait_recording(self, timeout_ms: int = 600_000) -> bool:
         return self._recorder.wait(timeout_ms) if self._recorder is not None else True
 
+    def cancel_recording(self) -> None:
+        if self.recording():
+            self._recorder.cancel()
+            self._status.setText(self.tr("Cancelling the recording..."))
+
+    def shutdown(self, timeout_ms: int = 30_000) -> bool:
+        """Stop playback, cancel a recording and wait for its thread (application exit); True when settled."""
+        self._clear_playback()
+        if not self.recording():
+            return True
+        self._recorder.cancel()
+        return self._recorder.wait(timeout_ms)
+
     def _on_record_progress(self, fraction: float, message: str) -> None:
         self._record_progress.setValue(int(round(1000 * fraction)))
         self._record_progress.setToolTip(message)
 
-    def _on_record_finished(self, out) -> None:
+    def _record_settled(self) -> None:
+        """Recording over (written, cancelled or failed): controls back to the current state, preview resumed."""
         self._record_progress.setVisible(False)
-        self._btn_record.setEnabled(True)
-        if self._last_info is not None:
+        self._btn_record.setText(self.tr("Record..."))
+        self._btn_record.setToolTip(self.tr("Record the animation as GIF, MP4 or PNG frames..."))
+        self._update_enabled()
+        if self._last_info is not None and self._state.results is not None:
             self._set_status(self._last_info)
+        else:
+            self._status.setText("")
+        if self._resume_after_record and self._state.results is not None and self.backend != "unavailable":
+            if self._play_base is not None and not self._playing:
+                self.toggle_play()
+        self._resume_after_record = False
+
+    def _on_record_finished(self, out) -> None:
+        self._record_settled()
         if out is None:
             self._state.log(self.tr("Recording cancelled."), "warning")
         else:
@@ -884,14 +1050,16 @@ class View3DPanel(QWidget):
             self.recorded.emit(out)
 
     def _on_record_failed(self, message: str) -> None:
-        self._record_progress.setVisible(False)
-        self._btn_record.setEnabled(True)
+        self._record_settled()
         self._state.log(self.tr("Recording failed: {msg}").format(msg=message), "error")
 
     def _on_record(self) -> None:
+        if self.recording():
+            self.cancel_recording()
+            return
         if self._state.results is None:
             return
-        dialog = RecordDialog(self.animation_spec(), self)
+        dialog = RecordDialog(self.animation_spec(), self, view_size=STATIC_SIZE if self.backend == "static" else RECORD_SIZE)
         if not headless() and dialog.exec() != QDialog.DialogCode.Accepted:
             return
         values = dialog.values()
@@ -933,7 +1101,7 @@ class View3DPanel(QWidget):
             self._btn_stop,
         ):
             w.setEnabled(has)
-        self._btn_record.setEnabled(has and (self._recorder is None or not self._recorder.isRunning()))
+        self._btn_record.setEnabled(has or self.recording())  # while recording the button cancels
         show_slices = mode == "slices"
         self._slider_box.setVisible(show_slices or self.volume_slices.isChecked())
         for s in self.slice_sliders.values():
@@ -972,6 +1140,8 @@ class View3DPanel(QWidget):
             return self.tr("The 3-D view needs pyvista and pyvistaqt:\n{cmd}").format(cmd=INSTALL_HINT) + (
                 f"\n\n{reason}" if reason else ""
             )
+        if self._state.results is not None and self._state.result_frame() is None:
+            return self.tr("No result for this volume: select a deformed volume of the run.")
         return self.tr("No results to show. Run an analysis first.")
 
     def retranslate_ui(self) -> None:
@@ -1022,8 +1192,12 @@ class View3DPanel(QWidget):
         self.anim_speed.setToolTip(self.tr("Degrees, frames, voxels or cycles per second"))
         self._btn_play.setToolTip(self.tr("Pause") if self._playing else self.tr("Play"))
         self._btn_stop.setToolTip(self.tr("Stop and return to the start"))
-        self._btn_record.setText(self.tr("Record..."))
-        self._btn_record.setToolTip(self.tr("Record the animation as GIF, MP4 or PNG frames..."))
+        if self.recording():
+            self._btn_record.setText(self.tr("Cancel recording"))
+            self._btn_record.setToolTip(self.tr("Stop the recording; nothing is written"))
+        else:
+            self._btn_record.setText(self.tr("Record..."))
+            self._btn_record.setToolTip(self.tr("Record the animation as GIF, MP4 or PNG frames..."))
         for axis in SLICE_AXES:
             self.slice_spins[axis].setToolTip(self.tr("Position of the three field slices (shared with the Slices tab)"))
         self.volume_slices.setToolTip(self.tr("Show the current volume's XY / XZ / YZ slices at the slider positions"))

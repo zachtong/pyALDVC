@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
 from al_dvc.export.export_utils import field_array
-from al_dvc.export.slice_plots import DISPLACEMENT_LIKE, apply_equal_scale, build_axes, restore_cells
+from al_dvc.export.slice_plots import DISPLACEMENT_LIKE, apply_equal_scale, build_axes, ordered_limits, restore_cells
 
 from ..app_state import AppState
 from ..lattice_preview import describe, layer_segments, nearest_node, plan_from_result, plan_lattice, subset_rect
@@ -129,6 +129,7 @@ class SliceViewer(QWidget):
         self.equal_scale.toggled.connect(self._on_equal_scale)
         self.show_mesh.toggled.connect(self._on_show_mesh)
         self.show_subset.toggled.connect(self._on_show_subset)
+        self.mask_tools.settings_changed.connect(self._on_draw_settings_changed)
         self.canvas.mpl_connect("resize_event", lambda _e: self._on_canvas_resized())
 
         self._state.volumes_changed.connect(self._on_volumes_changed)
@@ -169,12 +170,23 @@ class SliceViewer(QWidget):
         return self._layout
 
     def sync_from_state(self) -> None:
-        """Layout and scale controls from the state (after a session load)."""
-        self.equal_scale.blockSignals(True)
-        self.equal_scale.setChecked(bool(self._state.slice_equal_scale))
-        self.equal_scale.blockSignals(False)
+        """Layout, scale and lattice toggles from the state (after a session load)."""
+        for box, value in (
+            (self.equal_scale, self._state.slice_equal_scale),
+            (self.show_mesh, getattr(self._state, "show_mesh", True)),
+            (self.show_subset, getattr(self._state, "show_subset_window", False)),
+        ):
+            box.blockSignals(True)
+            box.setChecked(bool(value))
+            box.blockSignals(False)
         self.set_layout(self._state.slice_layout)
         self.redraw()
+
+    def _on_draw_settings_changed(self) -> None:
+        """A tool, mode, depth or target change ends the gesture in progress: it was started under other settings."""
+        if self._gesture is not None:
+            self._cancel_gesture()
+            self.canvas.draw_idle()
 
     def _on_equal_scale(self, on: bool) -> None:
         self._state.slice_equal_scale = bool(on)
@@ -284,6 +296,7 @@ class SliceViewer(QWidget):
             (self.axes[2], vol[:, :, ix], (ny, nz), "y", "z", f"YZ  x = {ix}"),
         ]
         overlay = self._field_grid()
+        res = self._state.results
         for ax, img, (w, h), xl, yl, title in panes:
             ax.imshow(img, cmap="gray", origin="lower", vmin=self._vmin, vmax=self._vmax, extent=[-0.5, w - 0.5, -0.5, h - 0.5])
             ax.set_title(title, color=COLORS.TEXT_SECONDARY, fontsize=8)
@@ -296,11 +309,9 @@ class SliceViewer(QWidget):
             hx, hy, hz = mesh.spacing
             finite = grid[np.isfinite(grid)]
             if self._state.color_auto and finite.size:
-                vmin, vmax = float(np.percentile(finite, 1)), float(np.percentile(finite, 99))
-                if vmin == vmax:
-                    vmax = vmin + 1e-12
+                vmin, vmax = ordered_limits(float(np.percentile(finite, 1)), float(np.percentile(finite, 99)))
             else:
-                vmin, vmax = self._state.color_min, self._state.color_max
+                vmin, vmax = ordered_limits(self._state.color_min, self._state.color_max)
             kz = int(np.argmin(np.abs(z0 - iz)))
             ky = int(np.argmin(np.abs(y0 - iy)))
             kx = int(np.argmin(np.abs(x0 - ix)))
@@ -324,7 +335,9 @@ class SliceViewer(QWidget):
             # the bar is drawn from its own mappable: the overlay's alpha would wash the colours out
             bar_mappable = ScalarMappable(norm=Normalize(vmin=vmin, vmax=vmax), cmap=self._state.colormap)
             self._cbar = self.figure.colorbar(bar_mappable, cax=self.cax)
-            units = getattr(self._state.para, "units", "voxel")
+            # the unit belongs to the result (its values were scaled with the result's voxel size), not to the
+            # editable parameters of the next run
+            units = getattr(res.dvc_para, "units", None) or getattr(self._state.para, "units", "voxel")
             text = field_name(label) + (f" [{units}]" if label in DISPLACEMENT_LIKE else "")
             self._cbar.set_label(text, color=COLORS.TEXT_SECONDARY, fontsize=8)
             self._cbar.ax.tick_params(colors=COLORS.TEXT_SECONDARY, labelsize=7)
@@ -479,6 +492,22 @@ class SliceViewer(QWidget):
         first, last = sorted(s.depth_range)
         return (first, last)
 
+    def _gesture_context(self, plane: str) -> dict:
+        """What a gesture commits with, frozen when it starts.
+
+        The slice, depth range, mode, brush radius and target are read now; a later change of any
+        of them cancels the gesture (:meth:`_on_draw_settings_changed`) instead of being applied
+        to a shape drawn under other settings.
+        """
+        s = self.mask_tools.settings()
+        return {
+            "tool": s.tool,
+            "mode": s.mode,
+            "radius": float(s.radius),
+            "depth": self._depth_for(plane),
+            "target": getattr(self._state, "mask_target", "current"),
+        }
+
     def _on_press(self, event) -> None:
         if self._volume is None:
             return
@@ -500,7 +529,13 @@ class SliceViewer(QWidget):
                 return
             if self._gesture is None or self._gesture["plane"] != plane:
                 self._cancel_gesture()
-                self._gesture = {"plane": plane, "shape": "polygon", "points": [p], "artists": []}
+                self._gesture = {
+                    "plane": plane,
+                    "shape": "polygon",
+                    "points": [p],
+                    "artists": [],
+                    "context": self._gesture_context(plane),
+                }
             else:
                 self._gesture["points"].append(p)
             self._update_preview()
@@ -508,7 +543,7 @@ class SliceViewer(QWidget):
         if event.button != LEFT:
             return
         self._cancel_gesture()
-        self._gesture = {"plane": plane, "shape": s.tool, "points": [p], "artists": []}
+        self._gesture = {"plane": plane, "shape": s.tool, "points": [p], "artists": [], "context": self._gesture_context(plane)}
         self._update_preview()
 
     def _on_motion(self, event) -> None:
@@ -590,7 +625,7 @@ class SliceViewer(QWidget):
         if g is None:
             return
         self._remove_artists(g)
-        s = self.mask_tools.settings()
+        ctx = g.get("context") or self._gesture_context(g["plane"])  # the settings the gesture was started with
         pts = g["points"]
         if g["shape"] in ("rectangle", "ellipse") and len(pts) < 2:
             self.canvas.draw_idle()
@@ -600,9 +635,9 @@ class SliceViewer(QWidget):
                 shape=g["shape"],
                 plane=g["plane"],
                 points=tuple(pts),
-                depth=self._depth_for(g["plane"]),
-                mode=s.mode,
-                radius=float(s.radius),
+                depth=ctx["depth"],
+                mode=ctx["mode"],
+                radius=float(ctx["radius"]),
             )
         except ValueError as exc:
             self._state.log(f"ignored shape: {exc}", "warning")

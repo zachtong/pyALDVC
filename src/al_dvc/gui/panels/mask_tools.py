@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -49,6 +50,8 @@ class DrawSettings:
 
 class MaskToolbar(QWidget):
     """Tool / mode / depth selection and the edit buttons (icons)."""
+
+    settings_changed = Signal()  # tool, mode, depth, brush or target changed: a gesture in progress is void
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -92,6 +95,9 @@ class MaskToolbar(QWidget):
         for key in TARGETS:
             self.target.addItem(key, key)
         self.target.setMinimumWidth(110)
+        # the selector only says where future drawing goes; copying the mask to every frame is an explicit,
+        # undoable action of its own
+        self._btn_copy_all = tool_button("copy")  # icon only: the row must fit beside "Show mask"
         self.show_mask = QCheckBox()
         self.show_mask.setChecked(state.show_mask)
         self._btn = {k: tool_button(k) for k in EDIT_BUTTONS}
@@ -137,6 +143,7 @@ class MaskToolbar(QWidget):
         row4.setSpacing(6)
         row4.addWidget(self._labels["target"])
         row4.addWidget(self.target)
+        row4.addWidget(self._btn_copy_all)
         row4.addWidget(self.show_mask)
         row4.addWidget(self._status, 1)
         for row in (row1, row2, row_depth, row3, row4):
@@ -153,9 +160,12 @@ class MaskToolbar(QWidget):
         self._btn["clear"].clicked.connect(lambda: self._state.apply_mask_op(MaskOp("empty")))
         self._btn["remove"].clicked.connect(lambda: self._state.remove_mask())
         self._btn["save"].clicked.connect(self._on_save)
-        self.target.currentIndexChanged.connect(lambda i: self._state.set_mask_display(target=TARGETS[i]))
+        self.target.currentIndexChanged.connect(self._on_target_index)
+        self._btn_copy_all.clicked.connect(self._on_copy_all)
         self.show_mask.toggled.connect(lambda v: self._state.set_mask_display(show=bool(v)))
-        self.depth.currentIndexChanged.connect(lambda _i: self._update_enabled())
+        self.depth.currentIndexChanged.connect(self._on_depth_changed)
+        for s in (self.depth_from, self.depth_to, self.radius):
+            s.valueChanged.connect(lambda _v: self.settings_changed.emit())
         self.tool.currentIndexChanged.connect(self._on_tool_index)
         self.mode.currentIndexChanged.connect(self._on_mode_index)
         self._state.mask_changed.connect(self.refresh)
@@ -203,6 +213,7 @@ class MaskToolbar(QWidget):
             b.setChecked(k == current)
             b.blockSignals(False)
         self._update_enabled()
+        self.settings_changed.emit()
 
     def _on_mode_index(self, index: int) -> None:
         current = MODES[index]
@@ -210,6 +221,24 @@ class MaskToolbar(QWidget):
             b.blockSignals(True)
             b.setChecked(k == current)
             b.blockSignals(False)
+        self.settings_changed.emit()
+
+    def _on_depth_changed(self, _index: int) -> None:
+        self._update_enabled()
+        self.settings_changed.emit()
+
+    def _on_target_index(self, index: int) -> None:
+        self._state.set_mask_display(target=TARGETS[index])
+        self.settings_changed.emit()
+
+    def _on_copy_all(self) -> None:
+        """Every frame receives a copy of this frame's mask (one undo step)."""
+        copy_all = getattr(self._state, "copy_mask_to_all_frames", None)
+        if copy_all is None:
+            self._state.log("copying the mask to every frame is not available in this build", "warning")
+            return
+        copy_all()
+        self._state.log(self.tr("Mask copied to all {n} frames (undo reverses it).").format(n=len(self._state.volumes)))
 
     # ------------------------------------------------------------------ actions
     def _on_auto(self) -> None:
@@ -254,6 +283,7 @@ class MaskToolbar(QWidget):
         mask = self._state.current_mask() if has_volume else None
         self._btn["save"].setEnabled(mask is not None)
         self._btn["remove"].setEnabled(mask is not None)
+        self._btn_copy_all.setEnabled(mask is not None and len(self._state.volumes) > 1)
         if mask is None:
             self._status.setText(self.tr("no mask") if has_volume else "")
         else:
@@ -314,14 +344,18 @@ class MaskToolbar(QWidget):
         self.depth.setToolTip(self.tr("Slices along the normal of the plane you draw on that the shape is applied to"))
         self.target.setItemText(0, self.tr("This frame"))
         self.target.setItemText(1, self.tr("All frames"))
+        self._btn_copy_all.setText(self.tr("Copy to all frames"))
+        self._btn_copy_all.setToolTip(
+            self.tr("Copy to all frames: give every frame this frame's mask (the undo button reverses it)")
+        )
         tips = {
             "auto": self.tr("Automatic mask: Otsu threshold on the intensity, holes filled, largest component kept"),
             "undo": self.tr("Undo"),
             "redo": self.tr("Redo"),
             "invert": self.tr("Invert"),
-            "fill": self.tr("Fill"),
-            "clear": self.tr("Clear"),
-            "remove": self.tr("Remove mask"),
+            "fill": self.tr("Select the entire volume"),
+            "clear": self.tr("Empty mask: nothing is analysed until you draw"),
+            "remove": self.tr("No mask: the whole volume is analysed"),
             "save": self.tr("Save mask..."),
         }
         for key, text in tips.items():

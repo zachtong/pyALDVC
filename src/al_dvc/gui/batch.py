@@ -46,7 +46,8 @@ class BatchJob:
     n_frames: int = 0
     converged: float = float("nan")
     output_dir: Path | None = None
-    outputs: list[Path] = field(default_factory=list)
+    outputs: list[Path] = field(default_factory=list)  # written even when a later export kind failed
+    results_path: Path | None = None  # the NumPy archive of the job, when one was written
     traceback: str = ""
 
     @property
@@ -74,7 +75,8 @@ def load_session_inputs(data: SessionData) -> tuple[list, list | None]:
                 raise FileNotFoundError(f"mask not found: {v['mask']}")
             mask = np.asarray(load_volume(v["mask"])) > 0
         if v.get("mask_ops"):
-            mask = MaskEditor.from_dict(v["mask_ops"], base=mask).mask
+            # the volume lets threshold operations replay, exactly as the GUI rebuilds a session
+            mask = MaskEditor.from_dict(v["mask_ops"], base=mask, volume=vol).mask
         masks.append(mask)
     if len(volumes) < 2:
         raise ValueError(f"a session needs at least two volumes, this one has {len(volumes)}")
@@ -85,28 +87,48 @@ def load_session_inputs(data: SessionData) -> tuple[list, list | None]:
     return volumes, masks
 
 
-def export_results(result: PipelineResult, out_dir: str | Path, basename: str, kinds=DEFAULT_EXPORTS) -> list[Path]:
-    """Write the requested export kinds into ``out_dir``; returns the paths written."""
+def export_results_checked(
+    result: PipelineResult, out_dir: str | Path, basename: str, kinds=DEFAULT_EXPORTS
+) -> tuple[list[Path], dict[str, str]]:
+    """Write the requested export kinds into ``out_dir``: ``(paths written, {kind: error})``.
+
+    Every kind is attempted; a failure is recorded and the next kind is written. The CSV and
+    ParaView files carry ``basename`` too, so sessions sharing an output folder never overwrite
+    each other's files.
+    """
     from al_dvc.export import export_csv, export_mat, export_npz, export_report, export_run_summary, export_vtk
 
-    out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    paths: list[Path] = []
     for kind in kinds:
         if kind not in EXPORT_KINDS:
             raise ValueError(f"unknown export kind {kind!r}; choose from {EXPORT_KINDS}")
-        if kind == "npz":
-            paths.append(Path(export_npz(result, out / f"{basename}.npz")))
-        elif kind == "summary":
-            paths.append(Path(export_run_summary(result, out / f"{basename}_summary.json")))
-        elif kind == "report":
-            paths.append(Path(export_report(result, out / f"{basename}_report.pdf")))
-        elif kind == "vtk":
-            paths.append(Path(export_vtk(result, out / "vtk")[0]).parent)
-        elif kind == "mat":
-            paths.append(Path(export_mat(result, out / f"{basename}.mat")))
-        elif kind == "csv":
-            paths.append(Path(export_csv(result, out / "csv")[0]).parent)
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    paths: list[Path] = []
+    errors: dict[str, str] = {}
+    for kind in kinds:
+        try:
+            if kind == "npz":
+                paths.append(Path(export_npz(result, out / f"{basename}.npz")))
+            elif kind == "summary":
+                paths.append(Path(export_run_summary(result, out / f"{basename}_summary.json")))
+            elif kind == "report":
+                paths.append(Path(export_report(result, out / f"{basename}_report.pdf")))
+            elif kind == "vtk":
+                paths.append(Path(export_vtk(result, out / "vtk", basename)[0]).parent)
+            elif kind == "mat":
+                paths.append(Path(export_mat(result, out / f"{basename}.mat")))
+            elif kind == "csv":
+                paths.append(Path(export_csv(result, out / "csv", basename)[0]).parent)
+        except Exception as exc:  # the other kinds are still written; the caller reports the failure
+            errors[kind] = f"{type(exc).__name__}: {exc}"
+    return paths, errors
+
+
+def export_results(result: PipelineResult, out_dir: str | Path, basename: str, kinds=DEFAULT_EXPORTS) -> list[Path]:
+    """Write the requested export kinds into ``out_dir``; returns the paths written, raises when a kind failed."""
+    paths, errors = export_results_checked(result, out_dir, basename, kinds)
+    if errors:
+        raise RuntimeError("export failed: " + "; ".join(f"{k}: {v}" for k, v in errors.items()))
     return paths
 
 
@@ -142,7 +164,10 @@ def run_session_file(
         statuses = [np.asarray(fr.status) for fr in result.result_disp if fr.status is not None]
         if statuses:
             job.converged = float(np.mean(np.concatenate(statuses) == STATUS_CONVERGED))
-        job.outputs = export_results(result, out_dir, job.session.stem, exports)
+        job.outputs, export_errors = export_results_checked(result, out_dir, job.session.stem, exports)
+        job.results_path = next((p for p in job.outputs if p.suffix == ".npz"), None)
+        if export_errors:
+            raise RuntimeError("export failed: " + "; ".join(f"{k}: {v}" for k, v in export_errors.items()))
         if result.stopped_early:
             job.status = "stopped"
             job.message = result.stop_reason or f"stopped after {result.n_frames} frame(s)"

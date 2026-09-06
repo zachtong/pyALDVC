@@ -28,6 +28,7 @@ from .view3d_scene import CameraState, SceneOptions, render_image
 
 KINDS = ("orbit", "frames", "slice", "warp")
 FORMATS = ("gif", "mp4", "png")
+MAX_FRAMES = {"gif": 600, "mp4": 3600, "png": 3600}  # a GIF is assembled in memory; MP4 and PNG stream to disk
 SIZES = {"view": None, "hd": (1280, 960), "full": (1920, 1440)}
 DEFAULT_SPEEDS = {"orbit": 30.0, "frames": 2.0, "slice": 20.0, "warp": 1.0}  # deg/s, frames/s, voxel/s, cycles/s
 SPEED_RANGES = {"orbit": (1.0, 360.0), "frames": (0.2, 30.0), "slice": (1.0, 500.0), "warp": (0.05, 5.0)}
@@ -71,10 +72,19 @@ class AnimationSpec:
             raise ValueError("fps must be >= 1 and duration positive")
         if self.format not in FORMATS or self.size not in SIZES:
             raise ValueError(f"format must be one of {FORMATS} and size one of {tuple(SIZES)}")
+        if self.n_frames > MAX_FRAMES[self.format]:
+            raise ValueError(
+                f"{self.n_frames} frames: a {self.format.upper()} recording is limited to {MAX_FRAMES[self.format]} frames"
+            )
 
     @property
     def n_frames(self) -> int:
         return max(2, int(round(self.fps * self.duration)))
+
+    @staticmethod
+    def max_duration(fmt: str, fps: int) -> float:
+        """The longest recording of ``fmt`` at ``fps`` frames per second."""
+        return MAX_FRAMES[fmt] / max(1, int(fps))
 
     @staticmethod
     def one_turn(speed: float, **kw) -> AnimationSpec:
@@ -132,6 +142,12 @@ def frames(spec: AnimationSpec, base_camera, base_options: SceneOptions, n_resul
         yield frame_at(spec, i / spec.fps, base_camera, base_options, n_result_frames, shape)
 
 
+def frame_bytes(spec: AnimationSpec, window_size: tuple[int, int]) -> int:
+    """Raw RGB bytes of every frame of ``spec`` (what a GIF holds in memory before it is written)."""
+    w, h = SIZES[spec.size] or window_size
+    return int(spec.n_frames) * int(w) * int(h) * 3
+
+
 def record_animation(
     result,
     volume,
@@ -145,8 +161,10 @@ def record_animation(
 ) -> Path | None:
     """Render ``spec`` off-screen and write it to ``path`` (extension follows ``spec.format``).
 
-    Returns the written path, or ``None`` when stopped. PNG writes ``path`` as a folder of
-    ``frame_0001.png`` ... files.
+    ``volume`` is the array shown as volume slices, or one array per result frame (a sequence) so a
+    frames animation shows every field on its own volume. Returns the written path, or ``None`` when
+    stopped. PNG writes ``path`` as a folder of ``frame_0001.png`` ... files; MP4 is streamed frame by
+    frame; a GIF is assembled in memory (hence its frame limit).
     """
     from PIL import Image
 
@@ -156,28 +174,35 @@ def record_animation(
     n_result_frames = len(result.result_disp)
     images: list[np.ndarray] = []
     total = spec.n_frames
+    writer = None
     if spec.format == "png":
         out.mkdir(parents=True, exist_ok=True)
     else:
         out = out.with_suffix(f".{spec.format}")
         out.parent.mkdir(parents=True, exist_ok=True)
-    for frame in frames(spec, base_camera, base_options, n_result_frames, shape):
-        if stop is not None and stop():
-            return None
-        img, _info = render_image(result, frame.options, volume, window_size=size, camera=frame.camera)
-        if spec.format == "png":
-            Image.fromarray(img).save(out / f"frame_{frame.index + 1:04d}.png")
-        else:
-            images.append(img)
-        if progress is not None:
-            progress((frame.index + 1) / total, f"{frame.index + 1}/{total}")
-    if spec.format == "png":
-        return out
-    if spec.format == "gif":
-        pil = [Image.fromarray(im).convert("P", palette=Image.Palette.ADAPTIVE, colors=256) for im in images]
-        pil[0].save(out, save_all=True, append_images=pil[1:], duration=int(round(1000 / spec.fps)), loop=0 if spec.loop else 1)
-        return out
-    import imageio.v3 as iio  # mp4: checked by mp4_available() before the dialog offers it
+    if spec.format == "mp4":
+        import imageio.v2 as iio2  # checked by mp4_available() before the dialog offers it
 
-    iio.imwrite(out, np.stack(images), fps=spec.fps, codec="libx264", macro_block_size=1)
+        writer = iio2.get_writer(str(out), fps=spec.fps, codec="libx264", macro_block_size=1)
+    try:
+        for frame in frames(spec, base_camera, base_options, n_result_frames, shape):
+            if stop is not None and stop():
+                return None
+            vol = volume[frame.options.frame] if isinstance(volume, (list, tuple)) else volume
+            img, _info = render_image(result, frame.options, vol, window_size=size, camera=frame.camera)
+            if spec.format == "png":
+                Image.fromarray(img).save(out / f"frame_{frame.index + 1:04d}.png")
+            elif writer is not None:
+                writer.append_data(np.ascontiguousarray(img[..., :3]))
+            else:
+                images.append(img)
+            if progress is not None:
+                progress((frame.index + 1) / total, f"{frame.index + 1}/{total}")
+    finally:
+        if writer is not None:
+            writer.close()
+    if spec.format in ("png", "mp4"):
+        return out
+    pil = [Image.fromarray(im).convert("P", palette=Image.Palette.ADAPTIVE, colors=256) for im in images]
+    pil[0].save(out, save_all=True, append_images=pil[1:], duration=int(round(1000 / spec.fps)), loop=0 if spec.loop else 1)
     return out

@@ -13,6 +13,7 @@ import json
 import logging
 import traceback
 from dataclasses import asdict
+from pathlib import Path
 
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -103,6 +105,8 @@ class _TextureWorker(QThread):
                 )
                 if self._stop:
                     raise _Cancelled()
+            if self._stop:  # a cancel during the analysis itself is honoured, not published
+                raise _Cancelled()
             self.progress.emit(1.0, "done")
         except _Cancelled:
             self.cancelled.emit()
@@ -124,6 +128,9 @@ class TextureWindow(QMainWindow):
         self.result: TextureResult | None = None
         self.sweep: SizeSweep | None = None
         self.recommendation = None
+        self._job_source: dict | None = None  # the input the running analysis was given
+        self._result_source: dict | None = None  # the input ``result`` describes
+        self._previous_note = ""  # why the previous result is still on screen (failed / cancelled rerun)
         self.setWindowFlag(Qt.WindowType.Window, True)
         self.resize(1240, 780)
 
@@ -268,7 +275,12 @@ class TextureWindow(QMainWindow):
         self._btn_json.clicked.connect(self._on_save_json)
         self._btn_png.clicked.connect(self._on_save_png)
         self._state.volumes_changed.connect(self._on_volumes_changed)
-        self._state.mask_changed.connect(self._update_status)
+        self._state.mask_changed.connect(self._refresh_validity)
+        self._state.params_changed.connect(self._refresh_validity)
+        self.use_roi.toggled.connect(lambda _v: self._refresh_validity())
+        self.estimator.currentIndexChanged.connect(lambda _i: self._refresh_validity())
+        for w in (self.max_lag, self.min_overlap, self.window_edge):
+            w.valueChanged.connect(lambda _v: self._refresh_validity())
         self.retranslate_ui()
         self._draw_profiles()
         self._draw_sweep()
@@ -276,14 +288,43 @@ class TextureWindow(QMainWindow):
 
     # ------------------------------------------------------------------ data
     def _reference(self):
-        """``(volume, mask)`` of the reference frame, the mask only when "use region" is on."""
+        """``(volume, mask)`` of the reference frame, the mask only when "use region" is on.
+
+        Raises ``ValueError`` when the region is unusable (empty, or another shape than the volume): the
+        analysis stops with a message instead of silently taking the whole volume."""
         if not self._state.volumes:
             return None, None
         vol = np.asarray(self._state.volume_array(0))
         mask = self._state.reference_mask() if self.use_roi.isChecked() else None
-        if mask is not None and (mask.shape != vol.shape or not mask.any()):
-            mask = None
+        if mask is not None and mask.shape != vol.shape:
+            raise ValueError(
+                self.tr("The region of interest ({m}) does not match the reference volume ({v}).").format(
+                    m=" x ".join(str(n) for n in mask.shape[::-1]), v=" x ".join(str(n) for n in vol.shape[::-1])
+                )
+            )
+        if mask is not None and not mask.any():
+            raise ValueError(self.tr("The region of interest is empty: draw a region or untick the restriction."))
         return vol, mask
+
+    def current_source(self) -> dict | None:
+        """What an analysis started now would describe: reference identity, mask revision, calibration, settings."""
+        st = self._state
+        if not st.volumes:
+            return None
+        use_roi = bool(self.use_roi.isChecked())
+        return {
+            "uid": st.volumes[0].uid,
+            "mask": st.mask_revision if use_roi else None,
+            "use_roi": use_roi,
+            "spacing": tuple(float(v) for v in st.para.voxel_size),
+            "units": str(getattr(st.para, "units", "voxel") or "voxel"),
+            "settings": self.settings(),
+        }
+
+    @property
+    def is_stale(self) -> bool:
+        """True when a result is shown but the reference, the region, the calibration or the settings changed."""
+        return self.result is not None and self._result_source != self.current_source()
 
     def settings(self) -> dict:
         max_lag = int(self.max_lag.value())
@@ -303,7 +344,12 @@ class TextureWindow(QMainWindow):
     def analyse(self) -> None:
         if self._is_running():
             return
-        vol, mask = self._reference()
+        try:
+            vol, mask = self._reference()
+        except ValueError as exc:
+            self._status.setText(str(exc))
+            self._state.log(self.tr("Texture analysis: {error}").format(error=exc), "error")
+            return
         if vol is None:
             self._status.setText(self.tr("Load a reference volume first."))
             return
@@ -320,12 +366,15 @@ class TextureWindow(QMainWindow):
                 self._status.setText(str(exc))
                 return
         self._worker = _TextureWorker(vol, mask, spacing, self.settings(), sweep, parent=self)
+        self._job_source = self.current_source()
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_analysis.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)
         self._worker.cancelled.connect(self._on_cancelled)
         self._btn_analyse.setEnabled(False)
         self._btn_cancel.setEnabled(True)
+        for b in (self._btn_apply, self._btn_csv, self._btn_json, self._btn_png):
+            b.setEnabled(False)  # the previous result stays on screen but is not applied or exported meanwhile
         self._progress.setValue(0)
         self._status.setText(self.tr("Analysing the texture..."))
         self._state.log(
@@ -343,8 +392,50 @@ class TextureWindow(QMainWindow):
         """Block until the worker finishes (tests)."""
         return self._worker.wait(timeout_ms) if self._worker is not None else True
 
+    def shutdown(self, timeout_ms: int = 30_000) -> bool:
+        """Cancel a running analysis and wait for its thread (application exit); True when settled."""
+        if not self._is_running():
+            return True
+        self._worker.cancel()
+        return self._worker.wait(timeout_ms)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        """Closing the window while analysing cancels the analysis (asked first, unless headless)."""
+        if self._is_running():
+            if not headless():
+                answer = QMessageBox.question(
+                    self, self.tr("Texture analysis running"), self.tr("Cancel the texture analysis and close the window?")
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    event.ignore()
+                    return
+            self.cancel()
+        super().closeEvent(event)
+
     def _is_running(self) -> bool:
         return self._worker is not None and self._worker.isRunning()
+
+    def _settle(self) -> None:
+        """Terminal UI state after success, failure or cancellation."""
+        self._job_source = None
+        self._btn_analyse.setEnabled(bool(self._state.volumes))
+        self._btn_cancel.setEnabled(False)
+        has = self.result is not None
+        for b in (self._btn_csv, self._btn_json, self._btn_png):
+            b.setEnabled(has)
+        self._refresh_validity()
+
+    def _refresh_validity(self) -> None:
+        """Apply only a recommendation that describes the current input; say so when it does not."""
+        if self._is_running():
+            return
+        stale = self.is_stale
+        self._btn_apply.setEnabled(self.recommendation is not None and not stale)
+        note = self.tr("From a previous input: analyse again before using it") if stale else ""
+        for b in (self._btn_apply, self._btn_csv, self._btn_json, self._btn_png):
+            b.setToolTip(note)
+        self._fill_suggestion()
+        self._update_status()
 
     def _on_progress(self, fraction: float, message: str) -> None:
         self._progress.setValue(int(round(1000 * fraction)))
@@ -353,20 +444,16 @@ class TextureWindow(QMainWindow):
     def _on_finished(self, result, sweep) -> None:
         self.result = result
         self.sweep = sweep
+        self._result_source = self._job_source
+        self._previous_note = ""
         self.recommendation = recommend_parameters(result) if result.status == "ok" else None
-        self._btn_analyse.setEnabled(True)
-        self._btn_cancel.setEnabled(False)
         self._progress.setValue(1000)
-        for b in (self._btn_csv, self._btn_json, self._btn_png):
-            b.setEnabled(True)
-        self._btn_apply.setEnabled(self.recommendation is not None)
+        self._settle()
         self._fill_table()
-        self._fill_suggestion()
         self._draw_profiles()
         self._draw_sweep()
         if sweep is not None:
             self.tabs.setCurrentIndex(1)
-        self._update_status()
         one = result.length("radial")
         self._state.log(
             self.tr("Texture analysed: 1/e length {L} voxel (radial), {n} voxels").format(
@@ -376,26 +463,29 @@ class TextureWindow(QMainWindow):
         )
 
     def _on_failed(self, message: str, detail: str) -> None:
-        self._btn_analyse.setEnabled(True)
-        self._btn_cancel.setEnabled(False)
+        self._previous_note = self.tr("the new analysis failed")
+        self._settle()
         self._status.setText(message)
         self._state.log(self.tr("Texture analysis failed: {msg}").format(msg=message), "error")
         self._state.log(detail, "debug")
 
     def _on_cancelled(self) -> None:
-        self._btn_analyse.setEnabled(True)
-        self._btn_cancel.setEnabled(False)
+        self._previous_note = self.tr("the new analysis was cancelled")
+        self._settle()
         self._progress.setValue(0)
         self._status.setText(self.tr("Cancelled."))
 
     def _on_volumes_changed(self) -> None:
         self._btn_analyse.setEnabled(bool(self._state.volumes) and not self._is_running())
-        self._update_status()
+        self._refresh_validity()
 
     # ------------------------------------------------------------------ results
     def apply_recommendation(self) -> None:
         rec = self.recommendation
         if rec is None:
+            return
+        if self.is_stale:
+            self._status.setText(self.tr("The suggestion is from a previous input: analyse again first."))
             return
         self._state.set_params(winsize=tuple(rec.subset), winstepsize=tuple(rec.step))
         self._state.log(
@@ -404,11 +494,15 @@ class TextureWindow(QMainWindow):
             ),
             "success",
         )
+        if self._state.busy:
+            self._state.log(self.tr("The active run keeps its parameters; the new subset applies to the next run."), "warning")
 
     def _fill_table(self) -> None:
         res = self.result
-        units = getattr(self._state.para, "units", "voxel")
-        physical = tuple(float(v) for v in self._state.para.voxel_size) != (1.0, 1.0, 1.0)
+        src = self._result_source or {}
+        units = src.get("units", "voxel")  # the calibration the analysis was done with, not today's
+        spacing = tuple(src.get("spacing", (1.0, 1.0, 1.0)))
+        physical = spacing != (1.0, 1.0, 1.0)
         for r, axis in enumerate(AXES_ROWS):
             for c, t in enumerate(THRESHOLDS):
                 text = "-"
@@ -438,6 +532,8 @@ class TextureWindow(QMainWindow):
             )
         ]
         lines += [f"  {n}" for n in rec.notes]
+        if self.is_stale:
+            lines.append(self.tr("(from a previous input: the reference, region, calibration or settings changed)"))
         self._suggestion.setText("\n".join(lines))
 
     def _update_status(self) -> None:
@@ -464,6 +560,10 @@ class TextureWindow(QMainWindow):
             if res.periodicity is not None:
                 axis, period, height = res.periodicity
                 parts.append(self.tr("periodic along {axis} ({p} voxel)").format(axis=axis, p=f"{period:.1f}"))
+            if self._previous_note:
+                parts.append(self.tr("showing the previous result ({why})").format(why=self._previous_note))
+            if self.is_stale:
+                parts.append(self.tr("the input changed since: analyse again"))
             self._status.setText(", ".join(parts))
 
     # ------------------------------------------------------------------ figures
@@ -547,6 +647,26 @@ class TextureWindow(QMainWindow):
                     ax.axvline(sweep.sizes[d.start_index], color=line[0].get_color(), ls="--", lw=1)
                     ax.axhspan(d.reference - d.tolerance, d.reference + d.tolerance, color=line[0].get_color(), alpha=0.08)
             ax.legend(fontsize=8, frameon=False, labelcolor=COLORS.TEXT_SECONDARY)
+            verdicts = []
+            for t in THRESHOLDS:
+                d = sweep.decisions[float(t)]
+                name = THRESHOLD_LABELS.get(float(t), f"{t:.2f}")
+                if d.converged:
+                    verdicts.append(
+                        self.tr("{name}: stable from {size} voxel").format(name=name, size=sweep.sizes[d.start_index])
+                    )
+                else:
+                    verdicts.append(self.tr("{name}: not stable ({why})").format(name=name, why=d.reason))
+            ax.text(
+                0.02,
+                0.98,
+                "\n".join(verdicts),
+                ha="left",
+                va="top",
+                fontsize=7,
+                color=COLORS.TEXT_SECONDARY,
+                transform=ax.transAxes,
+            )
         ax.set_xlabel(self.tr("sub-volume edge [voxel]"))
         ax.set_ylabel(self.tr("correlation length [voxel]"))
         fig.tight_layout()
@@ -559,28 +679,40 @@ class TextureWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, self.tr("Save"), default, filter_text)
         return path
 
+    def _write(self, what: str, path, writer) -> None:
+        """Run ``writer(path)`` and report success or the file error in the window and the log."""
+        try:
+            writer(path)
+        except Exception as exc:  # unwritable folder, bad name, disk full
+            self._status.setText(self.tr("Cannot save {what}: {error}").format(what=what, error=exc))
+            self._state.log(self.tr("Cannot save {what}: {error}").format(what=what, error=exc), "error")
+            return
+        self._state.log(self.tr("{what} saved: {path}").format(what=what, path=path))
+
     def _on_save_csv(self) -> None:
         if self.result is None:
             return
         path = self._ask_path(str(self._state.output_dir / "texture_profiles.csv"), "CSV (*.csv)")
         if path:
-            self.save_csv(path)
-            self._state.log(self.tr("Profiles saved: {path}").format(path=path))
+            self._write(self.tr("Profiles"), path, self.save_csv)
 
     def _on_save_json(self) -> None:
         if self.result is None:
             return
         path = self._ask_path(str(self._state.output_dir / "texture_summary.json"), "JSON (*.json)")
         if path:
-            self.save_json(path)
-            self._state.log(self.tr("Summary saved: {path}").format(path=path))
+            self._write(self.tr("Summary"), path, self.save_json)
 
     def _on_save_png(self) -> None:
         path = self._ask_path(str(self._state.output_dir / "texture_profiles.png"), "PNG (*.png)")
         if path:
             fig = self.fig_sweep if self.tabs.currentIndex() == 1 else self.fig_profiles
-            fig.savefig(path, dpi=150, facecolor=fig.get_facecolor())
-            self._state.log(self.tr("Image saved: {path}").format(path=path))
+
+            def save(target, fig=fig):
+                Path(target).parent.mkdir(parents=True, exist_ok=True)
+                fig.savefig(target, dpi=150, facecolor=fig.get_facecolor())
+
+            self._write(self.tr("Image"), path, save)
 
     def save_csv(self, path) -> None:
         write_profiles_csv(self.result, path)
@@ -646,6 +778,7 @@ class TextureWindow(QMainWindow):
 
 # ---------------------------------------------------------------------- files (shared with the CLI)
 def write_profiles_csv(result: TextureResult, path) -> None:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["axis", "lag_voxel", "distance", "mean", "std", "count", "coverage"])
@@ -714,5 +847,6 @@ def summary_dict(result: TextureResult, sweep: SizeSweep | None, recommendation)
 
 
 def write_summary_json(result: TextureResult, sweep: SizeSweep | None, recommendation, path) -> None:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(summary_dict(result, sweep, recommendation), f, indent=2)

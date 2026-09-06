@@ -8,6 +8,7 @@ per-frame actions.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -31,6 +32,13 @@ from ..app_state import AppState
 VOLUME_FILTER = "Volumes (*.tif *.tiff *.mat *.npy *.npz *.h5 *.hdf5 *.nii *.nii.gz *.nrrd);;All files (*)"
 COLUMNS = ("thumb", "index", "name", "shape", "region")
 THUMB_SIZE = 44  # px, middle XY slice of a loaded volume
+_NUMBER = re.compile(r"(\d+)")
+
+
+def natural_key(path: str | Path) -> tuple:
+    """Sort key that orders the numbers inside a name numerically: frame2 before frame10, not after frame1."""
+    parts = _NUMBER.split(str(path))
+    return tuple(int(part) if part.isdigit() else part.lower() for part in parts)
 
 
 def thumbnail_pixmap(volume, size: int = THUMB_SIZE):
@@ -173,7 +181,7 @@ class VolumePanel(QWidget):
             elif path.is_file():
                 files.append(str(path))
         if files:
-            self._state.add_volume_paths(sorted(files))
+            self._state.add_volume_paths(sorted(files, key=natural_key))
         else:
             self._state.log(self.tr("Nothing usable was dropped (volumes or a folder of volumes)."), "warning")
         return len(files)
@@ -182,7 +190,7 @@ class VolumePanel(QWidget):
     def _on_add_files(self) -> None:
         files, _ = QFileDialog.getOpenFileNames(self, self.tr("Add volumes"), "", VOLUME_FILTER)
         if files:
-            self._state.add_volume_paths(sorted(files))
+            self._state.add_volume_paths(sorted(files, key=natural_key))
 
     def _on_add_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, self.tr("Add a folder of volumes"))
@@ -196,7 +204,7 @@ class VolumePanel(QWidget):
             self._state.log(f"{folder}: {exc}", "error")
             return
         if paths:
-            self._state.add_volume_paths([str(p) for p in paths])
+            self._state.add_volume_paths(sorted((str(p) for p in paths), key=natural_key))
         else:
             self._state.log(self.tr("No volume files found in {folder}").format(folder=folder), "warning")
 

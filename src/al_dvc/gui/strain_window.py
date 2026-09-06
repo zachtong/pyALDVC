@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -85,6 +86,8 @@ class _StrainWorker(QThread):
                 F_direct = fr.F if fr.ref_frame == 0 else None
                 sr = compute_strain(mesh, self._para, U_acc, F_direct=F_direct, valid=mesh.node_valid, ops=ops)
                 strains.append(sr)
+            if self._stop:  # a cancel that arrived during the last frame is honoured, not published
+                raise StrainCancelled()
             self.progress.emit(1.0, "done")
         except StrainCancelled:
             self.cancelled.emit()
@@ -105,6 +108,7 @@ class StrainWindow(QMainWindow):
         super().__init__(parent)
         self._state = state
         self._worker: _StrainWorker | None = None
+        self._job: tuple | None = None  # (result, parameters) the running worker was given
         self._stale = False
         self._updating = False
         self.setWindowFlag(Qt.WindowType.Window, True)
@@ -264,8 +268,14 @@ class StrainWindow(QMainWindow):
         self._load_data()
 
     # ------------------------------------------------------------------ parameters
+    def _source_para(self):
+        """The parameters the strain settings start from: the result's own (the run that produced the
+        displacement), else the next run's."""
+        res = self._state.results
+        return res.dvc_para if res is not None else self._state.para
+
     def _load_params(self) -> None:
-        p = self._state.para
+        p = self._source_para()
         self._updating = True
         try:
             select_key(self.method, p.strain_method)
@@ -281,7 +291,7 @@ class StrainWindow(QMainWindow):
         """The run's parameters with this window's strain settings."""
         hw = int(self.halfwidth.value())
         return replace(
-            self._state.para,
+            self._source_para(),
             strain_method=str(self.method.currentData()),
             strain_type=str(self.measure.currentData()),
             strain_plane_fit_halfwidth=(hw, hw, hw),
@@ -289,6 +299,27 @@ class StrainWindow(QMainWindow):
             strain_smoothing=float(self.strain_smoothing.value()),
             strain_edge_trim=bool(self.edge_trim.isChecked()),
         )
+
+    STRAIN_FIELDS = (
+        "strain_method",
+        "strain_type",
+        "strain_plane_fit_halfwidth",
+        "disp_smoothing",
+        "strain_smoothing",
+        "strain_edge_trim",
+    )
+
+    def _controls_differ(self, para) -> bool:
+        """True when the controls no longer describe ``para`` (the settings a strain was computed with)."""
+        try:
+            now = self.strain_para()
+        except (ValueError, TypeError):
+            return True
+        return any(getattr(now, f) != getattr(para, f) for f in self.STRAIN_FIELDS)
+
+    def _set_controls_enabled(self, enabled: bool) -> None:
+        for w in (self.method, self.measure, self.halfwidth, self.disp_smoothing, self.strain_smoothing, self.edge_trim):
+            w.setEnabled(enabled)
 
     def _mark_stale(self) -> None:
         if self._updating:
@@ -312,12 +343,14 @@ class StrainWindow(QMainWindow):
             self._state.log(self.tr("Strain parameters: {error}").format(error=exc), "error")
             return
         self._worker = _StrainWorker(res, para, parent=self)
+        self._job = (res, para)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_strain.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)
         self._worker.cancelled.connect(self._on_cancelled)
         self._btn_compute.setEnabled(False)
         self._btn_cancel.setEnabled(True)
+        self._set_controls_enabled(False)  # the settings of a running computation are fixed
         self._progress.setValue(0)
         self._status.setText(self.tr("Computing strain..."))
         self._state.log(
@@ -337,15 +370,53 @@ class StrainWindow(QMainWindow):
         """Block until the worker finishes (tests)."""
         return self._worker.wait(timeout_ms) if self._worker is not None else True
 
+    def shutdown(self, timeout_ms: int = 30_000) -> bool:
+        """Cancel a running computation and wait for its thread (application exit); True when settled."""
+        if not self._is_running():
+            return True
+        self._worker.cancel()
+        return self._worker.wait(timeout_ms)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        """Closing the window while computing cancels the computation (asked first, unless headless)."""
+        if self._is_running():
+            if not headless():
+                answer = QMessageBox.question(
+                    self, self.tr("Strain computation running"), self.tr("Cancel the strain computation and close the window?")
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    event.ignore()
+                    return
+            self.cancel()
+        super().closeEvent(event)
+
+    def _settle(self, progress: int | None = None) -> None:
+        """Terminal UI state after success, failure, cancellation or a discarded completion."""
+        self._job = None
+        self._btn_cancel.setEnabled(False)
+        self._set_controls_enabled(True)
+        res = self._state.results
+        self._btn_compute.setEnabled(res is not None and bool(res.result_disp))
+        if progress is not None:
+            self._progress.setValue(progress)
+
     def _on_progress(self, fraction: float, message: str) -> None:
         self._progress.setValue(int(round(1000 * fraction)))
         self._status.setText(self.tr("Computing strain: {msg}").format(msg=message))
 
     def _on_finished(self, strains) -> None:
-        res = self._state.results
-        if res is None:
+        job = self._job
+        res, para = job if job is not None else (None, None)
+        if res is None or self._state.results is not res:
+            # the displacement result was replaced (new run, session, import) while this strain was computed:
+            # it describes another result and is not spliced into the current one
+            self._settle(0)
+            self._status.setText(self.tr("Discarded: the displacement result changed while the strain was computed."))
+            self._state.log(
+                self.tr("Strain discarded: the displacement result changed while it was computed; compute again."),
+                "warning",
+            )
             return
-        para = self.strain_para()
         new = replace(
             res,
             result_strain=list(strains),
@@ -361,10 +432,8 @@ class StrainWindow(QMainWindow):
                 },
             ),
         )
-        self._stale = False
-        self._btn_compute.setEnabled(True)
-        self._btn_cancel.setEnabled(False)
-        self._progress.setValue(1000)
+        self._stale = self._controls_differ(para)  # edited during the computation: the strain is from ``para``
+        self._settle(1000)
         self._state.set_results(new)  # results_changed -> every view (including this one) refreshes
         want = self.field.findData("exx")
         if want >= 0:
@@ -372,16 +441,13 @@ class StrainWindow(QMainWindow):
         self._state.log(self.tr("Strain computed for {n} frame(s)").format(n=len(strains)), "success")
 
     def _on_failed(self, message: str, detail: str) -> None:
-        self._btn_compute.setEnabled(True)
-        self._btn_cancel.setEnabled(False)
+        self._settle()
         self._status.setText(message)
         self._state.log(self.tr("Strain failed: {msg}").format(msg=message), "error")
         self._state.log(detail, "debug")
 
     def _on_cancelled(self) -> None:
-        self._btn_compute.setEnabled(True)
-        self._btn_cancel.setEnabled(False)
-        self._progress.setValue(0)
+        self._settle(0)
         self._status.setText(self.tr("Cancelled."))
 
     # ------------------------------------------------------------------ display
@@ -397,6 +463,9 @@ class StrainWindow(QMainWindow):
         return fields
 
     def _on_results_changed(self) -> None:
+        if not self._is_running():
+            self._stale = False
+            self._load_params()  # the settings of the result on screen (its run, or the strain it carries)
         self._load_data()
 
     def _load_data(self) -> None:
@@ -467,7 +536,14 @@ class StrainWindow(QMainWindow):
         self._btn_next.setEnabled(self.frame_slider.value() < self.frame_slider.maximum())
 
     def _update_status(self) -> None:
+        if self._is_running():
+            return  # the progress messages own the status line
         res = self._state.results
+        self._btn_export.setToolTip(
+            self.tr("The strain shown was computed with previous settings; compute again before exporting")
+            if self._stale
+            else ""
+        )
         if res is None or not res.result_disp:
             self._status.setText(self.tr("No displacement results yet: run an analysis first."))
         elif not res.result_strain:
@@ -491,7 +567,12 @@ class StrainWindow(QMainWindow):
         else:
             path, _ = QFileDialog.getSaveFileName(self, self.tr("Save image"), default, "PNG (*.png)")
         if path:
-            out = self.canvas.save_png(path)
+            try:
+                out = self.canvas.save_png(path)
+            except Exception as exc:  # unwritable folder, bad name
+                self._status.setText(self.tr("Cannot save the image: {error}").format(error=exc))
+                self._state.log(self.tr("Cannot save the image: {error}").format(error=exc), "error")
+                return
             self._state.log(self.tr("Image saved: {path}").format(path=out))
 
     # ------------------------------------------------------------------ misc
