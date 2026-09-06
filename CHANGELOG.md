@@ -7,6 +7,16 @@ All notable changes to pyALDVC are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- 3-D view crashed the application (access violation inside VTK) on large scans when
+  the volume slices were on and the scene was rebuilt, for example by the frames
+  animation or a mode change. The orientation axes widget was destroyed and
+  recreated on every rebuild; it is now created once per window. Volume slices are
+  drawn as textured quads (four vertices and one image per plane) instead of
+  million-point surfaces, with a shared grey window and smooth interpolation.
+  A native crash now writes the Python stack of every thread to
+  `pyaldvc_crash.log` next to the application log.
+- The left column is at least as wide as its widest row, so the Add folder button,
+  the region column of the volume table and the mask hint are no longer cut off.
 - Region of interest persistence: a drawn mask is saved next to the session as a
   composed mask file, so a region drawn before switching frames is no longer
   lost, and a mask saved with "Save mask" is no longer inverted or doubled when

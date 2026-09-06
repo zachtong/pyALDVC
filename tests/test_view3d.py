@@ -63,17 +63,29 @@ def test_volume_slice_planes_geometry():
     vol = np.arange(np.prod(SHAPE), dtype=np.float32).reshape(SHAPE)
     planes = volume_slice_planes(vol, {"z": 5, "y": 7, "x": 9}, voxel_size=(2.0, 1.0, 0.5))
     nz, ny, nx = SHAPE
-    xy, xz, yz = planes["xy"], planes["xz"], planes["yz"]
-    assert tuple(xy.dimensions) == (nx, ny, 1) and xy.origin[2] == pytest.approx(5 * 0.5)
-    assert tuple(xz.dimensions) == (nx, 1, nz) and xz.origin[1] == pytest.approx(7.0)
-    assert tuple(yz.dimensions) == (1, ny, nz) and yz.origin[0] == pytest.approx(9 * 2.0)
-    # point ordering: intensity at lattice point (ix, iy) of the XY plane equals vol[5, iy, ix]
-    inten = np.asarray(xy.point_data["intensity"]).reshape(ny, nx)
-    np.testing.assert_array_equal(inten, vol[5])
-    inten = np.asarray(xz.point_data["intensity"]).reshape(nz, nx)
-    np.testing.assert_array_equal(inten, vol[:, 7, :])
-    inten = np.asarray(yz.point_data["intensity"]).reshape(nz, ny)
-    np.testing.assert_array_equal(inten, vol[:, :, 9])
+    (xy, t_xy), (xz, t_xz), (yz, t_yz) = planes["xy"], planes["xz"], planes["yz"]
+    # four-vertex quads spanning the volume in world units, one texture pixel per voxel
+    assert xy.n_points == 4 and xy.bounds == pytest.approx((0, (nx - 1) * 2.0, 0, ny - 1, 5 * 0.5, 5 * 0.5))
+    assert xz.n_points == 4 and xz.bounds == pytest.approx((0, (nx - 1) * 2.0, 7.0, 7.0, 0, (nz - 1) * 0.5))
+    assert yz.n_points == 4 and yz.bounds == pytest.approx((9 * 2.0, 9 * 2.0, 0, ny - 1, 0, (nz - 1) * 0.5))
+    assert tuple(t_xy.dimensions) == (nx, ny) and tuple(t_xz.dimensions) == (nx, nz) and tuple(t_yz.dimensions) == (ny, nz)
+
+
+def test_volume_slice_texture_orientation():
+    """Image row 0 (y = 0) sits at the quad's origin: seen from +z with y up it is at the bottom."""
+    import pyvista as pv
+
+    nz, ny, nx = 4, 40, 60
+    vol = np.zeros((nz, ny, nx), dtype=np.float32)
+    vol[:, :8, :] = 1.0  # bright band at small y
+    quad, texture = volume_slice_planes(vol, {"z": 2, "y": 20, "x": 30})["xy"]
+    pl = pv.Plotter(off_screen=True, window_size=(300, 200))
+    pl.add_mesh(quad, texture=texture, lighting=False)
+    pl.camera_position = "xy"
+    img = pl.screenshot(return_img=True)
+    pl.close()
+    h = img.shape[0]
+    assert img[-h // 3 :].mean() > img[: h // 3].mean() + 30
 
 
 def test_volume_slice_planes_subsample_large_slice():
@@ -81,11 +93,9 @@ def test_volume_slice_planes_subsample_large_slice():
 
     big = np.zeros((2, 2500, 2500), dtype=np.float32)
     planes = volume_slice_planes(big, {"z": 0, "y": 0, "x": 0})
-    assert planes["xy"].n_points <= view3d_scene.VOLUME_SLICE_MAX_PIXELS
-    assert planes["xy"].spacing[0] > 1.0  # coarser lattice keeps the physical extent
-    assert planes["xy"].bounds[1] == pytest.approx(2499, abs=planes["xy"].spacing[0])
-
-
+    w, h = planes["xy"][1].dimensions
+    assert w * h <= view3d_scene.VOLUME_SLICE_MAX_PIXELS
+    assert planes["xy"][0].bounds == pytest.approx((0, 2499, 0, 2499, 0, 0))  # the quad still spans the slice
 def test_auto_clim_and_option_validation():
     assert auto_clim(np.array([np.nan, np.nan])) == (0.0, 1.0)
     lo, hi = auto_clim(np.array([1.0, 1.0, 1.0]))

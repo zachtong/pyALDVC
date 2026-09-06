@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -105,6 +106,8 @@ class MaskToolbar(QWidget):
         self._labels["to"].setText("-")
         self._status = QLabel()
         self._status.setObjectName("hint")
+        # the row must never widen the column: the hint takes what is left and is elided by the tooltip
+        self._status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -290,6 +293,7 @@ class MaskToolbar(QWidget):
             cov = 100.0 * float(mask.mean())
             n_ops = len(ed.ops) if ed is not None else 0
             self._status.setText(self.tr("material {cov:.1f} %, {n} operation(s)").format(cov=cov, n=n_ops))
+        self._status.setToolTip(self._status.text())
         self._update_enabled()
 
     def _update_enabled(self) -> None:

@@ -160,6 +160,7 @@ class MainWindow(QMainWindow):
         self.state.run_state_changed.connect(self._on_run_state_changed)
         self.state.log_message.connect(self._on_log_message)
         self.retranslate_ui()
+        self._fit_left_column()
         QTimer.singleShot(START_DELAY_MS + 1500, self._refresh_backend)
         self.state.log(self.tr("Welcome. Add volumes, draw a region of interest, set parameters, run, then strain or export."))
 
@@ -404,8 +405,14 @@ class MainWindow(QMainWindow):
         self.remember_session(p)
         return p
 
-    # ------------------------------------------------------------------ help
     # ------------------------------------------------------------------ layout
+    def _fit_left_column(self) -> None:
+        """The left column is at least as wide as its widest row (fonts, language and DPI decide that),
+        so no button or table column is ever cut off at the right edge."""
+        body = self._left_column.widget()
+        needed = body.minimumSizeHint().width() + self._left_column.verticalScrollBar().sizeHint().width() + 4
+        self._left_column.setMinimumWidth(max(LEFT_MIN_WIDTH, needed))
+
     def _toggle_left(self, visible: bool) -> None:
         self._left_column.setVisible(bool(visible))
 
@@ -699,6 +706,8 @@ class MainWindow(QMainWindow):
             self._actions[key].setText(text)
         self._on_run_state_changed(self.state.run_state)
         self._sync_language_check()
+        if hasattr(self, "_left_column"):
+            self._fit_left_column()
         dialog = getattr(self, "batch_dialog", None)
         if dialog is not None:
             dialog.retranslate_ui()
@@ -736,6 +745,13 @@ def user_data_dir() -> Path:
 
 def _configure_logging() -> None:
     log_path = user_data_dir() / "pyaldvc.log"
+    try:  # a native crash (VTK, a driver) leaves the Python stack of every thread next to the log
+        import faulthandler
+
+        crash_log = open(user_data_dir() / "pyaldvc_crash.log", "a", encoding="utf-8")  # noqa: SIM115 - kept open for life
+        faulthandler.enable(file=crash_log, all_threads=True)
+    except OSError:
+        pass
     # A windowed (console-less) frozen executable has no standard streams.
     handlers: list[logging.Handler] = [logging.StreamHandler()] if sys.stderr is not None else []
     try:

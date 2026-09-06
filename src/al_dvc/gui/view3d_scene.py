@@ -28,7 +28,9 @@ MODES = ("slices", "points", "surface", "warped")
 DISPLACEMENT_ARRAY = "displacement"
 MAX_ARROWS = 20_000
 ARROW_SCALE_FRACTION = 0.6  # longest arrow = this fraction of the node spacing at unit arrow_scale
-VOLUME_SLICE_MAX_PIXELS = 4_000_000  # subsample larger image slices before turning them into textures
+VOLUME_SLICE_MAX_PIXELS = 1_000_000  # subsample larger image slices before turning them into textures
+VOLUME_SLICE_OPACITY = 0.9  # the field slices behind a volume slice stay faintly visible
+VOLUME_SLICE_PERCENTILES = (0.5, 99.5)  # grey-level window of the volume slices
 CAMERAS = ("iso", "xy", "xz", "yz")
 VIEW_UPS = {"z": (0.0, 0.0, 1.0), "y": (0.0, 1.0, 0.0), "x": (1.0, 0.0, 0.0)}
 SCENE_COLUMNS = (6, 1)  # relative widths of the scene renderer and the colour-bar renderer
@@ -300,8 +302,14 @@ def node_grid(result: PipelineResult, frame: int, fields: tuple[str, ...] = ("di
 
 def volume_slice_planes(
     volume: NDArray, slice_index: dict[str, int | None], voxel_size=(1.0, 1.0, 1.0)
-) -> dict[str, "pv.ImageData"]:
-    """The XY, XZ and YZ planes of an image volume as single-layer ``ImageData`` (intensity in ``point_data['intensity']``)."""
+) -> dict[str, tuple["pv.PolyData", "pv.Texture"]]:
+    """The XY, XZ and YZ planes of an image volume as textured quads: ``(quad, texture)`` per plane.
+
+    A quad has four vertices whatever the image size; the grey levels travel as one texture, so
+    a 1024 x 1024 slice costs the renderer a single image upload instead of a million-point
+    surface (which was heavy enough to crash the interactive window on large scans). The window
+    of grey levels is shared by the three planes (percentiles of their pixels).
+    """
     import pyvista as pv
 
     vol = np.asarray(volume)
@@ -310,32 +318,45 @@ def volume_slice_planes(
     iz = int(np.clip(slice_index.get("z") if slice_index.get("z") is not None else nz // 2, 0, nz - 1))
     iy = int(np.clip(slice_index.get("y") if slice_index.get("y") is not None else ny // 2, 0, ny - 1))
     ix = int(np.clip(slice_index.get("x") if slice_index.get("x") is not None else nx // 2, 0, nx - 1))
-    planes = {}
-    specs = {
-        "xy": (vol[iz], (nx, ny, 1), (sx, sy, sz), (0.0, 0.0, iz * sz)),
-        "xz": (vol[:, iy, :], (nx, 1, nz), (sx, sy, sz), (0.0, iy * sy, 0.0)),
-        "yz": (vol[:, :, ix], (1, ny, nz), (sx, sy, sz), (ix * sx, 0.0, 0.0)),
+    # (rows, cols) images: rows run along the plane's second world axis, columns along its first
+    images = {"xy": vol[iz], "xz": vol[:, iy, :], "yz": vol[:, :, ix]}
+    corners = {  # origin, end of the first (column) axis, end of the second (row) axis, in world units
+        "xy": ((0.0, 0.0, iz * sz), ((nx - 1) * sx, 0.0, iz * sz), (0.0, (ny - 1) * sy, iz * sz)),
+        "xz": ((0.0, iy * sy, 0.0), ((nx - 1) * sx, iy * sy, 0.0), (0.0, iy * sy, (nz - 1) * sz)),
+        "yz": ((ix * sx, 0.0, 0.0), (ix * sx, (ny - 1) * sy, 0.0), (ix * sx, 0.0, (nz - 1) * sz)),
     }
-    for key, (img, dims, spacing, origin) in specs.items():
+    lo, hi = _grey_window(images.values())
+    planes = {}
+    for key, img in images.items():
         img = np.asarray(img, dtype=np.float32)
         step = int(np.ceil(np.sqrt(img.size / VOLUME_SLICE_MAX_PIXELS))) if img.size > VOLUME_SLICE_MAX_PIXELS else 1
         if step > 1:
             img = img[::step, ::step]
-            dims = tuple(int(d) if d == 1 else int(np.ceil(d / step)) for d in dims)
-            spacing = _scaled_spacing(key, (sx, sy, sz), step)
-        plane = pv.ImageData(dimensions=dims, spacing=spacing, origin=origin)
-        plane.point_data["intensity"] = img.ravel()  # rows (slow axis) map onto the second lattice axis: x fastest
-        planes[key] = plane
+        grey = np.clip((img - lo) * (255.0 / (hi - lo)), 0.0, 255.0).astype(np.uint8)
+        rgb = np.ascontiguousarray(np.repeat(grey[:, :, None], 3, axis=2))
+        origin, point_u, point_v = (np.asarray(c, dtype=np.float64) for c in corners[key])
+        quad = pv.PolyData(np.vstack([origin, point_u, point_u + point_v - origin, point_v]), faces=[4, 0, 1, 2, 3])
+        quad.texture_map_to_plane(origin=origin, point_u=point_u, point_v=point_v, inplace=True)
+        texture = pv.numpy_to_texture(rgb[::-1])  # pyvista puts row 0 at the top: flipped, row 0 sits at the origin
+        texture.interpolate = True
+        planes[key] = (quad, texture)
     return planes
 
 
-def _scaled_spacing(key: str, spacing: tuple[float, float, float], step: int) -> tuple[float, float, float]:
-    sx, sy, sz = spacing
-    if key == "xy":
-        return (sx * step, sy * step, sz)
-    if key == "xz":
-        return (sx * step, sy, sz * step)
-    return (sx, sy * step, sz * step)
+def _grey_window(images) -> tuple[float, float]:
+    """Shared grey-level window of the slices: percentiles of a sample of their pixels."""
+    samples = []
+    for img in images:
+        flat = np.asarray(img, dtype=np.float32).ravel()
+        samples.append(flat[:: max(1, flat.size // 200_000)])
+    values = np.concatenate(samples)
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return 0.0, 1.0
+    lo, hi = (float(v) for v in np.percentile(values, VOLUME_SLICE_PERCENTILES))
+    if hi <= lo:
+        hi = lo + 1.0
+    return lo, hi
 
 
 def auto_clim(values: NDArray) -> tuple[float, float]:
@@ -435,9 +456,9 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
         info.actors["outline"] = plotter.add_mesh(_volume_outline(result), color=fg, line_width=1, opacity=0.6)
     if opts.show_volume_slices and volume is not None:
         planes = volume_slice_planes(volume, opts.slice_index, result.dvc_para.voxel_size)
-        for key, plane in planes.items():
+        for key, (quad, texture) in planes.items():
             info.actors[f"volume_{key}"] = plotter.add_mesh(
-                plane, scalars="intensity", cmap="gray", show_scalar_bar=False, opacity=0.9
+                quad, texture=texture, lighting=False, show_scalar_bar=False, opacity=VOLUME_SLICE_OPACITY
             )
     if "field" in info.actors:
         # bind the bar to the field's mapper explicitly: by default pyvista takes the last added mesh (outline, arrows)
@@ -449,8 +470,29 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
         _use_ui_font(bar.GetLabelTextProperty(), font_file)
         if own_renderer:
             plotter.subplot(0, 0)
-    plotter.add_axes(color=fg)
+    _orientation_axes(plotter, fg)
     return info
+
+
+def _orientation_axes(plotter, fg) -> None:
+    """The orientation marker, created once per plotter and recoloured afterwards.
+
+    ``plotter.add_axes`` destroys and recreates the marker widget; done on every rebuild of the
+    interactive window (each animation frame, each control change) that left the render window with
+    a dangling widget renderer now and then, and the next paint crashed inside VTK. The widget
+    survives ``plotter.clear()``, so it is only created when the renderer has none."""
+    import pyvista as pv
+
+    renderer = plotter.renderer
+    if getattr(renderer, "axes_widget", None) is None:
+        plotter.add_axes(color=fg)
+        return
+    actor = getattr(renderer, "axes_actor", None)
+    if actor is None:
+        return
+    rgb = pv.Color(fg).float_rgb
+    for caption in (actor.GetXAxisCaptionActor2D(), actor.GetYAxisCaptionActor2D(), actor.GetZAxisCaptionActor2D()):
+        caption.GetCaptionTextProperty().SetColor(*rgb)
 
 
 def _slice_positions(result: PipelineResult, slice_index: dict[str, int | None]) -> tuple[float, float, float]:

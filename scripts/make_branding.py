@@ -206,8 +206,8 @@ def _render_3d(kind: str, ref, result, size=(520, 520)) -> np.ndarray:
     pl.set_background(BG_PANEL)
     if kind == "volume":
         planes = volume_slice_planes(ref, {"z": ref.shape[0] // 2, "y": ref.shape[1] // 2, "x": ref.shape[2] // 2}, (1, 1, 1))
-        for plane in planes.values():
-            pl.add_mesh(plane, scalars="intensity", cmap="gray", show_scalar_bar=False)
+        for quad, texture in planes.values():
+            pl.add_mesh(quad, texture=texture, lighting=False, show_scalar_bar=False)
         nz, ny, nx = ref.shape
         box = pv.ImageData(dimensions=(2, 2, 2), spacing=(nx - 1, ny - 1, nz - 1)).outline()
         pl.add_mesh(box, color=ACCENT_LIGHT, line_width=2)
