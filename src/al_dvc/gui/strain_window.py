@@ -154,8 +154,10 @@ class StrainWindow(QMainWindow):
         self.measure = combo([])
         fill_combo(self.measure, "strain_type")
         self.halfwidth = spin(1, 4, 1)
-        self.disp_smoothing = dspin(0.0, 10.0, 2)
-        self.strain_smoothing = dspin(0.0, 10.0, 2)
+        self.disp_smoothing = dspin(0.0, 10.0, 1)
+        self.strain_smoothing = dspin(0.0, 10.0, 1)
+        for w in (self.disp_smoothing, self.strain_smoothing):
+            w.setSingleStep(0.5)  # a Gaussian sigma below half a node spacing changes nothing
         self.edge_trim = QCheckBox()
         for key, w in [
             ("method", self.method),
@@ -584,9 +586,9 @@ class StrainWindow(QMainWindow):
         texts = {
             "method": self.tr("Method"),
             "measure": self.tr("Strain measure"),
-            "halfwidth": self.tr("Plane-fit half-width [nodes]"),
-            "disp_smoothing": self.tr("Displacement smoothing [nodes]"),
-            "strain_smoothing": self.tr("Strain smoothing [nodes]"),
+            "halfwidth": self.tr("Fit window half-width [nodes]"),
+            "disp_smoothing": self.tr("Smooth displacement [sigma, nodes]"),
+            "strain_smoothing": self.tr("Smooth strain [sigma, nodes]"),
             "field": self.tr("Field"),
             "colormap": self.tr("Colormap"),
             "auto": self.tr("Auto range"),
@@ -607,7 +609,31 @@ class StrainWindow(QMainWindow):
                 "Solver gradient: the gradient the AL-DVC solver produced (reference frame 0 only)."
             )
         )
-        self.edge_trim.setText(self.tr("Trim nodes with an incomplete fitting window"))
+        self.labels["halfwidth"].setToolTip(
+            self.tr(
+                "The gradient at a node is a least-squares fit over its neighbours: half-width 1 uses the 3 x 3 x 3 nodes "
+                "around it, 2 uses 5 x 5 x 5. Larger windows smooth more and lose resolution (plane fitting only)."
+            )
+        )
+        self.labels["disp_smoothing"].setToolTip(
+            self.tr(
+                "Gaussian smoothing of the displacement field before it is differentiated; sigma in node spacings. "
+                "0 = off; 1 blends each node with its neighbours; below 0.5 nothing changes."
+            )
+        )
+        self.labels["strain_smoothing"].setToolTip(
+            self.tr(
+                "Gaussian smoothing of the strain field after differentiation; sigma in node spacings. "
+                "0 = off; below 0.5 nothing changes."
+            )
+        )
+        self.edge_trim.setText(self.tr("Discard nodes whose fit window is incomplete"))
+        self.edge_trim.setToolTip(
+            self.tr(
+                "At the edge of the region and next to masked-out nodes the fit window lacks neighbours. Ticked: those "
+                "nodes get no strain (blank). Unticked: strain from the neighbours that exist, less reliable."
+            )
+        )
         self._btn_compute.setText(self.tr("Compute strain"))
         self._btn_cancel.setText(self.tr("Cancel"))
         self._btn_prev.setText("<")
