@@ -31,7 +31,8 @@ FORMATS = ("gif", "mp4", "png")
 MAX_FRAMES = {"gif": 600, "mp4": 3600, "png": 3600}  # a GIF is assembled in memory; MP4 and PNG stream to disk
 SIZES = {"view": None, "hd": (1280, 960), "full": (1920, 1440)}
 DEFAULT_SPEEDS = {"orbit": 30.0, "frames": 2.0, "slice": 20.0}  # degrees/s, frames/s, voxels/s
-SPEED_RANGES = {"orbit": (1.0, 360.0), "frames": (0.2, 30.0), "slice": (1.0, 500.0)}
+SPEED_RANGES = {"orbit": (1.0, 360.0), "frames": (0.05, 30.0), "slice": (1.0, 500.0)}
+SPEED_STEPS = {"orbit": 5.0, "frames": 0.1, "slice": 5.0}  # spin-box increments; a slow-motion frame takes 1 / speed seconds
 
 
 def mp4_available() -> bool:

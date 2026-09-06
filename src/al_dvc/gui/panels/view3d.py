@@ -63,6 +63,7 @@ from ..view3d_animation import (
     MAX_FRAMES,
     SIZES,
     SPEED_RANGES,
+    SPEED_STEPS,
     AnimationSpec,
     frame_at,
     mp4_available,
@@ -304,7 +305,7 @@ class View3DPanel(QWidget):
         fill_combo(self.anim_direction, "direction")
         self.anim_direction.setMinimumWidth(136)  # room for 'Counter-clockwise'
         self.anim_speed = QDoubleSpinBox()
-        self.anim_speed.setDecimals(1)
+        self.anim_speed.setDecimals(2)
         self.anim_speed.setFixedWidth(84)
         self.anim_smooth = QCheckBox()  # frames: interpolate the deformation between frames
         self._btn_play = tool_button("play")
@@ -862,6 +863,7 @@ class View3DPanel(QWidget):
         self._updating = True
         try:
             self.anim_speed.setRange(lo, hi)
+            self.anim_speed.setSingleStep(SPEED_STEPS[kind])
             self.anim_speed.setValue(DEFAULT_SPEEDS[kind])
         finally:
             self._updating = False
