@@ -570,5 +570,7 @@
   "{n} voxels analysed": "已分析 {n} 個體素",
   "{n} {kind} volume(s) added": "已加入 {n} 個 {kind} 體資料",
   "{s:.0f} s": "{s:.0f} 秒",
-  "{what} saved: {path}": "{what}已儲存：{path}"
+  "{what} saved: {path}": "{what}已儲存：{path}",
+  "Edges": "網格線",
+  "Draw the cell edges of the deformed lattice": "繪製變形網格的單元邊線"
 }

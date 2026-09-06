@@ -570,5 +570,7 @@
   "{n} voxels analysed": "{n} voxels analysés",
   "{n} {kind} volume(s) added": "{n} volume(s) {kind} ajouté(s)",
   "{s:.0f} s": "{s:.0f} s",
-  "{what} saved: {path}": "{what} enregistré : {path}"
+  "{what} saved: {path}": "{what} enregistré : {path}",
+  "Edges": "Arêtes",
+  "Draw the cell edges of the deformed lattice": "Tracer les arêtes des cellules du réseau déformé"
 }

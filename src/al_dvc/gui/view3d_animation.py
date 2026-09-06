@@ -124,7 +124,9 @@ def frame_at(spec: AnimationSpec, t: float, base_camera, base_options: SceneOpti
         start = int(base_options.frame) + 1  # sequence index of the frame the animation started from
         pos = (start + spec.direction * spec.speed * t) % length
         k = int(np.floor(pos))
-        blend = float(pos - k) if spec.smooth else 0.0  # fraction of the way to the next frame
+        # fraction of the way to the next frame; the last frame is held, then the loop restarts at the
+        # reference state (no interpolation from the final deformation back to zero)
+        blend = float(pos - k) if spec.smooth and k < length - 1 else 0.0
         options = replace(base_options, frame=k - 1, blend=blend)
     else:  # slice
         nz, ny, nx = (int(v) for v in shape)

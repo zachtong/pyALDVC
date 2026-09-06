@@ -255,6 +255,8 @@ class View3DPanel(QWidget):
         self.warp_scale.setValue(1.0)
         self.warp_scale.setSingleStep(1.0)
         self.arrows = QCheckBox()
+        self.edges = QCheckBox()  # warped: the cell edges of the lattice
+        self.edges.setChecked(True)
         self.stride = QSpinBox()
         self.stride.setRange(1, 20)
         self.stride.setValue(2)
@@ -360,6 +362,7 @@ class View3DPanel(QWidget):
         top.addWidget(self.iso)
         top.addWidget(self._labels["warp_scale"])
         top.addWidget(self.warp_scale)
+        top.addWidget(self.edges)
         top.addStretch(1)
         bottom = QHBoxLayout()
         bottom.addWidget(self.background)
@@ -467,7 +470,7 @@ class View3DPanel(QWidget):
         guard_wheel(self)
 
         self.mode.currentIndexChanged.connect(lambda _i: self._on_control_changed())
-        for w in (self.arrows, self.volume_slices, self.outline):
+        for w in (self.arrows, self.volume_slices, self.outline, self.edges):
             w.toggled.connect(lambda _v: self._on_control_changed())
         for w in (self.stride, self.arrow_scale, self.warp_scale, self.iso):
             w.valueChanged.connect(lambda _v: self._on_control_changed())
@@ -542,6 +545,7 @@ class View3DPanel(QWidget):
             clim=None if st.color_auto else (float(st.color_min), float(st.color_max)),
             opacity=float(st.overlay_alpha),
             warp_scale=float(self.warp_scale.value()),
+            show_edges=self.edges.isChecked(),
             show_arrows=self.arrows.isChecked(),
             arrow_stride=int(self.stride.value()),
             arrow_scale=float(self.arrow_scale.value()),
@@ -1140,6 +1144,8 @@ class View3DPanel(QWidget):
         self._labels["warp_scale"].setVisible(mode == "warped")
         self.warp_scale.setVisible(mode == "warped")
         self.warp_scale.setEnabled(has)
+        self.edges.setVisible(mode == "warped")
+        self.edges.setEnabled(has)
         arrows_on = has and self.arrows.isChecked()
         self._arrow_row.setVisible(self.arrows.isChecked())
         for w in (self.stride, self.arrow_scale):
@@ -1190,6 +1196,8 @@ class View3DPanel(QWidget):
         self.elevation.setToolTip(self.tr("Tilt the camera up or down [degrees]"))
         self.zoom.setToolTip(self.tr("Zoom factor on the preset framing; the mouse wheel updates this too"))
         self.arrows.setText(self.tr("Arrows"))
+        self.edges.setText(self.tr("Edges"))
+        self.edges.setToolTip(self.tr("Draw the cell edges of the deformed lattice"))
         self.volume_slices.setText(self.tr("Volume slices"))
         self.outline.setText(self.tr("Outline"))
         self._btn_refresh.setToolTip(self.tr("Refresh"))

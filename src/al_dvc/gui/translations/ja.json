@@ -570,5 +570,7 @@
   "{n} voxels analysed": "{n} ボクセルを解析",
   "{n} {kind} volume(s) added": "{kind} ボリュームを {n} 個追加しました",
   "{s:.0f} s": "{s:.0f} 秒",
-  "{what} saved: {path}": "{what}を保存しました：{path}"
+  "{what} saved: {path}": "{what}を保存しました：{path}",
+  "Edges": "エッジ",
+  "Draw the cell edges of the deformed lattice": "変形格子のセルのエッジを描画"
 }

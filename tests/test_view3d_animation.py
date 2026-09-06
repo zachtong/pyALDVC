@@ -104,8 +104,11 @@ def test_animation_spec_and_frames(result):
     f = frame_at(AnimationSpec(kind="frames", speed=1.0), 1.0, base_cam, base, n, shape)
     assert f.options.frame == -1  # after the last frame comes the reference state
     # smooth: part of the way to the next frame
+    base0 = SceneOptions(mode="slices", frame=0)
+    f = frame_at(AnimationSpec(kind="frames", speed=1.0, smooth=True), 0.25, base_cam, base0, n, shape)
+    assert f.options.frame == 0 and f.options.blend == pytest.approx(0.25)
     f = frame_at(AnimationSpec(kind="frames", speed=1.0, smooth=True), 0.25, base_cam, base, n, shape)
-    assert f.options.frame == base.frame and f.options.blend == pytest.approx(0.25)
+    assert f.options.frame == n - 1 and f.options.blend == 0.0  # the last frame is held, no blend back to the start
     # slice: sweeps the chosen axis through the volume and wraps
     f = frame_at(AnimationSpec(kind="slice", axis="z", speed=20.0), 1.0, base_cam, base, n, shape)
     assert f.options.slice_index["z"] == (10 + 20) % shape[0] and f.options.slice_index["x"] == 5

@@ -246,6 +246,7 @@ class SceneOptions:
     clim: tuple[float, float] | None = None
     opacity: float = 1.0
     warp_scale: float = 1.0
+    show_edges: bool = True  # warped: draw the cell edges of the lattice
     show_arrows: bool = False
     arrow_stride: int = 2
     arrow_scale: float = 1.0
@@ -469,7 +470,7 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
         if cells.n_cells:
             warped = cells.warp_by_vector(DISPLACEMENT_ARRAY, factor=opts.warp_scale)
             info.actors["field"] = plotter.add_mesh(
-                warped, opacity=opts.opacity, show_edges=True, edge_color=fg, line_width=1, **common
+                warped, opacity=opts.opacity, show_edges=opts.show_edges, edge_color=fg, line_width=1, **common
             )
         elif finite.any():  # no complete cell (a thin region, a sparse field): the valid nodes, moved
             pts = np.asarray(grid.points)[finite] + opts.warp_scale * np.asarray(grid.point_data[DISPLACEMENT_ARRAY])[finite]

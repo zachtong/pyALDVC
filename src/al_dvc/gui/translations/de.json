@@ -570,5 +570,7 @@
   "{n} voxels analysed": "{n} Voxel analysiert",
   "{n} {kind} volume(s) added": "{n} {kind}-Volumen hinzugefügt",
   "{s:.0f} s": "{s:.0f} s",
-  "{what} saved: {path}": "{what} gespeichert: {path}"
+  "{what} saved: {path}": "{what} gespeichert: {path}",
+  "Edges": "Kanten",
+  "Draw the cell edges of the deformed lattice": "Zellkanten des verformten Gitters zeichnen"
 }
