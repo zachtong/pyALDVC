@@ -145,56 +145,7 @@ al-dvc texture scan/ref.tif                                            # correla
 al-dvc info scan/*.tif
 ```
 
-## 9. Python API
+## 9. Scripting
 
-```python
-import numpy as np
-from al_dvc import dvcpara_default, run_aldvc, load_volume
-from al_dvc.export import export_npz, export_vtk, export_report
-
-ref = load_volume("ref.tif")           # (nz, ny, nx) array, any dtype
-dfm = load_volume("deformed.tif")
-
-para = dvcpara_default(
-    winsize=32,            # subset size (voxels, per axis or scalar)
-    winstepsize=16,        # node spacing
-    voxel_size=(5.0, 5.0, 5.0), units="um",
-)
-result = run_aldvc(para, [ref, dfm])
-
-mesh = result.dvc_mesh                  # node coordinates (N, 3) = [x, y, z], grid_shape (nz, ny, nx)
-U = result.result_disp[0].U             # (N, 3) displacement in voxels
-U_std = result.result_disp[0].U_std     # (N, 3) per-node standard deviation (voxels), NaN where not converged
-E = result.result_strain[0]             # exx, eyy, ezz, exy, exz, eyz, principal, von_mises, ...
-exx_grid = mesh.to_grid(E.field("exx")) # (nz, ny, nx) grid, NaN where unreliable
-
-export_npz(result, "out/result.npz")
-export_vtk(result, "out/vtk")           # open out/vtk/aldvc.pvd in ParaView
-export_report(result, "out/report.pdf")
-```
-
-Masks (boolean volumes, `True` = material, one per frame) and multi-frame
-sequences. A frame's mask trims the reference subsets when the frame is the
-reference and, when it is the deformed frame, removes the voxels that the
-warped subsets would sample from it (a void that opens, a region that
-leaves the field of view):
-
-```python
-result = run_aldvc(para, [ref, f1, f2, f3], masks=[mask0, mask1, mask2, mask3])
-para_inc = dvcpara_default(winsize=32, winstepsize=16, reference_mode="incremental")
-```
-
-Long sequences can be checkpointed frame by frame and resumed after an
-interruption (`al-dvc run --checkpoint DIR`, or the `checkpoint` config key):
-
-```python
-result = run_aldvc(para, provider, checkpoint_dir="scan/checkpoints")  # reuses finished frames on rerun
-```
-
-Large sequences stream from disk with a bounded cache:
-
-```python
-from al_dvc.io import FileVolumeProvider
-provider = FileVolumeProvider(sorted(Path("scan").glob("*.tif")), voi=para.voi)
-result = run_aldvc(para, provider)
-```
+Everything the application does is also available from Python (`al_dvc.run_aldvc`) for
+automated studies; see `examples/tutorial_real_data.ipynb`.
