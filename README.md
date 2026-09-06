@@ -95,6 +95,37 @@ animation as GIF, MP4 or PNG frames.
   <img src="assets/screenshot_3d.png" alt="3-D view of the displacement field" width="46%"/>
 </p>
 
+### Case studies
+
+Screen recordings of the 3-D view (down-scaled GIFs; the MP4 originals are in
+[`assets/videos`](assets/videos)).
+
+**Synthetic rotation.** A speckle volume rotated in steps; the frames animation with
+"Smooth" plays the reference state and the frames as one continuous motion of the
+deformed lattice, coloured by displacement magnitude.
+
+<p align="center">
+  <img src="assets/videos/rotation_frame_animation.gif" alt="Synthetic rotation: frames animation with smooth deformation on the deformed lattice" width="90%"/>
+</p>
+
+**Hydrogel indentation (micro-CT, 306 x 1024 x 1024 voxels).** A real scan of a hydrogel
+pressed by an indenter, subset 33, step 16, on the GPU. Left: the deformed lattice with
+displacement arrows orbiting the camera; right: the frames animation with smooth
+deformation.
+
+<p align="center">
+  <img src="assets/videos/indentation_deformed_lattice_orbit_with_arrow.gif" alt="Hydrogel indentation: deformed lattice with displacement arrows, orbit" width="49%"/>
+  <img src="assets/videos/indentation_frame_smooth_animation.gif" alt="Hydrogel indentation: frames animation with smooth deformation" width="49%"/>
+</p>
+
+Slice sweeps of the displacement field through the same result along x, y and z:
+
+<p align="center">
+  <img src="assets/videos/indentation_sweep_x.gif" alt="Slice sweep along x" width="32%"/>
+  <img src="assets/videos/indentation_sweep_y.gif" alt="Slice sweep along y" width="32%"/>
+  <img src="assets/videos/indentation_sweep_z.gif" alt="Slice sweep along z" width="32%"/>
+</p>
+
 ### Texture analysis before the run
 
 How big should the subset be? The texture analysis window (Post-processing box or

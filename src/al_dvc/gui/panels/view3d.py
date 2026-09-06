@@ -730,25 +730,31 @@ class View3DPanel(QWidget):
         """Rebuild the scene from the state (no-op without results or pyvista)."""
         self._dirty = False
         res = self._state.results
-        if self.backend == "unavailable" or res is None or not res.result_disp or self._state.result_frame() is None:
+        opts = self._shown_options() if self.backend != "unavailable" and res is not None and res.result_disp else None
+        if opts is None:
             self._last_info = None
             self._last_options = None
             self._stack.setCurrentWidget(self._hint)
             self._hint.setText(self._hint_text())
             return
-        opts = self.options()
+        paused = self._play_base is not None and self._last_frame is not None
+        camera = self._last_frame.camera if paused else None
         volume = self._volume_for_scene()
         try:
             if self.backend == "interactive":
                 info = self._build_interactive(opts, volume)
-                if self._camera_reset_pending or self._live_state is None:
+                if camera is not None:
+                    apply_camera(self._interactor, camera)  # a paused animation stays where it was paused
+                elif self._camera_reset_pending or self._live_state is None:
                     self._apply_interactor_camera()
                 else:
                     apply_camera(self._interactor, self._live_state)  # adding actors must not move the user's camera
                 self._interactor.render()
                 self._stack.setCurrentWidget(self._interactor)
             else:
-                img, info = render_image(res, opts, volume, window_size=STATIC_SIZE, camera=self.camera_spec())
+                img, info = render_image(
+                    res, opts, volume, window_size=STATIC_SIZE, camera=camera if camera is not None else self.camera_spec()
+                )
                 self._last_image = img
                 self._show_image(img)
                 self._stack.setCurrentWidget(self._image)
@@ -760,6 +766,26 @@ class View3DPanel(QWidget):
         self._last_info = info
         self._set_status(info)
 
+    def _shown_options(self) -> SceneOptions | None:
+        """What the view shows when it is not animating: the paused animation frame if there is one, the
+        selected volume's result, the reference state for the reference volume, or nothing (``None``) for a
+        volume the run did not compute."""
+        st = self._state
+        if self._play_base is not None and self._last_frame is not None:
+            shown = self._last_frame.options
+            return replace(
+                self.options(),
+                frame=shown.frame,
+                blend=shown.blend,
+                slice_index=dict(shown.slice_index),
+                warp_scale=shown.warp_scale,
+            )
+        if st.result_frame() is not None:
+            return self.options()
+        if st.volumes and st.current_frame == 0:
+            return replace(self.options(), frame=-1)  # the reference volume: undeformed lattice, zero field
+        return None
+
     def _build_interactive(self, opts: SceneOptions, volume) -> SceneInfo:
         self._interactor.subplot(0, 0)
         info = build_scene(self._interactor, self._state.results, opts, volume)
@@ -770,6 +796,8 @@ class View3DPanel(QWidget):
     def _set_status(self, info: SceneInfo) -> None:
         lo, hi = info.clim
         parts = [f"{field_name(info.field)}: {info.n_finite}/{info.n_nodes} nodes, [{lo:.4g}, {hi:.4g}]"]
+        if self._last_options is not None and self._last_options.frame < 0 and self._play_base is None:
+            parts.insert(0, self.tr("reference state (no displacement)"))
         if info.n_arrows:
             parts.append(self.tr("{n} arrows").format(n=info.n_arrows))
         if info.note == "nodes_only":

@@ -7,6 +7,9 @@ All notable changes to pyALDVC are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- 3-D view went blank after an animation was paused on the reference state or when the
+  reference volume was selected; it now shows the paused frame, or the undeformed lattice
+  for the reference volume, instead of a hint.
 - 3-D view crashed the application (access violation inside VTK) on large scans when
   the volume slices were on and the scene was rebuilt, for example by the frames
   animation or a mode change. The orientation axes widget was destroyed and
