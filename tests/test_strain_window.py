@@ -87,7 +87,8 @@ def test_strain_window_computes_and_publishes(qapp, pair):
     assert abs(np.nanmedian(exx) - 0.01) < 2e-3  # the synthetic stretch is recovered
     assert window.results_panel.field.count() > len(fields)  # the main window sees the strain too
     assert not sw.is_stale
-    sw.halfwidth.setValue(2)
+    sw.fit_window.setValue(5)  # 5 x 5 x 5: half-width 2
+    assert sw.strain_para().strain_plane_fit_halfwidth == (2, 2, 2)
     assert sw.is_stale
     sw.frame_slider.setValue(0)
     sw.layout_combo.setCurrentIndex(2)
