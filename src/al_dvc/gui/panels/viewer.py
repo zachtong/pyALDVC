@@ -337,6 +337,7 @@ class SliceViewer(QWidget):
             self.cax.set_visible(True)
             # the bar is drawn from its own mappable: the overlay's alpha would wash the colours out
             bar_mappable = ScalarMappable(norm=Normalize(vmin=vmin, vmax=vmax), cmap=self._state.colormap)
+            self.cax.set_axes_locator(None)  # every colorbar wraps the locator again: nested wrappers recurse
             self._cbar = self.figure.colorbar(bar_mappable, cax=self.cax)
             # the unit belongs to the result (its values were scaled with the result's voxel size), not to the
             # editable parameters of the next run

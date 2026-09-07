@@ -108,7 +108,9 @@ def test_animation_spec_and_frames(result):
     f = frame_at(AnimationSpec(kind="frames", speed=1.0, smooth=True), 0.25, base_cam, base0, n, shape)
     assert f.options.frame == 0 and f.options.blend == pytest.approx(0.25)
     f = frame_at(AnimationSpec(kind="frames", speed=1.0, smooth=True), 0.25, base_cam, base, n, shape)
-    assert f.options.frame == n - 1 and f.options.blend == 0.0  # the last frame is held, no blend back to the start
+    assert f.options.frame == -1 and f.options.blend == pytest.approx(0.25)  # past the last frame: restart at once
+    f = frame_at(AnimationSpec(kind="frames", speed=1.0, smooth=True), 0.999, base_cam, base0, n, shape)
+    assert f.options.frame == 0 and f.options.blend == pytest.approx(0.999)  # the deformation into frame 1 nearly done
     # slice: sweeps the chosen axis through the volume and wraps
     f = frame_at(AnimationSpec(kind="slice", axis="z", speed=20.0), 1.0, base_cam, base, n, shape)
     assert f.options.slice_index["z"] == (10 + 20) % shape[0] and f.options.slice_index["x"] == 5
@@ -245,6 +247,7 @@ def test_panel_camera_controls_playback_and_recording(result, tmp_path):
     assert np.array_equal(panel._last_image, before)
     # the frames animation moves the application's current frame, and stop brings it back
     select_key(panel.anim_kind, "frames")
+    panel.anim_smooth.setChecked(False)  # plain frame steps: one slot per frame
     panel.anim_speed.setValue(2.0)
     start_frame = window.state.current_frame
     panel.toggle_play()

@@ -277,6 +277,7 @@ def draw_field_planes(
     cax.clear()
     cax.set_visible(True)
     fig = axes[0].figure
+    cax.set_axes_locator(None)  # a reused colorbar axes: matplotlib would wrap the locator again on every draw
     cbar = fig.colorbar(mappable, cax=cax)
     units = label_units if label_units is not None else getattr(result.dvc_para, "units", "voxel")
     cbar.set_label(field_label(field, units), color=style.text, fontsize=8)

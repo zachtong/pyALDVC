@@ -121,14 +121,18 @@ def frame_at(spec: AnimationSpec, t: float, base_camera, base_options: SceneOpti
             camera = replace(base_camera, view_up=spec.axis, azimuth=(base_camera.azimuth + angle) % 360.0)
     elif spec.kind == "frames":
         n = max(1, int(n_result_frames))
-        length = n + 1  # the reference state (frame -1, no displacement) followed by the result frames
         start = int(base_options.frame) + 1  # sequence index of the frame the animation started from
-        pos = (start + spec.direction * spec.speed * t) % length
-        k = int(np.floor(pos))
-        # fraction of the way to the next frame; the last frame is held, then the loop restarts at the
-        # reference state (no interpolation from the final deformation back to zero)
-        blend = float(pos - k) if spec.smooth and k < length - 1 else 0.0
-        options = replace(base_options, frame=k - 1, blend=blend)
+        if spec.smooth:
+            # n transitions: reference -> frame 0 -> ... -> frame n-1; position k + f is f of the way through the
+            # transition into frame k, and the loop restarts at the reference state the moment the last
+            # deformation is complete (no hold, no interpolation back to zero)
+            pos = (start + spec.direction * spec.speed * t) % n
+            k = int(np.floor(pos))
+            options = replace(base_options, frame=k - 1, blend=float(pos - k))
+        else:
+            length = n + 1  # the reference state (frame -1, no displacement) followed by the result frames
+            pos = (start + spec.direction * spec.speed * t) % length
+            options = replace(base_options, frame=int(np.floor(pos)) - 1, blend=0.0)
     else:  # slice
         nz, ny, nx = (int(v) for v in shape)
         length = {"x": nx, "y": ny, "z": nz}[spec.axis]
