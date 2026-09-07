@@ -117,6 +117,8 @@ def test_volume_slice_planes_subsample_large_slice():
     w, h = planes["xy"][1].dimensions
     assert w * h <= view3d_scene.VOLUME_SLICE_MAX_PIXELS
     assert planes["xy"][0].bounds == pytest.approx((0, 2499, 0, 2499, 0, 0))  # the quad still spans the slice
+
+
 def test_auto_clim_and_option_validation():
     assert auto_clim(np.array([np.nan, np.nan])) == (0.0, 1.0)
     lo, hi = auto_clim(np.array([1.0, 1.0, 1.0]))

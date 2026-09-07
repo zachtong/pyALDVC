@@ -595,9 +595,7 @@ class StrainWindow(QMainWindow):
             return  # the progress messages own the status line
         res = self._state.results
         self._btn_export.setToolTip(
-            self.tr("The strain shown was computed with previous settings; compute again before exporting")
-            if self._stale
-            else ""
+            self.tr("The strain shown was computed with previous settings; compute again before exporting") if self._stale else ""
         )
         if res is None or not res.result_disp:
             self._status.setText(self.tr("No displacement results yet: run an analysis first."))

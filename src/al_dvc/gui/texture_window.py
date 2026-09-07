@@ -224,6 +224,7 @@ class TextureWindow(QMainWindow):
     """Region, representative volume element, autocorrelation; lengths and subset suggestion always in view."""
 
     TAB_REGION, TAB_SWEEP, TAB_ACF = TAB_REGION, TAB_SWEEP, TAB_ACF
+    guide_requested = Signal()  # the built-in guide (opened by the main window, shared with the Help menu)
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -248,7 +249,14 @@ class TextureWindow(QMainWindow):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
         self.steps = _StepStrip()
-        root.addWidget(self.steps)
+        self._btn_guide = QPushButton()
+        self._btn_guide.setProperty("class", "btn-primary")
+        self._btn_guide.setMinimumHeight(34)
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        top.addWidget(self.steps, 1)
+        top.addWidget(self._btn_guide)
+        root.addLayout(top)
         body = QHBoxLayout()
         body.setSpacing(8)
         root.addLayout(body, 1)
@@ -401,9 +409,26 @@ class TextureWindow(QMainWindow):
         self._sweep_box.setObjectName("analysisBox")
         vbox = QVBoxLayout(self._sweep_box)
         vbox.setSpacing(4)
-        self._sweep_status = QLabel()
-        self._sweep_status.setWordWrap(True)
-        vbox.addWidget(self._sweep_status)
+        self._sweep_headline = QLabel()
+        self._sweep_headline.setWordWrap(True)
+        self._sweep_headline.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {COLORS.TEXT_PRIMARY};")
+        vbox.addWidget(self._sweep_headline)
+        sgrid = QGridLayout()
+        sgrid.setHorizontalSpacing(12)
+        sgrid.setVerticalSpacing(2)
+        self._sweep_values: dict[float, QLabel] = {}
+        self.labels["stable_length"] = form_label()
+        sgrid.addWidget(self.labels["stable_length"], 0, 1)
+        for r, t in enumerate(THRESHOLDS, start=1):
+            name = QLabel(THRESHOLD_LABELS.get(float(t), f"{t:.2f}"))
+            name.setStyleSheet("font-weight: bold;")
+            value = QLabel("-")
+            sgrid.addWidget(name, r, 0)
+            sgrid.addWidget(value, r, 1)
+            self._sweep_values[float(t)] = value
+        sgrid.setColumnStretch(2, 1)
+        vbox.addLayout(sgrid)
+        self._sweep_status = _hint(vbox)
         self._btn_use_size = QPushButton()
         self._btn_use_size.setProperty("class", "btn-primary")
         self._btn_use_size.setEnabled(False)
@@ -503,6 +528,7 @@ class TextureWindow(QMainWindow):
 
         # ---- wiring ----------------------------------------------------------
         self.steps.clicked.connect(self.go_to_step)
+        self._btn_guide.clicked.connect(self.guide_requested.emit)
         self.tabs.currentChanged.connect(self.go_to_step)
         self._next["region"].clicked.connect(lambda: self.go_to_step(TAB_SWEEP))
         self._next["sweep"].clicked.connect(lambda: self.go_to_step(TAB_ACF))
@@ -1099,25 +1125,26 @@ class TextureWindow(QMainWindow):
             return
         sweep = self.sweep
         if sweep is None or not sweep.levels:
-            self._sweep_status.setText(self.tr("No RVE analysis yet."))
+            self._sweep_headline.setText(self.tr("Not run yet"))
+            for value in self._sweep_values.values():
+                value.setText("-")
+            self._sweep_status.setText("")
             self._btn_use_size.setText(self.tr("Use the stable size as the window"))
             return
         size = self.sweep_size()
-        text = (
-            self.tr("The correlation length is stable from {size} voxel: use that as the window.").format(size=size)
-            if size is not None
-            else self.tr("No stable size in this region: enlarge the region or reduce the first size.")
+        self._sweep_headline.setText(
+            self.tr("Window: {size} voxel").format(size=size) if size is not None else self.tr("No stable size")
         )
-        values = []
-        for t in THRESHOLDS:
-            d = sweep.decisions.get(float(t))
+        for t, value in self._sweep_values.items():
+            d = sweep.decisions.get(t)
             if d is not None and d.converged:
-                values.append(f"{THRESHOLD_LABELS.get(float(t), f'{t:.2f}')}: {d.reference:.2f} ± {d.tolerance:.2f}")
-        if values:
-            text += " " + self.tr("Stable lengths [voxel]: {values}.").format(values="; ".join(values))
+                value.setText(f"{d.reference:.2f} ± {d.tolerance:.2f}")
+            else:
+                value.setText(self.tr("not stable"))
+        note = "" if size is not None else self.tr("Enlarge the region or reduce the first size.")
         if self.is_sweep_stale:
-            text += " " + self.tr("(from a previous input: run again)")
-        self._sweep_status.setText(text)
+            note = (note + " " if note else "") + self.tr("From a previous input: run again.")
+        self._sweep_status.setText(note)
         self._btn_use_size.setText(
             self.tr("Use {size} voxel as the window → step 3").format(size=size)
             if size is not None
@@ -1229,6 +1256,7 @@ class TextureWindow(QMainWindow):
         th = self._theme()
         fig.clear()
         fig.set_facecolor(th["face"])
+        fig.set_layout_engine("constrained")  # makes room for the legends outside the axes
         ax_curves, ax_len = fig.subplots(2, 1, gridspec_kw={"hspace": 0.32})
         self._style(ax_curves, th)
         self._style(ax_len, th)
@@ -1258,7 +1286,8 @@ class TextureWindow(QMainWindow):
                 fontsize=FONT["note"],
                 frameon=False,
                 labelcolor=th["text"],
-                loc="upper right",
+                loc="upper left",
+                bbox_to_anchor=(1.01, 1.0),
                 ncol=2 if n > 8 else 1,
                 title=self.tr("window [voxel]"),
                 title_fontsize=FONT["note"],
@@ -1272,7 +1301,6 @@ class TextureWindow(QMainWindow):
                     fontsize=FONT["note"],
                     color=th["text"],
                 )
-            verdicts = []
             for t in THRESHOLDS:
                 d = sweep.decisions[float(t)]
                 label = THRESHOLD_LABELS.get(float(t), f"{t:.2f}")
@@ -1281,29 +1309,13 @@ class TextureWindow(QMainWindow):
                     ax_len.axvline(sizes[d.start_index], color=line.get_color(), ls="--", lw=1.1)
                     ax_len.axhspan(d.reference - d.tolerance, d.reference + d.tolerance, color=line.get_color(), alpha=0.08)
                     ax_len.axhline(d.reference, color=line.get_color(), ls=":", lw=1.0, alpha=0.9)
-                    verdicts.append(
-                        self.tr("{name}: stable from {size} voxel, length {value} ± {tol} voxel").format(
-                            name=label, size=sizes[d.start_index], value=f"{d.reference:.2f}", tol=f"{d.tolerance:.2f}"
-                        )
-                    )
-                else:
-                    verdicts.append(self.tr("{name}: not stable ({why})").format(name=label, why=d.reason))
-            ax_len.legend(fontsize=FONT["legend"], frameon=False, labelcolor=th["text"], loc="upper right")
-            ax_len.text(
-                0.02,
-                0.02,
-                "\n".join(verdicts),
-                ha="left",
-                va="bottom",
-                fontsize=FONT["note"],
-                color=th["text"],
-                transform=ax_len.transAxes,
+            ax_len.legend(
+                fontsize=FONT["legend"], frameon=False, labelcolor=th["text"], loc="upper left", bbox_to_anchor=(1.01, 1.0)
             )
         ax_curves.set_xlabel(self.tr("shift [voxel]"))
         ax_curves.set_ylabel(self.tr("radial autocorrelation"))
         ax_len.set_xlabel(self.tr("window edge [voxel]"))
         ax_len.set_ylabel(self.tr("correlation length [voxel]"))
-        fig.tight_layout()
         self.canvas_sweep.draw_idle()
 
     # ------------------------------------------------------------------ export
@@ -1399,6 +1411,7 @@ class TextureWindow(QMainWindow):
             "sweep_start": self.tr("First size [voxel]"),
             "sweep_step": self.tr("Size step [voxel]"),
             "box": self.tr("Bounding box [voxel]"),
+            "stable_length": self.tr("Stable length [voxel]"),
         }
         for key, lab in self.labels.items():
             lab.setText(texts[key])
@@ -1429,6 +1442,8 @@ class TextureWindow(QMainWindow):
         self._btn_json.setText(self.tr("Save summary as JSON..."))
         self._btn_png.setText(self.tr("Save image as PNG..."))
         self._btn_reset_view.setText(self.tr("Reset view"))
+        self._btn_guide.setText(self.tr("How it works"))
+        self._btn_guide.setToolTip(self.tr("The guide: why a region, what the autocorrelation measures, why the RVE"))
         self._btn_reset_view.setToolTip(
             self.tr("Undo zooming and panning (drag with the toolbar's magnifier or hand to zoom or pan)")
         )

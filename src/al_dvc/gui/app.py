@@ -14,7 +14,7 @@ import time
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSettings, Qt, QThread, QTimer
+from PySide6.QtCore import QEvent, QPoint, QSettings, Qt, QThread, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -262,7 +262,7 @@ class MainWindow(QMainWindow):
             if key == "stop":
                 self._menus["analysis"].addSeparator()
         self._menus["help"] = bar.addMenu("")
-        for key, slot in [("self_test", self._on_self_test), ("about", self._on_about)]:
+        for key, slot in [("texture_guide", self._on_guide), ("self_test", self._on_self_test), ("about", self._on_about)]:
             act = QAction(self)
             act.triggered.connect(slot)
             self._actions[key] = act
@@ -453,8 +453,9 @@ class MainWindow(QMainWindow):
 
         window = getattr(self, "strain_window", None)
         if window is None:
-            window = StrainWindow(self.state, self)
+            window = StrainWindow(self.state)  # no parent: an independent window, not pinned above this one
             self.strain_window = window
+            self._place_window(window)
             window.export_requested.connect(lambda: self.open_export_dialog(preselect_strain=True))
         window.show()
         window.raise_()
@@ -470,8 +471,10 @@ class MainWindow(QMainWindow):
 
         window = getattr(self, "texture_window", None)
         if window is None:
-            window = TextureWindow(self.state, self)
+            window = TextureWindow(self.state)
             self.texture_window = window
+            window.guide_requested.connect(self.open_guide_window)
+            self._place_window(window)
         window.show()
         window.raise_()
         window.activateWindow()
@@ -479,6 +482,28 @@ class MainWindow(QMainWindow):
 
     def _on_texture(self) -> None:
         self.open_texture_window()
+
+    def open_guide_window(self):
+        """The (single) texture analysis guide, created on first use and raised afterwards."""
+        from .guide_window import GuideWindow
+
+        window = getattr(self, "guide_window", None)
+        if window is None:
+            window = GuideWindow()
+            self.guide_window = window
+            self._place_window(window)
+        window.show()
+        window.raise_()
+        window.activateWindow()
+        return window
+
+    def _on_guide(self) -> None:
+        self.open_guide_window()
+
+    def _place_window(self, window) -> None:
+        """A new independent window opens offset from this one, with the dark title bar."""
+        enable_dark_title_bar(window)
+        window.move(self.pos() + QPoint(48, 48))
 
     def open_export_dialog(self, preselect_strain: bool = False):
         """The (single) export dialog, created on first use and raised afterwards."""
@@ -601,6 +626,9 @@ class MainWindow(QMainWindow):
             texture = getattr(self, "texture_window", None)
             if texture is not None:
                 texture.retranslate_ui()
+            guide = getattr(self, "guide_window", None)
+            if guide is not None:
+                guide.retranslate_ui()
             dialog = getattr(self, "export_dialog", None)
             if dialog is not None:
                 dialog.retranslate_ui()
@@ -667,6 +695,10 @@ class MainWindow(QMainWindow):
             )
             event.ignore()
             return
+        for attr in ("strain_window", "texture_window", "guide_window"):  # independent windows close with this one
+            sub = getattr(self, attr, None)
+            if sub is not None:
+                sub.close()
         event.accept()
 
     def retranslate_ui(self) -> None:
@@ -699,6 +731,7 @@ class MainWindow(QMainWindow):
             "strain": self.tr("Strain post-processing..."),
             "texture": self.tr("Texture analysis..."),
             "export": self.tr("Export results..."),
+            "texture_guide": self.tr("Texture analysis guide..."),
             "self_test": self.tr("Run self-test"),
             "about": self.tr("About pyALDVC"),
         }
