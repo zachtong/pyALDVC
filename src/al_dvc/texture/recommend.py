@@ -1,10 +1,12 @@
 """Subset and step suggestions from the correlation lengths: a starting point, not a rule.
 
 The subset along an axis is set to ``factor`` times the 1/e correlation length along that
-axis (2.5 by default), so it spans a few independent features; the step is a fraction of the
+axis (4 by default), so it spans several independent features; the step is a fraction of the
 subset. A periodic texture pushes the subset above one period, a high noise floor is reported.
-The report validates the factor on synthetic pairs; the user sees the lengths the suggestion
-came from and can change every number.
+The factor is a recommended start, not a guarantee: the report only shows that the error keeps
+falling up to about four on a synthetic pair; a noisy scan may need more, a finely varying
+displacement field less. The user sees the lengths the suggestion came from and can change
+every number.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from .acf import AXES
 from .analysis import TextureResult
 from .crossing import THRESHOLDS
 
-DEFAULT_FACTOR = 2.5
+DEFAULT_FACTOR = 4.0
 MIN_EDGE = 8
 MAX_EDGE = 128
 STEP_FRACTION = 0.5

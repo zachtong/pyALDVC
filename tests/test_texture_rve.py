@@ -119,9 +119,9 @@ def test_recommendation_follows_the_directional_lengths():
     aniso = gaussian_filter(rng.normal(size=(64, 64, 64)), sigma=(4.0, 1.5, 1.5))  # long along z
     res = analyse_texture(aniso, max_lag=20)
     rec = recommend_parameters(res)
-    assert rec.factor == 2.5 and all(e % 2 == 0 for e in rec.subset) and all(s % 2 == 0 for s in rec.step)
+    assert rec.factor == 4.0 and all(e % 2 == 0 for e in rec.subset) and all(s % 2 == 0 for s in rec.step)
     assert rec.subset[2] > rec.subset[0] and rec.subset[0] == rec.subset[1]
-    assert rec.subset[2] >= 2.5 * res.length("z") - 2 and rec.step[2] == max(2, rec.subset[2] // 2 + rec.subset[2] // 2 % 2)
+    assert rec.subset[2] >= 4.0 * res.length("z") - 2 and rec.step[2] == max(2, rec.subset[2] // 2 + rec.subset[2] // 2 % 2)
     assert rec.basis["z"] == res.length("z")
     big = recommend_parameters(res, factor=40.0)
     assert big.subset[2] == 128 and all(8 <= e <= 128 for e in big.subset)  # clamped to the largest edge

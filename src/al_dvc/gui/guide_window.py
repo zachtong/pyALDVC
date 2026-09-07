@@ -180,12 +180,17 @@ class GuideWindow(QMainWindow):
         t["subset_head"].setText(self.tr("Step 3: from the length to the subset"))
         t["subset_body"].setText(
             self.tr(
-                "A subset must span several correlation lengths on every axis, so it always holds enough texture: the "
-                "suggestion is 2.5 times the 1/e length per axis, rounded to an odd number of voxels, with a step of half "
-                "the subset. Apply writes both into the DVC parameters."
+                "A subset must span several correlation lengths on every axis, so it always holds enough texture. The "
+                "suggestion is 4 times the 1/e length per axis (the factor can be changed in step 3), rounded to an odd "
+                "number of voxels, with a step of half the subset. It is a recommended start, not a guarantee: a noisy "
+                "scan may need a larger subset, a finely varying displacement field a smaller one. Check the run and "
+                "adjust. Apply writes both into the DVC parameters."
             )
         )
-        t["subset_formula"].setText("subset ≈ 2.5 · L(1/e)   step ≈ subset / 2")
+        t["subset_formula"].setText(
+            "subset ≈ 4 · L(1/e)   step ≈ subset / 2"
+            "<br><span style='color:#94a3b8; font-size:12px;'>" + self.tr("recommended start, not a guarantee") + "</span>"
+        )
         t["subset_caption"].setText(
             self.tr("The 1/e length on the texture, the subset it suggests and the step to the next subset.")
         )

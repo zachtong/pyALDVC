@@ -6,7 +6,7 @@ Output (``src/al_dvc/gui/assets/guide/``):
   by the shift h while the curve rho(h) is traced; the region edge stops the copy.
 * ``rve_sweep.gif``      -- the RVE analysis: windows of growing size, all centred in the region and
   analysed with the same shifts, and the correlation length settling with the size.
-* ``subset.png``         -- from the 1/e length to the subset: subset = 2.5 x L(1/e), step = subset / 2.
+* ``subset.png``         -- from the 1/e length to the subset: subset = factor x L(1/e), step = subset / 2.
 
 Everything is 2-D for legibility; the GUI does the same in 3-D. Run from the repository root::
 
@@ -26,6 +26,7 @@ from matplotlib.animation import FuncAnimation, PillowWriter  # noqa: E402
 from matplotlib.patches import FancyArrowPatch, Rectangle  # noqa: E402
 from scipy.ndimage import gaussian_filter  # noqa: E402
 
+from al_dvc.texture.recommend import DEFAULT_FACTOR  # noqa: E402
 from al_dvc.texture.rve import DEFAULT_MIN_SPAN, DEFAULT_TOLERANCE_ABS, DEFAULT_TOLERANCE_REL, decide_plateau  # noqa: E402
 
 OUT = Path(__file__).resolve().parents[1] / "src" / "al_dvc" / "gui" / "assets" / "guide"
@@ -266,7 +267,7 @@ def make_subset(tex: np.ndarray) -> None:
     shifts = np.arange(0, 25)
     rho = np.array([rho_2d(tex, region, window, int(h), 0) for h in shifts])
     L = length_1e(rho, shifts.astype(float))
-    subset = 2.5 * L
+    subset = DEFAULT_FACTOR * L
     step = subset / 2
 
     fig, (ax_img, ax_curve) = plt.subplots(
@@ -291,7 +292,9 @@ def make_subset(tex: np.ndarray) -> None:
     ax_img.add_patch(Rectangle((-half + step, -half), subset, subset, fill=False, ec=WINDOW, lw=1.2, ls="--"))
     ax_img.plot([-half, -half + L], [-half - 3, -half - 3], color=THRESHOLD, lw=3, solid_capstyle="butt")
     ax_img.text(-half + L + 1.5, -half - 3, "L(1/e)", color=THRESHOLD, fontsize=9, ha="left", va="center")
-    ax_img.set_title(f"subset = 2.5 × L = {subset:.0f} voxel,  step = subset / 2 = {step:.0f}", color=WINDOW, fontsize=9)
+    ax_img.set_title(
+        f"subset = {DEFAULT_FACTOR:g} × L = {subset:.0f} voxel,  step = subset / 2 = {step:.0f}", color=WINDOW, fontsize=9
+    )
     ax_img.set_xlim(-crop - 0.5, crop - 0.5)
     ax_img.set_ylim(-crop - 0.5, crop - 0.5)
 

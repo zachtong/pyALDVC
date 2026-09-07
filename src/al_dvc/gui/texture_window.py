@@ -70,11 +70,12 @@ from al_dvc.texture import (
     sweep_concentric,
     sweep_sizes_concentric,
 )
+from al_dvc.texture.recommend import DEFAULT_FACTOR
 
 from .app_state import AppState
 from .region_viewer import REGION_COLOR, RegionViewer
 from .theme import COLORS
-from .widgets import CollapsibleSection, combo, form_label, guard_wheel, headless, make_form, spin
+from .widgets import CollapsibleSection, combo, dspin, form_label, guard_wheel, headless, make_form, spin
 
 logger = logging.getLogger(__name__)
 
@@ -453,6 +454,12 @@ class TextureWindow(QMainWindow):
         lab = form_label()
         self.labels["window_size"] = lab
         form.addRow(lab, self.window_size)
+        self.factor = dspin(1.5, 8.0, 1)
+        self.factor.setSingleStep(0.5)
+        self.factor.setValue(DEFAULT_FACTOR)
+        lab = form_label()
+        self.labels["factor"] = lab
+        form.addRow(lab, self.factor)
         lay.addLayout(form)
         self._window_source = _hint(lay)
         self._btn_analyse = QPushButton()
@@ -548,6 +555,7 @@ class TextureWindow(QMainWindow):
         for w in (*self.range_lo.values(), *self.range_hi.values()):
             w.valueChanged.connect(lambda _v: self._on_box_spins())
         self.window_size.valueChanged.connect(lambda _v: self._on_window_changed())
+        self.factor.valueChanged.connect(lambda _v: self._on_factor_changed())
         for w in (self.sweep_start, self.sweep_step):
             w.valueChanged.connect(lambda _v: self._refresh_validity())
         self.plot_background.currentIndexChanged.connect(lambda _i: self._redraw())
@@ -944,7 +952,7 @@ class TextureWindow(QMainWindow):
         self.result = result
         self._result_source = self._job_source
         self._previous_note = ""
-        self.recommendation = recommend_parameters(result) if result.status == "ok" else None
+        self.recommendation = self._recommend(result)
         self._progress.setValue(1000)
         self._settle()
         self._fill_table()
@@ -1028,6 +1036,19 @@ class TextureWindow(QMainWindow):
         self._state.log(self.tr("Window set to {edge} voxel from the RVE analysis").format(edge=edge))
         self.go_to_step(TAB_ACF)
 
+    def _recommend(self, result):
+        """The subset suggestion for ``result`` with the factor of step 3 (``None`` without texture)."""
+        if result is None or result.status != "ok":
+            return None
+        return recommend_parameters(result, factor=float(self.factor.value()))
+
+    def _on_factor_changed(self) -> None:
+        """A new factor re-derives the suggestion from the existing analysis; nothing is recomputed."""
+        if self._updating or self._is_running():
+            return
+        self.recommendation = self._recommend(self.result)
+        self._refresh_validity()
+
     def apply_recommendation(self) -> None:
         rec = self.recommendation
         if rec is None:
@@ -1085,7 +1106,11 @@ class TextureWindow(QMainWindow):
                 ws=" x ".join(str(e + 1) for e in rec.subset), st=" x ".join(str(s) for s in rec.step)
             )
         )
-        notes = [self.tr("{factor} x the 1/e correlation length per axis").format(factor=f"{rec.factor:g}")]
+        notes = [
+            self.tr("{factor} x the 1/e length per axis: a recommended start, not a guarantee. Check the run and adjust.").format(
+                factor=f"{rec.factor:g}"
+            )
+        ]
         notes += list(rec.notes)
         if self.is_stale:
             notes.append(self.tr("From a previous input: the reference, region, window or calibration changed."))
@@ -1412,6 +1437,7 @@ class TextureWindow(QMainWindow):
             "sweep_step": self.tr("Size step [voxel]"),
             "box": self.tr("Bounding box [voxel]"),
             "stable_length": self.tr("Stable length [voxel]"),
+            "factor": self.tr("Subset / L(1/e)"),
         }
         for key, lab in self.labels.items():
             lab.setText(texts[key])
@@ -1419,6 +1445,12 @@ class TextureWindow(QMainWindow):
             self.tr(
                 "Edge of the cubic window compared with its shifted copies. The shifts reach (region - window) / 2 "
                 "on every axis, so a larger window inside the same region sees shorter shifts."
+            )
+        )
+        self.labels["factor"].setToolTip(
+            self.tr(
+                "Subset edge per axis as a multiple of the 1/e correlation length. 4 is the recommended start, not a "
+                "guarantee: a noisy scan may need more, a finely varying displacement field less."
             )
         )
         self.labels["sweep_start"].setToolTip(self.tr("Edge of the smallest window analysed"))
