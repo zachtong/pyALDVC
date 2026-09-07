@@ -71,8 +71,10 @@ sampled subset; the existing rejection at `numba_kernels.py:271` applies unchang
 `n_valid` becomes the kept count. No new status code in phase 1; a per-node `split_fraction`
 diagnostic says what happened.
 
-D6. **Default off.** `DVCPara.subset_split = False`; existing results, sessions and the MATLAB
-agreement do not change unless the user turns it on.
+D6. **Default on** (changed 2026-09-07 after the measurements). `DVCPara.subset_split = True`.
+A run without a region of interest is unaffected, so the MATLAB cross-validation is unchanged; a run
+with a mask now keeps its boundaries by default. The split is skipped, with a warning, when the packed
+rows would exceed `MAX_SPLIT_BYTES`.
 
 D7. **The global step is a separate phase, cut per element the way pyALDIC does it.** Splitting
 changes which voxels a node correlates, not `node_valid`; the FEM and FD operators would still

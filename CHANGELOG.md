@@ -7,7 +7,7 @@ All notable changes to pyALDVC are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- Subset splitting at boundaries (`subset_split`, off by default): a subset whose window
+- Subset splitting at boundaries (`subset_split`, on by default): a subset whose window
   contains masked voxels keeps only the 6-connected in-mask component around its centre, so
   a subset next to a hole, the region edge or a crack no longer mixes the two sides. Same
   rule for every boundary, computed once per reference at full resolution and stored as
@@ -22,7 +22,10 @@ All notable changes to pyALDVC are documented here. The format follows
   to 0.02 voxel (`reports/subset_split.pdf`). Check box "Split at boundaries" in the
   advanced parameters. All three backends (numba, NumPy reference, CUDA) share the same
   gate, and the initial guess of a cut subset is taken from its own side of the boundary
-  instead of the integer search, whose template still spans it.
+  instead of the integer search, whose template still spans it. A run without a region of
+  interest is unchanged; a run with one now honours its boundaries by default, so its
+  displacement next to a hole, an edge or a crack differs from 0.6.0. The split is skipped
+  with a warning when the packed keep rows would need more than 512 MB.
 
 ## [0.6.0] - 2026-09-07
 

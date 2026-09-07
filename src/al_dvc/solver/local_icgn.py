@@ -32,6 +32,8 @@ from .interp_kernels import INTERP_MODE_BY_NAME
 
 logger = logging.getLogger(__name__)
 
+MAX_SPLIT_BYTES = 512 * 1024 * 1024  # packed keep rows: beyond this the split is skipped for the run
+
 
 @dataclass
 class LocalContext:
@@ -140,6 +142,17 @@ def split_rows(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara, coords_int, h
     split_index = np.full(N, -1, dtype=np.int64)
     if cand.size == 0:
         return split_index, np.zeros((1, 1), dtype=np.uint8), np.zeros(0, np.int64), np.zeros(0, np.int64)
+    n_sampled = int(np.prod([(2 * h) // stride + 1 for h in half]))
+    need = cand.size * ((n_sampled + 7) // 8)
+    if need > MAX_SPLIT_BYTES:
+        logger.warning(
+            "Subset splitting off for this reference: %d subsets touch a boundary and their keep rows would need "
+            "%.1f GB (limit %.1f GB). Use a larger step, a smaller subset or subset_stride.",
+            cand.size,
+            need / 1e9,
+            MAX_SPLIT_BYTES / 1e9,
+        )
+        return None
     # on-the-fly gradients read a 3-voxel stencil around every kept voxel: keep those away from the faces
     margin = 0 if ref.gx.shape == ref.f.shape else 3
     rows, n_keep, n_inmask = build_split_rows(coords_int, cand, *half, stride, ref.mask, margin)

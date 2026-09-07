@@ -341,7 +341,8 @@ loop except one `S`-sized scratch buffer per node), `scipy.fft` with
   shapes, dtypes, NaN/Inf, VOI in bounds, `winsize` vs volume size,
   `winstepsize` vs `winsize`, mask coverage.
 * Node validity from the mask and subset coverage (`min_valid_ratio`);
-* Subset splitting at boundaries (`subset_split`, off by default): a subset whose
+* Subset splitting at boundaries (`subset_split`, on by default; without a mask
+  nothing is split): a subset whose
   window holds masked voxels keeps the 6-connected in-mask component around its
   centre (flood fill at full resolution, packed keep bits for the affected nodes
   only, `docs/plans/2026-09-07-subset-splitting.md`); the hex8 mesh drops every

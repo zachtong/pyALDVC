@@ -458,8 +458,8 @@ class ParamPanel(QWidget):
             "min_valid_ratio": self.tr("Minimum fraction of a subset inside the region of interest for the node to be solved."),
             "subset_split": self.tr(
                 "A subset that touches a hole, the region edge or a crack keeps only the part connected to its centre, and "
-                "the node grid is cut there too, so nothing reaches across a boundary. Off: the whole in-mask subset is used "
-                "and the grid stays connected."
+                "the node grid is cut there too, so nothing reaches across a boundary. Without a region of interest nothing "
+                "is split. Off: the whole in-mask subset is used and the grid stays connected."
             ),
         }
         for key, tip in tips.items():

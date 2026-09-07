@@ -83,8 +83,9 @@ class DVCPara:
         True  # stop one iteration early when the contracting steps predict the next one below icgn_dp_tol
     )
     min_valid_ratio: float = 0.5  # min fraction of mask-valid voxels per subset
-    subset_split: bool = False  # a subset that touches a boundary keeps only the connected part around its
-    # centre (window splitting); the fraction above then applies to that part
+    subset_split: bool = True  # a subset that touches a boundary keeps only the connected part around its
+    # centre (window splitting), and the node grid is cut there; the fraction above then applies to that part.
+    # Without a mask nothing is split and the run is unchanged.
     local_outlier_threshold: float = 2.0  # median test after the local pass (0 disables); MATLAB default.
     # Flags ~10-15 % of nodes on noisy anisotropic scans, which
     # measurably lowers the local error there (see docs/design.md)
