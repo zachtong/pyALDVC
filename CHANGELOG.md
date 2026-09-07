@@ -4,7 +4,7 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.0] - 2026-09-07
 
 ### Added
 - Built-in texture analysis guide (Help menu, and "How it works" in the texture window):
@@ -29,6 +29,43 @@ All notable changes to pyALDVC are documented here. The format follows
   3. Autocorrelation. The autocorrelation lengths and the subset suggestion stay in view on
   every step. Drawing the range on the main window's slices is gone.
 - Node grid on the slices drawn thicker and brighter.
+
+- Texture analysis rebuilt around an analysis range and a sliding window. The range is a
+  box of the volume (whole volume, the region of interest's bounding box, or drawn on the
+  slices as dashed rectangles); a window centred in it is compared with its shifted copies,
+  the shifts reaching (range - window) / 2 per axis with a constant number of voxel pairs,
+  so no estimator choice, maximum lag or minimum overlap is needed any more. The window
+  size analysis comes first: concentric windows of growing size, the stable size written
+  into the window with one click. `al-dvc texture` takes `--range` and `--window`.
+- Texture analysis window redesigned: the autocorrelation analysis and the window size
+  analysis are two parallel analyses with their own parameters, buttons and progress;
+  the window size analysis reports the size from which the correlation length is stable
+  and writes it into the analysis window with one click. Plots: larger fonts, dark /
+  white / grey background, linear or log scale, each curve and the ± 1 std band can be
+  switched off (the band is in the legend), threshold lines are labelled, zoom and pan
+  with a reset. The correlation lengths and the subset suggestion are highlighted boxes;
+  the table says "not reached", "no profile" or "plateau" instead of symbols; every
+  parameter has a tooltip that says what it does.
+- Strain window: the fit window is chosen as its full size per axis (3 x 3 x 3,
+  5 x 5 x 3, ...) with a Cube lock; smoothing steps are half a node; every parameter
+  has a tooltip.
+- 3-D view: the Frames animation plays the reference state (no displacement) followed
+  by the result frames, and a "Smooth" option interpolates the displacement and the
+  field between consecutive frames, so the deformed lattice moves like the real
+  deformation; it replaces the separate "Deformed lattice" animation. Speed is in
+  frames per second. Each of the three slices (XY, XZ, YZ) has its own check box in
+  the Slices mode (also for the volume slices). A slice sweep is only offered when
+  the Slices mode or the volume slices are on; the mode is never switched behind the
+  user's back.
+- Volume import: a "Natural order (1, 2, ..., 10)" check box (remembered) chooses
+  between numeric and character order, like pyALDIC, and re-sorts the list; an
+  import keeps one volume type only (the most numerous one) and reports the files
+  it skipped; Add folder (or a dropped folder) replaces the sequence instead of
+  appending to it.
+- Subset step is set per axis like the subset size (three boxes and a "Same"
+  lock), so an anisotropic step from the texture analysis is visible and
+  survives edits.
+- Mask tool hints say what Fill, Clear and Remove mask mean for the analysis.
 
 ### Fixed
 - 3-D view went blank after an animation was paused on the reference state or when the
@@ -102,46 +139,6 @@ All notable changes to pyALDVC are documented here. The format follows
   the field label uses the result's units; drawing gestures commit with the
   slice, depth, mode and tool they started with; files are added in natural
   order (frame2 before frame10).
-
-### Changed
-- Texture analysis rebuilt around an analysis range and a sliding window. The range is a
-  box of the volume (whole volume, the region of interest's bounding box, or drawn on the
-  slices as dashed rectangles); a window centred in it is compared with its shifted copies,
-  the shifts reaching (range - window) / 2 per axis with a constant number of voxel pairs,
-  so no estimator choice, maximum lag or minimum overlap is needed any more. The window
-  size analysis comes first: concentric windows of growing size, the stable size written
-  into the window with one click. `al-dvc texture` takes `--range` and `--window`.
-- Texture analysis window redesigned: the autocorrelation analysis and the window size
-  analysis are two parallel analyses with their own parameters, buttons and progress;
-  the window size analysis reports the size from which the correlation length is stable
-  and writes it into the analysis window with one click. Plots: larger fonts, dark /
-  white / grey background, linear or log scale, each curve and the ± 1 std band can be
-  switched off (the band is in the legend), threshold lines are labelled, zoom and pan
-  with a reset. The correlation lengths and the subset suggestion are highlighted boxes;
-  the table says "not reached", "no profile" or "plateau" instead of symbols; every
-  parameter has a tooltip that says what it does.
-- Strain window: the fit window is chosen as its full size per axis (3 x 3 x 3,
-  5 x 5 x 3, ...) with a Cube lock; smoothing steps are half a node; every parameter
-  has a tooltip.
-### Changed
-- 3-D view: the Frames animation plays the reference state (no displacement) followed
-  by the result frames, and a "Smooth" option interpolates the displacement and the
-  field between consecutive frames, so the deformed lattice moves like the real
-  deformation; it replaces the separate "Deformed lattice" animation. Speed is in
-  frames per second. Each of the three slices (XY, XZ, YZ) has its own check box in
-  the Slices mode (also for the volume slices). A slice sweep is only offered when
-  the Slices mode or the volume slices are on; the mode is never switched behind the
-  user's back.
-- Volume import: a "Natural order (1, 2, ..., 10)" check box (remembered) chooses
-  between numeric and character order, like pyALDIC, and re-sorts the list; an
-  import keeps one volume type only (the most numerous one) and reports the files
-  it skipped; Add folder (or a dropped folder) replaces the sequence instead of
-  appending to it.
-### Changed
-- Subset step is set per axis like the subset size (three boxes and a "Same"
-  lock), so an anisotropic step from the texture analysis is visible and
-  survives edits.
-- Mask tool hints say what Fill, Clear and Remove mask mean for the analysis.
 
 ## [0.5.0] - 2026-09-05
 
