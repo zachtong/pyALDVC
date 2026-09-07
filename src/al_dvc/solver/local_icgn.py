@@ -25,6 +25,7 @@ from ..core.data_structures import (
     ReferenceBundle,
     UF_from_P,
 )
+from ..mesh.grid_mesh import subset_valid_fraction
 from ..utils.inpaint import fill_nan_grid
 from ..utils.outlier_detection import universal_median_test
 from .interp_kernels import INTERP_MODE_BY_NAME
@@ -47,6 +48,12 @@ class LocalContext:
     precompute_time: float
     stride: int = 1  # subset sampling stride used for H, meanf, bottomf and n_valid
     noise_pattern: NDArray[np.float64] | None = None  # (12, 12) noise Hessian pattern of the sampled subset
+    # subset splitting (``para.subset_split``): ``split_index[n]`` is the row of ``split_keep`` holding the
+    # packed keep bits of node n (-1: the whole in-mask subset); ``split_fraction`` is kept / in-mask
+    # sampled voxels (1.0 when nothing was cut, NaN for nodes the precompute rejected)
+    split_index: NDArray[np.int64] | None = None
+    split_keep: NDArray[np.uint8] | None = None
+    split_fraction: NDArray[np.float32] | None = None
 
     def noise_args(self, para) -> tuple[NDArray[np.float64], float]:
         """``(pattern, gain)`` for the kernels: gain 0 keeps the stored Hessian."""
@@ -59,6 +66,17 @@ class LocalContext:
     @property
     def n_nodes(self) -> int:
         return int(self.coords_int.shape[0])
+
+    @property
+    def n_split(self) -> int:
+        """Nodes whose subset was cut to the component around its centre."""
+        return 0 if self.split_index is None else int(np.count_nonzero(self.split_index >= 0))
+
+    def split_args(self) -> dict:
+        """Keyword arguments for the kernels (empty without subset splitting)."""
+        if self.split_index is None:
+            return {}
+        return {"split_index": self.split_index, "split_keep": self.split_keep}
 
 
 def describe_backend(para) -> str:
@@ -106,6 +124,29 @@ def _noise_pattern(hx: int, hy: int, hz: int, stride: int) -> NDArray[np.float64
     return np.ascontiguousarray(noise_hessian_pattern((hx, hy, hz), stride), dtype=np.float64)
 
 
+def split_rows(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara, coords_int, half, stride):
+    """``(split_index, split_keep, n_keep, n_inmask)`` of subset splitting, or ``None`` when it is off.
+
+    Candidates are the valid nodes whose full subset window contains a masked voxel (or leaves the
+    volume); each gets the 6-connected in-mask component around its centre as a packed keep row.
+    """
+    if not bool(getattr(para, "subset_split", False)) or ref.mask is None:
+        return None
+    from .numba_kernels import build_split_rows
+
+    frac = subset_valid_fraction(ref.mask, mesh.coordinates, para.winsize)
+    cand = np.flatnonzero(np.asarray(mesh.node_valid, dtype=bool) & (frac < 1.0))
+    N = coords_int.shape[0]
+    split_index = np.full(N, -1, dtype=np.int64)
+    if cand.size == 0:
+        return split_index, np.zeros((1, 1), dtype=np.uint8), np.zeros(0, np.int64), np.zeros(0, np.int64)
+    # on-the-fly gradients read a 3-voxel stencil around every kept voxel: keep those away from the faces
+    margin = 0 if ref.gx.shape == ref.f.shape else 3
+    rows, n_keep, n_inmask = build_split_rows(coords_int, cand, *half, stride, ref.mask, margin)
+    split_index[cand] = np.arange(cand.size)
+    return split_index, rows, n_keep, n_inmask
+
+
 def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara) -> LocalContext:
     """Hessians, normalisation and validity for every node of ``mesh``."""
     _configure_threads(para)
@@ -114,6 +155,11 @@ def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara)
     hx, hy, hz = (int(w) // 2 for w in para.winsize)
     stride = int(getattr(para, "subset_stride", 1))
     backend = resolve_backend(para)
+    split = split_rows(mesh, ref, para, coords_int, (hx, hy, hz), stride)
+    split_kw = {} if split is None else {"split_index": split[0], "split_keep": split[1]}
+    if backend == "cuda" and split is not None:
+        logger.warning("Subset splitting is not on the CUDA backend yet: the local kernels run on the CPU (numba)")
+        backend = "numba"
     if backend == "cuda":
         from .cuda_kernels import precompute_nodes_cuda
 
@@ -147,6 +193,7 @@ def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara)
             float(para.min_valid_ratio),
             float(para.hessian_cond_max),
             stride,
+            **split_kw,
         )
     else:
         from .reference_kernels import precompute_nodes_np
@@ -164,9 +211,26 @@ def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara)
             float(para.min_valid_ratio),
             float(para.hessian_cond_max),
             stride,
+            **split_kw,
         )
     valid = np.asarray(valid, dtype=bool) & np.asarray(mesh.node_valid, dtype=bool)
     dt = time.perf_counter() - t0
+    split_index = split_keep = split_fraction = None
+    if split is not None:
+        split_index, split_keep, n_keep, n_inmask = split
+        split_fraction = np.ones(coords_int.shape[0], dtype=np.float32)
+        rows = np.flatnonzero(split_index >= 0)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            split_fraction[rows] = (n_keep / np.maximum(n_inmask, 1)).astype(np.float32)
+        split_fraction[~valid] = np.nan
+        cut = rows[np.asarray(n_keep) < np.asarray(n_inmask)]
+        logger.info(
+            "Subset splitting: %d subsets touch a boundary, %d were cut (median %.0f%% of their voxels kept), %d rejected",
+            rows.size,
+            cut.size,
+            100.0 * float(np.median(split_fraction[cut])) if cut.size else 100.0,
+            int(np.count_nonzero(~valid[rows])),
+        )
     logger.info(
         "Local precompute: %d nodes, %d valid (%.1f%%), %.2fs",
         coords_int.shape[0],
@@ -186,6 +250,9 @@ def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara)
         precompute_time=dt,
         stride=stride,
         noise_pattern=_noise_pattern(hx, hy, hz, stride),
+        split_index=split_index,
+        split_keep=split_keep,
+        split_fraction=split_fraction,
     )
 
 
@@ -220,6 +287,8 @@ def local_icgn(
 
     t0 = time.perf_counter()
     backend = resolve_backend(para)
+    if backend == "cuda" and ctx.n_split:
+        backend = "numba"  # the split rows live on the CPU until the CUDA kernels take them
     if backend == "cuda":
         from .cuda_kernels import icgn_12dof_cuda
 
@@ -279,6 +348,7 @@ def local_icgn(
             pattern,
             gain,
             bool(para.icgn_predictive_stop),
+            **ctx.split_args(),
         )
     else:
         from .reference_kernels import icgn_12dof_batch_np
@@ -308,6 +378,7 @@ def local_icgn(
             pattern,
             gain,
             bool(para.icgn_predictive_stop),
+            **ctx.split_args(),
         )
     solve_time = time.perf_counter() - t0
 

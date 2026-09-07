@@ -93,7 +93,7 @@ class Checkpoint:
             "elements": np.asarray(mesh.elements, dtype=np.int64),
             "boundary_nodes": np.asarray(mesh.boundary_nodes, dtype=np.int64),
         }
-        for name in ("U_accum", "U_local", "F_local", "U0", "zncc", "status", "U_std"):
+        for name in ("U_accum", "U_local", "F_local", "U0", "zncc", "status", "U_std", "split_fraction"):
             val = getattr(fr, name)
             if val is not None:
                 arrays[name] = np.asarray(val)
@@ -175,6 +175,7 @@ class Checkpoint:
             U_std=d.get("U_std"),
             status=d.get("status"),
             admm=admm,
+            split_fraction=d.get("split_fraction"),
         )
         return fr, mesh
 

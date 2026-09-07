@@ -150,6 +150,55 @@ def subset_offsets(half: tuple[int, int, int], stride: int = 1) -> tuple[NDArray
     return dx.ravel().astype(np.float64), dy.ravel().astype(np.float64), dz.ravel().astype(np.float64)
 
 
+def subset_count(half: tuple[int, int, int], stride: int = 1) -> int:
+    """Number of sampled subset voxels (mirrors ``_subset_count``)."""
+    hx, hy, hz = half
+    return ((2 * hx) // stride + 1) * ((2 * hy) // stride + 1) * ((2 * hz) // stride + 1)
+
+
+def keep_from_row(row, count: int) -> NDArray[np.bool_]:
+    """Boolean keep flags in sampling order from a packed row of ``count`` bits."""
+    return np.unpackbits(np.asarray(row, dtype=np.uint8), bitorder="little", count=int(count)).astype(bool)
+
+
+def centre_component_np(sub) -> NDArray[np.uint8]:
+    """Reference of ``_flood_fill_centre``: the 6-connected component of the centre voxel of ``sub``."""
+    from scipy import ndimage
+
+    s = np.asarray(sub) > 0
+    lab, _ = ndimage.label(s, structure=ndimage.generate_binary_structure(3, 1))
+    c = lab[s.shape[0] // 2, s.shape[1] // 2, s.shape[2] // 2]
+    if c == 0:
+        return np.zeros(s.shape, dtype=np.uint8)
+    return (lab == c).astype(np.uint8)
+
+
+def _subset_voxels(coord, half, f, gx, gy, gz, mask, stride, keep):
+    """``(m, X, Y, Z, fv, gxv, gyv, gzv)`` over the sampled window; ``m`` selects the voxels that take part.
+
+    Without ``keep`` the window lies inside the volume and ``m`` is the mask. With ``keep`` (boolean,
+    sampling order) the kept voxels are read one by one, so the window may leave the volume.
+    """
+    x0, y0, z0 = (int(c) for c in coord)
+    hx, hy, hz = half
+    X, Y, Z = subset_offsets(half, stride)
+    if keep is None:
+        sl = (slice(z0 - hz, z0 + hz + 1, stride), slice(y0 - hy, y0 + hy + 1, stride), slice(x0 - hx, x0 + hx + 1, stride))
+        m = np.asarray(mask[sl]).ravel() > 0
+        vals = [np.asarray(a[sl], dtype=np.float64).ravel() for a in (f, gx, gy, gz)]
+        return (m, X, Y, Z, *vals)
+    m = np.asarray(keep, dtype=bool)
+    xi = (x0 + X).astype(int)[m]
+    yi = (y0 + Y).astype(int)[m]
+    zi = (z0 + Z).astype(int)[m]
+    vals = []
+    for a in (f, gx, gy, gz):
+        full = np.zeros(m.size, dtype=np.float64)
+        full[m] = np.asarray(a, dtype=np.float64)[zi, yi, xi]
+        vals.append(full)
+    return (m, X, Y, Z, *vals)
+
+
 def steepest_descent(gxv, gyv, gzv, X, Y, Z) -> NDArray:
     """``(S, 12)`` steepest-descent images."""
     return np.column_stack(
@@ -189,25 +238,19 @@ def compose_warp_np(P: NDArray, dP: NDArray) -> NDArray | None:
     return out
 
 
-def precompute_node_np(coord, half, f, gx, gy, gz, mask, min_valid_ratio=0.5, cond_max=1e12, stride=1):
-    """Reference of ``_precompute_one``: returns ``(H, meanf, bottomf, n_valid, ok)``."""
+def precompute_node_np(coord, half, f, gx, gy, gz, mask, min_valid_ratio=0.5, cond_max=1e12, stride=1, keep=None):
+    """Reference of ``_precompute_one``: returns ``(H, meanf, bottomf, n_valid, ok)``.
+
+    ``keep`` (boolean, sampling order) restricts the subset to its kept voxels (subset splitting).
+    """
     x0, y0, z0 = (int(c) for c in coord)
     hx, hy, hz = half
     nz, ny, nx = f.shape
-    if x0 - hx < 0 or x0 + hx >= nx or y0 - hy < 0 or y0 + hy >= ny or z0 - hz < 0 or z0 + hz >= nz:
+    if keep is None and (x0 - hx < 0 or x0 + hx >= nx or y0 - hy < 0 or y0 + hy >= ny or z0 - hz < 0 or z0 + hz >= nz):
         return np.zeros((12, 12)), 0.0, 1.0, 0, False
-    sl = (slice(z0 - hz, z0 + hz + 1, stride), slice(y0 - hy, y0 + hy + 1, stride), slice(x0 - hx, x0 + hx + 1, stride))
-    m = np.asarray(mask[sl]).ravel() > 0
-    X, Y, Z = subset_offsets(half, stride)
-    fv = np.asarray(f[sl], dtype=np.float64).ravel()[m]
-    SD = steepest_descent(
-        np.asarray(gx[sl], dtype=np.float64).ravel()[m],
-        np.asarray(gy[sl], dtype=np.float64).ravel()[m],
-        np.asarray(gz[sl], dtype=np.float64).ravel()[m],
-        X[m],
-        Y[m],
-        Z[m],
-    )
+    m, X, Y, Z, fv, gxv, gyv, gzv = _subset_voxels(coord, half, f, gx, gy, gz, mask, stride, keep)
+    fv = fv[m]
+    SD = steepest_descent(gxv[m], gyv[m], gzv[m], X[m], Y[m], Z[m])
     H = SD.T @ SD
     n_valid = int(m.sum())
     total = m.size
@@ -249,23 +292,14 @@ def icgn_12dof_np(
     pattern=None,
     noise_gain=0.0,
     predictive=True,
+    keep=None,
 ):
     """Reference 12-DOF IC-GN for one node. Returns ``(P, n_iter, status, zncc)``."""
     x0, y0, z0 = (int(c) for c in coord)
-    hx, hy, hz = half
-    sl = (slice(z0 - hz, z0 + hz + 1, stride), slice(y0 - hy, y0 + hy + 1, stride), slice(x0 - hx, x0 + hx + 1, stride))
-    m = np.asarray(mask[sl]).ravel() > 0
-    X, Y, Z = subset_offsets(half, stride)
+    m, X, Y, Z, fv, gxv, gyv, gzv = _subset_voxels(coord, half, f, gx, gy, gz, mask, stride, keep)
     X, Y, Z = X[m], Y[m], Z[m]
-    fv = np.asarray(f[sl], dtype=np.float64).ravel()[m]
-    SD = steepest_descent(
-        np.asarray(gx[sl], dtype=np.float64).ravel()[m],
-        np.asarray(gy[sl], dtype=np.float64).ravel()[m],
-        np.asarray(gz[sl], dtype=np.float64).ravel()[m],
-        X,
-        Y,
-        Z,
-    )
+    fv = fv[m]
+    SD = steepest_descent(gxv[m], gyv[m], gzv[m], X, Y, Z)
     P = np.array(P0, dtype=np.float64).copy()
     norm_init = None
     half_scale = max(half)
@@ -369,22 +403,14 @@ def icgn_3dof_np(
     n_full=0.0,
     noise_gain=0.0,
     predictive=True,
+    keep=None,
 ):
     """Reference 3-DOF IC-GN (ADMM subpb1) for one node."""
     x0, y0, z0 = (int(c) for c in coord)
-    hx, hy, hz = half
-    sl = (slice(z0 - hz, z0 + hz + 1, stride), slice(y0 - hy, y0 + hy + 1, stride), slice(x0 - hx, x0 + hx + 1, stride))
-    m = np.asarray(mask[sl]).ravel() > 0
-    X, Y, Z = subset_offsets(half, stride)
+    m, X, Y, Z, fv, gxv, gyv, gzv = _subset_voxels(coord, half, f, gx, gy, gz, mask, stride, keep)
     X, Y, Z = X[m], Y[m], Z[m]
-    fv = np.asarray(f[sl], dtype=np.float64).ravel()[m]
-    G = np.column_stack(
-        [
-            np.asarray(gx[sl], dtype=np.float64).ravel()[m],
-            np.asarray(gy[sl], dtype=np.float64).ravel()[m],
-            np.asarray(gz[sl], dtype=np.float64).ravel()[m],
-        ]
-    )
+    fv = fv[m]
+    G = np.column_stack([gxv[m], gyv[m], gzv[m]])
     P = np.empty(12)
     P[:9] = np.asarray(F_fixed).ravel()
     P[9:] = U_old
@@ -457,7 +483,15 @@ def icgn_3dof_np(
 # ---------------------------------------------------------------------------
 
 
-def precompute_nodes_np(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, cond_max, stride=1):
+def _keep_for(n, half, stride, split_index, split_keep):
+    if split_index is None or split_keep is None or split_index[n] < 0:
+        return None
+    return keep_from_row(split_keep[split_index[n]], subset_count(half, stride))
+
+
+def precompute_nodes_np(
+    coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, cond_max, stride=1, split_index=None, split_keep=None
+):
     N = coords.shape[0]
     H_all = np.zeros((N, 12, 12))
     L_all = np.zeros((N, 12, 12))
@@ -466,7 +500,10 @@ def precompute_nodes_np(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio
     nvalid = np.zeros(N, dtype=np.int64)
     valid = np.zeros(N, dtype=bool)
     for n in range(N):
-        H, mf, bf, nv, ok = precompute_node_np(coords[n], (hx, hy, hz), f, gx, gy, gz, mask, min_valid_ratio, cond_max, stride)
+        keep = _keep_for(n, (hx, hy, hz), stride, split_index, split_keep)
+        H, mf, bf, nv, ok = precompute_node_np(
+            coords[n], (hx, hy, hz), f, gx, gy, gz, mask, min_valid_ratio, cond_max, stride, keep
+        )
         H_all[n] = H
         meanf[n] = mf
         bottomf[n] = bf
@@ -502,6 +539,8 @@ def icgn_12dof_batch_np(
     pattern=None,
     noise_gain=0.0,
     predictive=True,
+    split_index=None,
+    split_keep=None,
 ):
     N = coords.shape[0]
     P_out = np.array(P0, dtype=np.float64).copy()
@@ -536,6 +575,7 @@ def icgn_12dof_batch_np(
             pattern,
             noise_gain,
             predictive,
+            _keep_for(n, (hx, hy, hz), stride, split_index, split_keep),
         )
         P_out[n] = P
         n_iter[n] = it
@@ -572,6 +612,8 @@ def icgn_3dof_batch_np(
     n_full=0.0,
     noise_gain=0.0,
     predictive=True,
+    split_index=None,
+    split_keep=None,
 ):
     N = coords.shape[0]
     U_out = np.array(U_old, dtype=np.float64).copy()
@@ -609,6 +651,7 @@ def icgn_3dof_batch_np(
             n_full,
             noise_gain,
             predictive,
+            _keep_for(n, (hx, hy, hz), stride, split_index, split_keep),
         )
         U_out[n] = U
         n_iter[n] = it

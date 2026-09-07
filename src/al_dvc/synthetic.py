@@ -77,6 +77,23 @@ def affine_displacement(
     return fn
 
 
+def two_body_displacement(axis: str, position: float, below: DispFunc, above: DispFunc) -> DispFunc:
+    """Piecewise field: ``below`` where the coordinate along ``axis`` is below ``position``, ``above`` elsewhere.
+
+    Two bodies separated by a plane, for subsets that must not reach across a boundary.
+    """
+    k = {"x": 0, "y": 1, "z": 2}[axis]
+
+    def fn(x, y, z):
+        c = (x, y, z)[k]
+        side = np.asarray(c) >= position
+        ub, vb, wb = below(x, y, z)
+        ua, va, wa = above(x, y, z)
+        return np.where(side, ua, ub), np.where(side, va, vb), np.where(side, wa, wb)
+
+    return fn
+
+
 def sinusoidal_displacement(amplitude: float, wavelength: float, centre=(0.0, 0.0, 0.0)) -> DispFunc:
     """``u = A sin(2 pi (y-c)/L)``, ``v = A sin(2 pi (z-c)/L)``, ``w = A sin(2 pi (x-c)/L)``."""
     k = 2.0 * np.pi / wavelength

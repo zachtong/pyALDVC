@@ -351,6 +351,7 @@ def run_aldvc(
                 U_std=U_std,
                 status=status,
                 admm=admm_info,
+                split_fraction=ctx.split_fraction,
             )
             mesh_by_frame[k - 1] = mesh
             prev_ref, prev_U = ref_idx, U_final

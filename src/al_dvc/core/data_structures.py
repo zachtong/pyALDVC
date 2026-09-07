@@ -368,6 +368,8 @@ class FrameResult:
             IC-GN normal equations at converged nodes, NaN elsewhere.
         zncc: ``(N,)`` final zero-normalised cross-correlation per node.
         status: ``(N,)`` node status codes of the final local pass.
+        split_fraction: ``(N,)`` share of a subset's in-mask voxels kept by subset splitting
+            (1.0 when nothing was cut, NaN at rejected nodes); None when splitting was off.
         ref_frame: index of the reference frame of this pair.
         admm: ADMM diagnostics (None when the global step was disabled).
     """
@@ -383,6 +385,7 @@ class FrameResult:
     U_std: NDArray[np.float64] | None = None
     status: NDArray[np.int8] | None = None
     admm: ADMMInfo | None = None
+    split_fraction: NDArray[np.float32] | None = None
 
 
 @dataclass(frozen=True)

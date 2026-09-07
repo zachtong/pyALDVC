@@ -211,11 +211,175 @@ def _grad_at(f, gx, gy, gz, zz, yy, xx):
     return gxv, gyv, gzv
 
 
+# ---------------------------------------------------------------------------
+# Subset splitting: the connected component around the subset centre
+# ---------------------------------------------------------------------------
+
+
 @njit(cache=JIT_CACHE)
-def _precompute_one(x0, y0, z0, hx, hy, hz, stride, f, gx, gy, gz, mask, min_valid_ratio, cond_max, H, L):
+def _flood_fill_centre(sub, out, queue):
+    """Mark in ``out`` the 6-connected component of ``sub`` (nonzero = in mask) that holds the centre.
+
+    ``sub`` and ``out`` are ``(Sz, Sy, Sx)`` uint8, ``queue`` an int64 scratch array of
+    ``Sz * Sy * Sx`` entries. Paths stay inside the window. Returns the number of voxels marked
+    (0 when the centre voxel itself is masked).
+    """
+    Sz = sub.shape[0]
+    Sy = sub.shape[1]
+    Sx = sub.shape[2]
+    for iz in range(Sz):
+        for iy in range(Sy):
+            for ix in range(Sx):
+                out[iz, iy, ix] = 0
+    cz = Sz // 2
+    cy = Sy // 2
+    cx = Sx // 2
+    if sub[cz, cy, cx] == 0:
+        return 0
+    head = 0
+    tail = 0
+    queue[tail] = (cz * Sy + cy) * Sx + cx
+    tail += 1
+    out[cz, cy, cx] = 1
+    count = 1
+    while head < tail:
+        lin = queue[head]
+        head += 1
+        iz = lin // (Sy * Sx)
+        rem = lin - iz * (Sy * Sx)
+        iy = rem // Sx
+        ix = rem - iy * Sx
+        for k in range(6):
+            jz = iz
+            jy = iy
+            jx = ix
+            if k == 0:
+                jz = iz - 1
+            elif k == 1:
+                jz = iz + 1
+            elif k == 2:
+                jy = iy - 1
+            elif k == 3:
+                jy = iy + 1
+            elif k == 4:
+                jx = ix - 1
+            else:
+                jx = ix + 1
+            if jz < 0 or jz >= Sz or jy < 0 or jy >= Sy or jx < 0 or jx >= Sx:
+                continue
+            if sub[jz, jy, jx] == 0 or out[jz, jy, jx] != 0:
+                continue
+            out[jz, jy, jx] = 1
+            count += 1
+            queue[tail] = (jz * Sy + jy) * Sx + jx
+            tail += 1
+    return count
+
+
+@njit(parallel=True, cache=JIT_CACHE)
+def _build_split_rows_jit(coords, cand, hx, hy, hz, stride, mask, margin):
+    M = cand.shape[0]
+    S = _subset_count(hx, hy, hz, stride)
+    n_bytes = (S + 7) // 8
+    rows = np.zeros((M, n_bytes), dtype=np.uint8)
+    n_keep = np.zeros(M, dtype=np.int64)
+    n_inmask = np.zeros(M, dtype=np.int64)
+    nz = mask.shape[0]
+    ny = mask.shape[1]
+    nx = mask.shape[2]
+    Sz = 2 * hz + 1
+    Sy = 2 * hy + 1
+    Sx = 2 * hx + 1
+    for m in prange(M):
+        n = cand[m]
+        x0 = coords[n, 0]
+        y0 = coords[n, 1]
+        z0 = coords[n, 2]
+        sub = np.zeros((Sz, Sy, Sx), dtype=np.uint8)
+        out = np.zeros((Sz, Sy, Sx), dtype=np.uint8)
+        queue = np.empty(Sz * Sy * Sx, dtype=np.int64)
+        # the full-resolution window; voxels outside the volume (or within ``margin`` of its faces)
+        # count as masked, so a subset that leaves the volume is clipped like any other boundary
+        for iz in range(Sz):
+            zz = z0 - hz + iz
+            if zz < margin or zz >= nz - margin:
+                continue
+            for iy in range(Sy):
+                yy = y0 - hy + iy
+                if yy < margin or yy >= ny - margin:
+                    continue
+                for ix in range(Sx):
+                    xx = x0 - hx + ix
+                    if xx < margin or xx >= nx - margin:
+                        continue
+                    if mask[zz, yy, xx] != 0:
+                        sub[iz, iy, ix] = 1
+        _flood_fill_centre(sub, out, queue)
+        # pack the kept flags in the sampling order of the kernels (dz, dy, dx with the stride)
+        i = 0
+        nk = 0
+        nm = 0
+        for dz in range(-hz, hz + 1, stride):
+            iz = dz + hz
+            for dy in range(-hy, hy + 1, stride):
+                iy = dy + hy
+                for dx in range(-hx, hx + 1, stride):
+                    ix = dx + hx
+                    if sub[iz, iy, ix] != 0:
+                        nm += 1
+                    if out[iz, iy, ix] != 0:
+                        rows[m, i >> 3] = np.uint8(rows[m, i >> 3] | (1 << (i & 7)))
+                        nk += 1
+                    i += 1
+        n_keep[m] = nk
+        n_inmask[m] = nm
+    return rows, n_keep, n_inmask
+
+
+def build_split_rows(coords, cand, hx, hy, hz, stride, mask, margin=0):
+    """Packed keep rows for the candidate nodes ``cand`` (indices into ``coords``).
+
+    Returns ``(rows (M, ceil(S/8)) uint8, n_keep (M,), n_inmask (M,))``: bit ``i`` of a row is set
+    when sampled voxel ``i`` (kernel order) belongs to the 6-connected in-mask component that holds
+    the subset centre; ``n_inmask`` counts the sampled in-mask voxels before the split. The flood fill
+    runs at full resolution whatever the stride, so a strided sample grid cannot step over a crack.
+    """
+    return _build_split_rows_jit(
+        np.ascontiguousarray(coords, dtype=np.int64),
+        np.ascontiguousarray(cand, dtype=np.int64),
+        int(hx),
+        int(hy),
+        int(hz),
+        int(stride),
+        np.ascontiguousarray(mask, dtype=np.uint8),
+        int(margin),
+    )
+
+
+def no_split(n_nodes):
+    """``(split_index, split_keep)`` placeholders for kernels called without subset splitting."""
+    return np.full(int(n_nodes), -1, dtype=np.int64), np.zeros((1, 1), dtype=np.uint8)
+
+
+def _split_args(n_nodes, split_index, split_keep):
+    if split_index is None or split_keep is None:
+        return no_split(n_nodes)
+    return np.ascontiguousarray(split_index, dtype=np.int64), np.ascontiguousarray(split_keep, dtype=np.uint8)
+
+
+@njit(cache=JIT_CACHE, inline="always")
+def _kept(keep, idx):
+    """Bit ``idx`` of a packed keep row."""
+    return ((keep[idx >> 3] >> (idx & 7)) & 1) != 0
+
+
+@njit(cache=JIT_CACHE)
+def _precompute_one(x0, y0, z0, hx, hy, hz, stride, f, gx, gy, gz, mask, min_valid_ratio, cond_max, H, L, keep, use_keep):
     """Fill ``H`` (12x12) and ``L`` for one node.
 
-    Returns ``(meanf, bottomf, n_valid, ok)``.
+    With ``use_keep`` only the sampled voxels whose bit is set in ``keep`` take part (subset
+    splitting); they are inside the volume and the mask by construction, so the window may
+    leave the volume. Returns ``(meanf, bottomf, n_valid, ok)``.
     """
     nz = f.shape[0]
     ny = f.shape[1]
@@ -224,10 +388,11 @@ def _precompute_one(x0, y0, z0, hx, hy, hz, stride, f, gx, gy, gz, mask, min_val
         for j in range(12):
             H[i, j] = 0.0
 
-    if x0 - hx < 0 or x0 + hx >= nx or y0 - hy < 0 or y0 + hy >= ny or z0 - hz < 0 or z0 + hz >= nz:
+    if not use_keep and (x0 - hx < 0 or x0 + hx >= nx or y0 - hy < 0 or y0 + hy >= ny or z0 - hz < 0 or z0 + hz >= nz):
         return 0.0, 1.0, 0, False
 
     sd = np.empty(12)
+    idx = 0
     n_valid = 0
     sum_f = 0.0
     sum_f2 = 0.0
@@ -239,7 +404,12 @@ def _precompute_one(x0, y0, z0, hx, hy, hz, stride, f, gx, gy, gz, mask, min_val
             Y = float(dy)
             for dx in range(-hx, hx + 1, stride):
                 xx = x0 + dx
-                if mask[zz, yy, xx] == 0:
+                if use_keep:
+                    kept = _kept(keep, idx)
+                else:
+                    kept = mask[zz, yy, xx] != 0
+                idx += 1
+                if not kept:
                     continue
                 X = float(dx)
                 fv = float(f[zz, yy, xx])
@@ -323,8 +493,8 @@ def _cholesky12_batch(H_all, ok, cond_max):
 
 
 @njit(parallel=True, cache=JIT_CACHE)
-def precompute_nodes(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, cond_max, stride=1):
-    """Parallel per-node precomputation.
+def _precompute_nodes_jit(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, cond_max, stride, split_index, split_keep):
+    """Parallel per-node precomputation (see :func:`precompute_nodes`).
 
     Args:
         coords: ``(N, 3)`` int64 node centres ``[x, y, z]``.
@@ -342,6 +512,12 @@ def precompute_nodes(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, c
     nvalid_all = np.zeros(N, dtype=np.int64)
     valid = np.zeros(N, dtype=np.bool_)
     for n in prange(N):
+        r = split_index[n]
+        use_keep = r >= 0
+        if use_keep:
+            keep = split_keep[r]
+        else:
+            keep = split_keep[0]
         meanf, bottomf, nv, ok = _precompute_one(
             coords[n, 0],
             coords[n, 1],
@@ -359,6 +535,8 @@ def precompute_nodes(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, c
             cond_max,
             H_all[n],
             L_all[n],
+            keep,
+            use_keep,
         )
         meanf_all[n] = meanf
         bottomf_all[n] = bottomf
@@ -367,13 +545,26 @@ def precompute_nodes(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, c
     return H_all, L_all, meanf_all, bottomf_all, nvalid_all, valid
 
 
+def precompute_nodes(
+    coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, cond_max, stride=1, split_index=None, split_keep=None
+):
+    """Parallel per-node precomputation.
+
+    ``split_index`` (N,) and ``split_keep`` (rows of packed bits, see :func:`build_split_rows`)
+    restrict a node's subset to its kept voxels; ``None`` uses the whole in-mask subset.
+    Returns ``(H_all (N,12,12), L_all (N,12,12), meanf (N,), bottomf (N,), n_valid (N,), valid (N,))``.
+    """
+    si, sk = _split_args(coords.shape[0], split_index, split_keep)
+    return _precompute_nodes_jit(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, cond_max, int(stride), si, sk)
+
+
 # ---------------------------------------------------------------------------
 # Shared per-iteration work: warp + sample + ZNSSD statistics
 # ---------------------------------------------------------------------------
 
 
 @njit(cache=JIT_CACHE)
-def _warp_and_sample(P, x0, y0, z0, hx, hy, hz, stride, mask, f, g, mode, gbuf):
+def _warp_and_sample(P, x0, y0, z0, hx, hy, hz, stride, mask, f, g, mode, gbuf, keep, use_keep):
     """Sample the deformed volume over the warped subset into ``gbuf``.
 
     Voxels masked out in the reference (``mask == 0``) or whose sample hits a
@@ -414,7 +605,11 @@ def _warp_and_sample(P, x0, y0, z0, hx, hy, hz, stride, mask, f, g, mode, gbuf):
             Y = float(dy)
             yy = y0 + dy
             for dx in range(-hx, hx + 1, stride):
-                if mask[zz, yy, x0 + dx] == 0:
+                if use_keep:
+                    skip = not _kept(keep, idx)
+                else:
+                    skip = mask[zz, yy, x0 + dx] == 0
+                if skip:
                     gbuf[idx] = np.nan
                     idx += 1
                     continue
@@ -503,6 +698,8 @@ def _icgn_12dof_single(
     pattern,
     noise_gain,
     predictive,
+    keep,
+    use_keep,
 ):
     """Iterate one node in place. Returns ``(n_iter, status, zncc)``.
 
@@ -529,7 +726,7 @@ def _icgn_12dof_single(
 
     for it in range(1, max_iter + 1):
         ok, n_valid, meanf_d, bottomf_d, meang, bottomg = _warp_and_sample(
-            P, x0, y0, z0, hx, hy, hz, stride, mask, f, g, mode, gbuf
+            P, x0, y0, z0, hx, hy, hz, stride, mask, f, g, mode, gbuf, keep, use_keep
         )
         if not ok:
             return it, (STATUS_OUT_OF_BOUNDS if n_valid == 0 else STATUS_INVALID_SUBSET), np.nan
@@ -670,6 +867,8 @@ def _icgn_12dof_parallel_jit(
     pattern,
     noise_gain,
     predictive,
+    split_index,
+    split_keep,
 ):
     """Parallel 12-DOF IC-GN over all nodes.
 
@@ -707,6 +906,12 @@ def _icgn_12dof_parallel_jit(
         if not finite:
             status[n] = STATUS_NAN
             continue
+        r = split_index[n]
+        use_keep = r >= 0
+        if use_keep:
+            keep = split_keep[r]
+        else:
+            keep = split_keep[0]
         it, st, zc = _icgn_12dof_single(
             P,
             coords[n, 0],
@@ -735,6 +940,8 @@ def _icgn_12dof_parallel_jit(
             pattern,
             noise_gain,
             predictive,
+            keep,
+            use_keep,
         )
         n_iter[n] = it
         status[n] = st
@@ -800,6 +1007,8 @@ def _icgn_3dof_single(
     n_full,
     noise_gain,
     predictive,
+    keep,
+    use_keep,
 ):
     """Translation-only IC-GN at one node. Returns ``(n_iter, status, zncc)``.
 
@@ -839,7 +1048,7 @@ def _icgn_3dof_single(
 
     for it in range(1, max_iter + 1):
         ok, n_valid, meanf_d, bottomf_d, meang, bottomg = _warp_and_sample(
-            P, x0, y0, z0, hx, hy, hz, stride, mask, f, g, mode, gbuf
+            P, x0, y0, z0, hx, hy, hz, stride, mask, f, g, mode, gbuf, keep, use_keep
         )
         if not ok:
             return it, (STATUS_OUT_OF_BOUNDS if n_valid == 0 else STATUS_INVALID_SUBSET), np.nan
@@ -950,6 +1159,8 @@ def _icgn_3dof_parallel_jit(
     n_full,
     noise_gain,
     predictive,
+    split_index,
+    split_keep,
 ):
     """Parallel 3-DOF IC-GN (ADMM subproblem 1) over all nodes.
 
@@ -998,6 +1209,12 @@ def _icgn_3dof_parallel_jit(
         if not finite:
             status[n] = STATUS_NAN
             continue
+        r = split_index[n]
+        use_keep = r >= 0
+        if use_keep:
+            keep = split_keep[r]
+        else:
+            keep = split_keep[0]
         it, st, zc = _icgn_3dof_single(
             P,
             coords[n, 0],
@@ -1028,6 +1245,8 @@ def _icgn_3dof_parallel_jit(
             n_full,
             noise_gain,
             predictive,
+            keep,
+            use_keep,
         )
         for k in range(3):
             U_out[n, k] = P[9 + k]
@@ -1063,6 +1282,8 @@ def icgn_12dof_parallel(
     pattern=None,
     noise_gain=0.0,
     predictive=True,
+    split_index=None,
+    split_keep=None,
 ):
     """Parallel 12-DOF IC-GN over all nodes; returns ``(P_out, n_iter, status, zncc)``.
 
@@ -1101,6 +1322,7 @@ def icgn_12dof_parallel(
         np.ascontiguousarray(pattern, dtype=np.float64),
         float(noise_gain),
         bool(predictive),
+        *_split_args(coords.shape[0], split_index, split_keep),
     )
 
 
@@ -1132,6 +1354,8 @@ def icgn_3dof_parallel(
     n_full=0.0,
     noise_gain=0.0,
     predictive=True,
+    split_index=None,
+    split_keep=None,
 ):
     """Parallel 3-DOF IC-GN (ADMM subproblem 1); returns ``(U_out, n_iter, status, zncc)``.
 
@@ -1166,6 +1390,7 @@ def icgn_3dof_parallel(
         float(n_full),
         float(noise_gain),
         bool(predictive),
+        *_split_args(coords.shape[0], split_index, split_keep),
     )
 
 
@@ -1184,6 +1409,7 @@ def evaluate_zncc_parallel(coords, P_all, hx, hy, hz, f, mask, g, mode, meanf_al
         if not valid[n]:
             continue
         gbuf = np.empty(S)
+        dummy = np.zeros(1, dtype=np.uint8)
         ok, nv, mf, bf, meang, bottomg = _warp_and_sample(
             P_all[n],
             coords[n, 0],
@@ -1198,6 +1424,8 @@ def evaluate_zncc_parallel(coords, P_all, hx, hy, hz, f, mask, g, mode, meanf_al
             g,
             mode,
             gbuf,
+            dummy,
+            False,
         )
         if not ok:
             continue

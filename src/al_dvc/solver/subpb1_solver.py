@@ -57,6 +57,8 @@ def subpb1_solver(
 
     t0 = time.perf_counter()
     backend = resolve_backend(para)
+    if backend == "cuda" and ctx.n_split:
+        backend = "numba"  # the split rows live on the CPU until the CUDA kernels take them
     if backend == "cuda":
         from .cuda_kernels import icgn_3dof_cuda
 
@@ -120,6 +122,7 @@ def subpb1_solver(
             n_full,
             gain,
             bool(para.icgn_predictive_stop),
+            **ctx.split_args(),
         )
     else:
         from .reference_kernels import icgn_3dof_batch_np
@@ -152,6 +155,7 @@ def subpb1_solver(
             n_full,
             gain,
             bool(para.icgn_predictive_stop),
+            **ctx.split_args(),
         )
     solve_time = time.perf_counter() - t0
     U = np.asarray(U, dtype=np.float64)

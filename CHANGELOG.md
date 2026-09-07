@@ -4,6 +4,19 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Subset splitting at boundaries (`subset_split`, off by default): a subset whose window
+  contains masked voxels keeps only the 6-connected in-mask component around its centre, so
+  a subset next to a hole, the region edge or a crack no longer mixes the two sides. Same
+  rule for every boundary, computed once per reference at full resolution and stored as
+  packed bits for the affected nodes only; `min_valid_ratio` then applies to the kept part.
+  Results carry `split_fraction` per node (kept share, exported and checkpointed like
+  ZNCC). CPU kernels (numba and NumPy reference) only: the CUDA backend falls back to the
+  CPU kernels for the local steps while splitting is on. The global step still couples
+  the two sides of a boundary (next phase).
+
 ## [0.6.0] - 2026-09-07
 
 ### Added
