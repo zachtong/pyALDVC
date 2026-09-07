@@ -13,6 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from al_dvc.gui.app import MainWindow, create_application  # noqa: E402
+from al_dvc.gui.mask_editor import MaskOp  # noqa: E402
 from al_dvc.io.volume_io import save_volume  # noqa: E402
 from al_dvc.texture import THRESHOLDS  # noqa: E402
 
@@ -49,8 +50,14 @@ def test_window_analyses_applies_and_exports(qapp, aniso, tmp_path):
     mask[4:-4, 6:-6, 8:-8] = True
     window.state.set_mask(0, mask=mask)
     _pump()
-    tw.set_range_from_roi()  # the region's bounding box becomes the analysis range
+    tw.use_dvc_roi()  # the DVC region of interest becomes the texture region; its bounding box is analysed
     assert tw.range_box() == ((8, 56), (6, 50), (4, 44))
+    tw.region.apply(MaskOp("rectangle", plane="xy", points=((10.0, 12.0), (30.0, 20.0)), mode="replace", depth=(4, 20)))
+    assert tw.range_box() == ((10, 31), (12, 21), (4, 21))  # a drawn rectangle: x, y from the shape, z from its depth
+    tw.region.undo()
+    assert tw.range_box() == ((8, 56), (6, 50), (4, 44))
+    tw.go_to_step(tw.TAB_ACF)
+    assert tw.tabs.currentIndex() == tw.TAB_ACF and tw.pages.currentIndex() == tw.TAB_ACF  # tab, page and strip follow
     tw.window_size.setValue(16)
     tw.analyse()
     assert tw.wait(120_000)
@@ -86,6 +93,7 @@ def test_window_analyses_applies_and_exports(qapp, aniso, tmp_path):
     assert tw.wait(300_000)
     _pump()
     assert tw.sweep is not None and len(tw.sweep.levels) >= 3 and tw.tabs.currentIndex() == tw.TAB_SWEEP
+    assert all(lvl.radial is not None for lvl in tw.sweep.levels)  # every size keeps its radial curve for the plot
     assert all(len(lvl.samples) == 1 for lvl in tw.sweep.levels)  # concentric windows, one per size
     assert tw.result is not None and tw._btn_apply.isEnabled()  # the autocorrelation result is untouched
     if tw.sweep_size() is not None:

@@ -6,6 +6,17 @@ All notable changes to pyALDVC are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Texture analysis window rebuilt around three steps, each with its own tab and parameter page
+  and a strip at the top showing what every step produced: 1. Region, drawn inside the window
+  on its own slice viewer (rectangle, ellipse, polygon, brush; orange outside the region, so it
+  cannot be mistaken for the red DVC mask) or copied with "Same as DVC ROI"; 2. Representative
+  volume element (RVE), with the radial autocorrelation of every window size and the length
+  against the size in one tab, and one click to make the stable size the window of step 3;
+  3. Autocorrelation. The autocorrelation lengths and the subset suggestion stay in view on
+  every step. Drawing the range on the main window's slices is gone.
+- Node grid on the slices drawn thicker and brighter.
+
 ### Fixed
 - 3-D view went blank after an animation was paused on the reference state or when the
   reference volume was selected; it now shows the paused frame, or the undeformed lattice

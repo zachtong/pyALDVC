@@ -1,19 +1,21 @@
 """Texture analysis window: how far the grey values of the reference volume stay correlated, and what
 subset size that suggests.
 
-Three steps, top to bottom:
+Three steps, one tab and one parameter page each; the strip at the top shows what every step produced:
 
-1. **Analysis range** -- a box of the volume. A window slides inside it, so the range fixes the largest
-   shift that can be analysed: ``(range - window) / 2`` per axis. The whole volume, the bounding box
-   of the region of interest, or a box drawn on the slices.
-2. **Window size analysis** -- windows of growing size, all centred in the range, are analysed with the
-   same shifts; the size from which the correlation lengths stop changing is the representative
-   volume, and one click makes it the window of step 3.
-3. **Autocorrelation analysis** -- one window: the correlation curves along x, y, z and over spherical
-   shells, the lengths at 1/e, 0.1 and 0.01, the noise floor, the periodicity, and the subset suggestion.
+1. **Region** -- the part of the volume whose texture is measured, drawn on its own slice viewer
+   (rectangle, ellipse, polygon, brush) or copied from the DVC region of interest. It is *not* the
+   DVC region of interest. The analysis uses the bounding box of the region: a window slides inside
+   it, so the box fixes the largest shift that can be analysed, ``(box - window) / 2`` per axis.
+2. **Representative volume element (RVE)** -- windows of growing size, all centred in the region, are
+   analysed with the same shifts; the size from which the correlation lengths stop changing is the
+   window of step 3.
+3. **Autocorrelation** -- one window: the correlation curves along x, y, z and over spherical shells,
+   the lengths at 1/e, 0.1 and 0.01, the noise floor, the periodicity, and the subset suggestion.
 
-Both analyses run on worker threads; results are tagged with the input they describe, so a suggestion
-from a previous volume, range, calibration or window cannot be applied by mistake.
+The autocorrelation lengths and the subset suggestion stay on screen whatever the step. Both analyses
+run on worker threads; results are tagged with the input they describe, so a suggestion from a
+previous volume, region, calibration or window cannot be applied by mistake.
 """
 
 from __future__ import annotations
@@ -26,11 +28,13 @@ from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
+from matplotlib import colormaps
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT
 from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QFileDialog,
     QGridLayout,
@@ -43,6 +47,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -57,7 +62,6 @@ from al_dvc.texture import (
     SizeSweep,
     TextureResult,
     analyse_range,
-    box_of_mask,
     box_size,
     centred_window,
     lag_reach,
@@ -65,10 +69,10 @@ from al_dvc.texture import (
     recommend_parameters,
     sweep_concentric,
     sweep_sizes_concentric,
-    whole_box,
 )
 
 from .app_state import AppState
+from .region_viewer import REGION_COLOR, RegionViewer
 from .theme import COLORS
 from .widgets import CollapsibleSection, combo, form_label, guard_wheel, headless, make_form, spin
 
@@ -76,7 +80,6 @@ logger = logging.getLogger(__name__)
 
 SIDEBAR_WIDTH = 400
 AXES_ROWS = ("x", "y", "z", "radial")
-PLANE_AXES = {"xy": ("x", "y"), "xz": ("x", "z"), "yz": ("y", "z")}  # (horizontal, vertical) axis of a slice
 CURVE_STYLES = {"x": ("#60a5fa", "-"), "y": ("#f472b6", "--"), "z": ("#34d399", ":"), "radial": ("#f97316", "-")}
 PLOT_THEMES = {  # figure and axes face, text, grid, threshold lines
     "dark": {"face": COLORS.BG_CANVAS, "text": COLORS.TEXT_PRIMARY, "grid": "#4b5563", "threshold": "#fbbf24"},
@@ -85,6 +88,10 @@ PLOT_THEMES = {  # figure and axes face, text, grid, threshold lines
 }
 FONT = {"label": 11, "tick": 10, "legend": 10, "note": 9}
 WINDOW_STEP = 8  # the window edge box moves in steps of this many voxels
+STEPS = ("region", "sweep", "acf")
+TAB_REGION, TAB_SWEEP, TAB_ACF = 0, 1, 2
+MIN_FILL = 0.5  # below this share of its bounding box, a region gets a warning
+SWEEP_CMAP = "viridis"  # one colour per window size in the RVE curves plot
 
 __all__ = ["TextureWindow"]
 
@@ -145,13 +152,82 @@ class _TextureWorker(QThread):
             self.finished_sweep.emit(out)
 
 
-class TextureWindow(QMainWindow):
-    """Analysis range, window size analysis, autocorrelation analysis, correlation lengths, subset suggestion."""
+class _StepStrip(QWidget):
+    """Three step buttons with what each step produced; clicking one goes to that step."""
 
-    def __init__(self, state: AppState, parent: QWidget | None = None, viewer=None) -> None:
+    clicked = Signal(int)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.buttons: list[QPushButton] = []
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        group = QButtonGroup(self)
+        group.setExclusive(True)
+        for i in range(len(STEPS)):
+            b = QPushButton()
+            b.setCheckable(True)
+            b.setMinimumHeight(34)
+            b.clicked.connect(lambda _c, k=i: self.clicked.emit(k))
+            group.addButton(b)
+            layout.addWidget(b, 1)
+            self.buttons.append(b)
+            if i < len(STEPS) - 1:
+                arrow = QLabel("→")
+                arrow.setObjectName("hint")
+                layout.addWidget(arrow)
+        self.setStyleSheet(
+            f"QPushButton {{ text-align: left; padding: 4px 10px; border: 1px solid {COLORS.BORDER}; border-radius: 6px;"
+            f" background: {COLORS.BG_PANEL}; color: {COLORS.TEXT_SECONDARY}; }}"
+            f"QPushButton:checked {{ border-color: {COLORS.ACCENT}; background: {COLORS.BG_HOVER};"
+            f" color: {COLORS.TEXT_PRIMARY}; font-weight: bold; }}"
+        )
+
+    def set_current(self, i: int) -> None:
+        self.buttons[i].setChecked(True)
+
+    def set_text(self, i: int, text: str, tooltip: str = "") -> None:
+        self.buttons[i].setText(text)
+        self.buttons[i].setToolTip(tooltip)
+
+
+def _heading(parent_layout, size: int = 13) -> QLabel:
+    lab = QLabel()
+    lab.setWordWrap(True)
+    lab.setStyleSheet(f"font-size: {size}px; font-weight: bold; color: {COLORS.TEXT_PRIMARY};")
+    parent_layout.addWidget(lab)
+    return lab
+
+
+def _hint(parent_layout) -> QLabel:
+    lab = QLabel()
+    lab.setObjectName("hint")
+    lab.setWordWrap(True)
+    parent_layout.addWidget(lab)
+    return lab
+
+
+def _notice(parent_layout, size: int = 12) -> QLabel:
+    """A statement that must not be missed: orange bar on the left, tinted background."""
+    lab = QLabel()
+    lab.setWordWrap(True)
+    lab.setStyleSheet(
+        f"font-size: {size}px; color: {COLORS.TEXT_PRIMARY}; background: rgba(249, 115, 22, 0.14);"
+        f" border-left: 4px solid {REGION_COLOR}; border-radius: 4px; padding: 6px 8px;"
+    )
+    parent_layout.addWidget(lab)
+    return lab
+
+
+class TextureWindow(QMainWindow):
+    """Region, representative volume element, autocorrelation; lengths and subset suggestion always in view."""
+
+    TAB_REGION, TAB_SWEEP, TAB_ACF = TAB_REGION, TAB_SWEEP, TAB_ACF
+
+    def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._state = state
-        self._viewer = viewer if viewer is not None else getattr(parent, "viewer", None)
         self._worker: _TextureWorker | None = None
         self.result: TextureResult | None = None
         self.sweep: SizeSweep | None = None
@@ -160,12 +236,24 @@ class TextureWindow(QMainWindow):
         self._result_source: dict | None = None  # the input ``result`` describes
         self._sweep_source: dict | None = None  # the input ``sweep`` describes
         self._previous_note = ""  # why the previous result is still on screen (failed / cancelled rerun)
-        self._shape: tuple[int, int, int] | None = None  # (nz, ny, nx) the range boxes are set up for
+        self._shape: tuple[int, int, int] | None = None  # (nz, ny, nx) the region viewer holds
+        self._volume_uid = None
+        self._window_from_rve: int | None = None  # the window the RVE step wrote, None when set by hand
         self._updating = False
         self.setWindowFlag(Qt.WindowType.Window, True)
-        self.resize(1320, 860)
+        self.resize(1360, 880)
 
-        # ---- plots (left) --------------------------------------------------
+        central = QWidget()
+        root = QVBoxLayout(central)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(8)
+        self.steps = _StepStrip()
+        root.addWidget(self.steps)
+        body = QHBoxLayout()
+        body.setSpacing(8)
+        root.addLayout(body, 1)
+
+        # ---- plots and region (left) --------------------------------------
         self.plot_background = combo([])
         for key in PLOT_THEMES:
             self.plot_background.addItem(key, key)
@@ -181,7 +269,9 @@ class TextureWindow(QMainWindow):
         self.show_band.setChecked(True)
         self._btn_reset_view = QPushButton()
         self._plot_labels = {k: QLabel() for k in ("background", "scale", "curves")}
-        tools = QHBoxLayout()
+        self._plot_tools = QWidget()
+        tools = QHBoxLayout(self._plot_tools)
+        tools.setContentsMargins(0, 0, 0, 0)
         tools.setSpacing(6)
         tools.addWidget(self._plot_labels["background"])
         tools.addWidget(self.plot_background)
@@ -197,39 +287,59 @@ class TextureWindow(QMainWindow):
         tools.addWidget(self._btn_reset_view)
 
         self.tabs = QTabWidget()
+        self.region = RegionViewer()
+        region_page = QWidget()
+        rlay = QVBoxLayout(region_page)
+        rlay.setContentsMargins(0, 6, 0, 0)
+        rlay.setSpacing(6)
+        self._region_banner = _notice(rlay, size=13)
+        rlay.addWidget(self.region, 1)
+        self.tabs.addTab(region_page, "")
+        self.fig_sweep = Figure(figsize=(7, 6))
+        self.canvas_sweep = FigureCanvas(self.fig_sweep)
         self.fig_profiles = Figure(figsize=(7, 5))
         self.canvas_profiles = FigureCanvas(self.fig_profiles)
-        self.fig_sweep = Figure(figsize=(7, 5))
-        self.canvas_sweep = FigureCanvas(self.fig_sweep)
-        self.toolbar_profiles = NavigationToolbar2QT(self.canvas_profiles, self)
         self.toolbar_sweep = NavigationToolbar2QT(self.canvas_sweep, self)
+        self.toolbar_profiles = NavigationToolbar2QT(self.canvas_profiles, self)
         for tb in (self.toolbar_profiles, self.toolbar_sweep):
             tb.setIconSize(tb.iconSize() * 0.8)
-        self.tabs.addTab(self._plot_page(self.canvas_sweep, self.toolbar_sweep), "")  # the window size comes first
+        self.tabs.addTab(self._plot_page(self.canvas_sweep, self.toolbar_sweep), "")
         self.tabs.addTab(self._plot_page(self.canvas_profiles, self.toolbar_profiles), "")
-        self.TAB_SWEEP, self.TAB_ACF = 0, 1
         left = QVBoxLayout()
         left.setSpacing(6)
-        left.addLayout(tools)
+        left.addWidget(self._plot_tools)
         left.addWidget(self.tabs, 1)
+        body.addLayout(left, 1)
 
-        central = QWidget()
-        root = QHBoxLayout(central)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(8)
-        root.addLayout(left, 1)
-
-        # ---- sidebar (right) ------------------------------------------------
+        # ---- sidebar (right): one parameter page per step, then the standing results ----
         side = QWidget()
         side.setFixedWidth(SIDEBAR_WIDTH)
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(0, 0, 0, 0)
-        side_layout.setSpacing(6)
-        self.sections: dict[str, CollapsibleSection] = {}
+        side_layout.setSpacing(8)
+        self.pages = QStackedWidget()
+        self.pages.setSizePolicy(self.pages.sizePolicy().horizontalPolicy(), self.pages.sizePolicy().verticalPolicy())
         self.labels: dict[str, QLabel] = {}
+        self._headings: dict[str, QLabel] = {}
+        self._hints: dict[str, QLabel] = {}
+        self._next: dict[str, QPushButton] = {}
 
-        # 1. analysis range
-        rng = CollapsibleSection()
+        # step 1: region
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        self._headings["region"] = _heading(lay)
+        self._hints["region"] = _hint(lay)
+        lay.addWidget(self.region.tools)
+        rbuttons = QHBoxLayout()
+        self._btn_region_roi = QPushButton()
+        self._btn_region_all = QPushButton()
+        rbuttons.addWidget(self._btn_region_roi)
+        rbuttons.addWidget(self._btn_region_all)
+        lay.addLayout(rbuttons)
+        self.labels["box"] = form_label()
+        lay.addWidget(self.labels["box"])
         grid = QGridLayout()
         grid.setHorizontalSpacing(6)
         grid.setVerticalSpacing(4)
@@ -249,24 +359,21 @@ class TextureWindow(QMainWindow):
             self.range_lo[axis], self.range_hi[axis] = lo, hi
             self._range_axis_labels[axis] = lab
         grid.setColumnStretch(4, 1)
-        rng.add_layout(grid)
-        rbuttons = QHBoxLayout()
-        self._btn_range_all = QPushButton()
-        self._btn_range_roi = QPushButton()
-        self._btn_range_draw = QPushButton()
-        self._btn_range_draw.setCheckable(True)
-        for b in (self._btn_range_all, self._btn_range_roi, self._btn_range_draw):
-            rbuttons.addWidget(b)
-        rng.add_layout(rbuttons)
-        self._range_info = QLabel()
-        self._range_info.setObjectName("hint")
-        self._range_info.setWordWrap(True)
-        rng.add_widget(self._range_info)
-        self.sections["range"] = rng
-        side_layout.addWidget(rng)
+        lay.addLayout(grid)
+        self._range_info = _hint(lay)
+        self._next["region"] = QPushButton()
+        lay.addWidget(self._next["region"])
+        lay.addStretch(1)
+        self.pages.addWidget(page)
 
-        # 2. window size analysis
-        rve = CollapsibleSection()
+        # step 2: representative volume element
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        self._headings["sweep"] = _heading(lay)
+        self._hints["sweep"] = _hint(lay)
+        self._sweep_region = _hint(lay)
         sform = make_form()
         self.sweep_start = spin(8, 512, WINDOW_STEP)
         self.sweep_start.setValue(16)
@@ -276,7 +383,7 @@ class TextureWindow(QMainWindow):
             lab = form_label()
             self.labels[key] = lab
             sform.addRow(lab, w)
-        rve.add_layout(sform)
+        lay.addLayout(sform)
         self._btn_sweep = QPushButton()
         self._btn_sweep.setProperty("class", "btn-primary")
         self._btn_sweep.setMinimumHeight(32)
@@ -285,30 +392,44 @@ class TextureWindow(QMainWindow):
         srow = QHBoxLayout()
         srow.addWidget(self._btn_sweep, 2)
         srow.addWidget(self._btn_sweep_cancel, 1)
-        rve.add_layout(srow)
+        lay.addLayout(srow)
         self._sweep_progress = QProgressBar()
         self._sweep_progress.setRange(0, 1000)
         self._sweep_progress.setTextVisible(False)
-        rve.add_widget(self._sweep_progress)
+        lay.addWidget(self._sweep_progress)
+        self._sweep_box = QGroupBox()
+        self._sweep_box.setObjectName("analysisBox")
+        vbox = QVBoxLayout(self._sweep_box)
+        vbox.setSpacing(4)
         self._sweep_status = QLabel()
-        self._sweep_status.setObjectName("hint")
         self._sweep_status.setWordWrap(True)
-        rve.add_widget(self._sweep_status)
+        vbox.addWidget(self._sweep_status)
         self._btn_use_size = QPushButton()
+        self._btn_use_size.setProperty("class", "btn-primary")
         self._btn_use_size.setEnabled(False)
-        rve.add_widget(self._btn_use_size)
-        self.sections["sweep"] = rve
-        side_layout.addWidget(rve)
+        vbox.addWidget(self._btn_use_size)
+        lay.addWidget(self._sweep_box)
+        self._next["sweep"] = QPushButton()
+        lay.addWidget(self._next["sweep"])
+        lay.addStretch(1)
+        self.pages.addWidget(page)
 
-        # 3. autocorrelation analysis
-        acf = CollapsibleSection()
+        # step 3: autocorrelation
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        self._headings["acf"] = _heading(lay)
+        self._hints["acf"] = _hint(lay)
+        self._acf_region = _hint(lay)
         form = make_form()
         self.window_size = spin(WINDOW_STEP, 1024, WINDOW_STEP)
         self.window_size.setValue(64)
         lab = form_label()
         self.labels["window_size"] = lab
         form.addRow(lab, self.window_size)
-        acf.add_layout(form)
+        lay.addLayout(form)
+        self._window_source = _hint(lay)
         self._btn_analyse = QPushButton()
         self._btn_analyse.setProperty("class", "btn-primary")
         self._btn_analyse.setMinimumHeight(32)
@@ -317,19 +438,17 @@ class TextureWindow(QMainWindow):
         row = QHBoxLayout()
         row.addWidget(self._btn_analyse, 2)
         row.addWidget(self._btn_cancel, 1)
-        acf.add_layout(row)
+        lay.addLayout(row)
         self._progress = QProgressBar()
         self._progress.setRange(0, 1000)
         self._progress.setTextVisible(False)
-        acf.add_widget(self._progress)
-        self._status = QLabel()
-        self._status.setObjectName("hint")
-        self._status.setWordWrap(True)
-        acf.add_widget(self._status)
-        self.sections["acf"] = acf
-        side_layout.addWidget(acf)
+        lay.addWidget(self._progress)
+        self._status = _hint(lay)
+        lay.addStretch(1)
+        self.pages.addWidget(page)
+        side_layout.addWidget(self.pages)
 
-        # correlation lengths: the headline result
+        # standing results: autocorrelation lengths and the subset suggestion
         self._lengths_box = QGroupBox()
         self._lengths_box.setObjectName("analysisBox")
         lbox = QVBoxLayout(self._lengths_box)
@@ -344,13 +463,9 @@ class TextureWindow(QMainWindow):
         font.setPointSizeF(font.pointSizeF() + 1)
         self.table.setFont(font)
         lbox.addWidget(self.table)
-        self._table_hint = QLabel()
-        self._table_hint.setObjectName("hint")
-        self._table_hint.setWordWrap(True)
-        lbox.addWidget(self._table_hint)
+        self._table_hint = _hint(lbox)
         side_layout.addWidget(self._lengths_box)
 
-        # subset suggestion: the headline recommendation
         self._suggestion_box = QGroupBox()
         self._suggestion_box.setObjectName("analysisBox")
         sbox = QVBoxLayout(self._suggestion_box)
@@ -360,10 +475,7 @@ class TextureWindow(QMainWindow):
         self._suggestion.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._suggestion.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {COLORS.TEXT_PRIMARY};")
         sbox.addWidget(self._suggestion)
-        self._suggestion_notes = QLabel()
-        self._suggestion_notes.setObjectName("hint")
-        self._suggestion_notes.setWordWrap(True)
-        sbox.addWidget(self._suggestion_notes)
+        self._suggestion_notes = _hint(sbox)
         self._btn_apply = QPushButton()
         self._btn_apply.setProperty("class", "btn-primary")
         self._btn_apply.setMinimumHeight(30)
@@ -371,26 +483,29 @@ class TextureWindow(QMainWindow):
         sbox.addWidget(self._btn_apply)
         side_layout.addWidget(self._suggestion_box)
 
-        export = CollapsibleSection(expanded=False)
+        self.export_section = CollapsibleSection(expanded=False)
         self._btn_csv = QPushButton()
         self._btn_json = QPushButton()
         self._btn_png = QPushButton()
         for b in (self._btn_csv, self._btn_json, self._btn_png):
             b.setEnabled(False)
-            export.add_widget(b)
-        self.sections["export"] = export
-        side_layout.addWidget(export)
+            self.export_section.add_widget(b)
+        side_layout.addWidget(self.export_section)
         side_layout.addStretch(1)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(side)
         scroll.setFixedWidth(SIDEBAR_WIDTH + 18)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        root.addWidget(scroll, 0)
+        body.addWidget(scroll, 0)
         self.setCentralWidget(central)
         guard_wheel(side)
 
         # ---- wiring ----------------------------------------------------------
+        self.steps.clicked.connect(self.go_to_step)
+        self.tabs.currentChanged.connect(self.go_to_step)
+        self._next["region"].clicked.connect(lambda: self.go_to_step(TAB_SWEEP))
+        self._next["sweep"].clicked.connect(lambda: self.go_to_step(TAB_ACF))
         self._btn_analyse.clicked.connect(self.analyse)
         self._btn_cancel.clicked.connect(self.cancel)
         self._btn_sweep.clicked.connect(self.run_sweep_analysis)
@@ -401,26 +516,25 @@ class TextureWindow(QMainWindow):
         self._btn_json.clicked.connect(self._on_save_json)
         self._btn_png.clicked.connect(self._on_save_png)
         self._btn_reset_view.clicked.connect(self.reset_view)
-        self._btn_range_all.clicked.connect(self.set_range_whole)
-        self._btn_range_roi.clicked.connect(self.set_range_from_roi)
-        self._btn_range_draw.toggled.connect(self._on_draw_toggled)
+        self._btn_region_all.clicked.connect(self.set_range_whole)
+        self._btn_region_roi.clicked.connect(self.use_dvc_roi)
+        self.region.region_changed.connect(self._on_region_changed)
         for w in (*self.range_lo.values(), *self.range_hi.values()):
-            w.valueChanged.connect(lambda _v: self._on_range_changed())
-        self.window_size.valueChanged.connect(lambda _v: self._on_range_changed())
+            w.valueChanged.connect(lambda _v: self._on_box_spins())
+        self.window_size.valueChanged.connect(lambda _v: self._on_window_changed())
         for w in (self.sweep_start, self.sweep_step):
             w.valueChanged.connect(lambda _v: self._refresh_validity())
         self.plot_background.currentIndexChanged.connect(lambda _i: self._redraw())
         self.plot_scale.currentIndexChanged.connect(lambda _i: self._draw_profiles())
         for cb in (*self.curve_checks.values(), self.show_band):
             cb.toggled.connect(lambda _v: self._draw_profiles())
-        self.tabs.currentChanged.connect(lambda _i: self._update_plot_tools())
         self._state.volumes_changed.connect(self._on_volumes_changed)
         self._state.mask_changed.connect(self._refresh_validity)
         self._state.params_changed.connect(self._refresh_validity)
         self.retranslate_ui()
         self._redraw()
         self._on_volumes_changed()
-        self._update_plot_tools()
+        self.go_to_step(TAB_REGION)
 
     @staticmethod
     def _plot_page(canvas, toolbar) -> QWidget:
@@ -432,50 +546,109 @@ class TextureWindow(QMainWindow):
         layout.addWidget(toolbar)
         return page
 
-    # ------------------------------------------------------------------ analysis range
+    # ------------------------------------------------------------------ steps
+    def go_to_step(self, i: int) -> None:
+        """Show step ``i`` everywhere: the strip, the tab and the parameter page."""
+        i = int(max(0, min(len(STEPS) - 1, i)))
+        if self.tabs.currentIndex() != i:
+            self.tabs.setCurrentIndex(i)
+            return  # currentChanged brings us back here
+        self.pages.setCurrentIndex(i)
+        self.steps.set_current(i)
+        self._update_plot_tools()
+
+    def _update_steps(self) -> None:
+        """What every step produced, in the strip at the top."""
+        box = self.range_box()
+        size = " x ".join(str(v) for v in box_size(box)) if box is not None else "—"
+        self.steps.set_text(0, self.tr("1  Region") + f"   ·   {size}", self.tr("The texture analysis region (bounding box)"))
+        if self.sweep is None:
+            rve = "—"
+        else:
+            n = self.sweep_size()
+            rve = self.tr("window {n}").format(n=n) if n is not None else self.tr("not stable")
+            rve += "  ⚠" if self.is_sweep_stale else "  ✓"
+        self.steps.set_text(
+            1, self.tr("2  Representative volume element (RVE)") + f"   ·   {rve}", self.tr("The window size to use")
+        )
+        if self.result is None:
+            acf = "—"
+        elif self.result.status != "ok":
+            acf = self.tr("no texture")
+        else:
+            one = self.result.length("radial")
+            acf = self.tr("1/e length {L}").format(L=f"{one:.1f}" if one is not None else "-")
+            acf += "  ⚠" if self.is_stale else "  ✓"
+        self.steps.set_text(
+            2, self.tr("3  Autocorrelation") + f"   ·   {acf}", self.tr("Correlation lengths and subset suggestion")
+        )
+
+    # ------------------------------------------------------------------ region (step 1)
     def _volume_shape(self) -> tuple[int, int, int] | None:
         return self._state.volume_shape() if self._state.volumes else None
 
-    def _setup_range_boxes(self, shape: tuple[int, int, int] | None) -> None:
-        """Spin-box limits for a volume shape; a new shape resets the range to the whole volume."""
-        if shape == self._shape:
+    def _reference(self):
+        """The reference volume, ``None`` without one."""
+        if not self._state.volumes:
+            return None
+        return np.asarray(self._state.volume_array(0))
+
+    def _setup_region(self) -> None:
+        """Give the region viewer the reference volume when it changes (the region then is the whole volume)."""
+        shape = self._volume_shape()
+        uid = self._state.volumes[0].uid if self._state.volumes else None
+        if shape == self._shape and uid == self._volume_uid:
             return
-        self._shape = shape
+        self._shape, self._volume_uid = shape, uid
         self._updating = True
         try:
             nz, ny, nx = shape if shape is not None else (1, 1, 1)
             for axis, n in (("x", nx), ("y", ny), ("z", nz)):
                 self.range_lo[axis].setRange(0, max(0, n - 2))
                 self.range_hi[axis].setRange(2, max(2, n))
-                self.range_lo[axis].setValue(0)
-                self.range_hi[axis].setValue(max(2, n))
-            enabled = shape is not None
-            for w in (*self.range_lo.values(), *self.range_hi.values(), self._btn_range_all, self._btn_range_draw):
-                w.setEnabled(enabled)
+            for w in (*self.range_lo.values(), *self.range_hi.values(), self._btn_region_all):
+                w.setEnabled(shape is not None)
             if shape is not None:  # a window that leaves room to shift: at most half the smallest edge
                 fit = max(WINDOW_STEP, (min(shape) // 2) // WINDOW_STEP * WINDOW_STEP)
                 self.window_size.setValue(min(int(self.window_size.value()), fit))
         finally:
             self._updating = False
-        self._on_range_changed()
+        self.region.set_volume(self._reference())  # emits region_changed
 
     def range_box(self):
-        """``((x0, x1), (y0, y1), (z0, z1))`` from the boxes, ``None`` without a volume or when it is empty."""
-        shape = self._shape
-        if shape is None:
-            return None
-        try:
-            return normalise_box(
-                tuple((int(self.range_lo[a].value()), int(self.range_hi[a].value())) for a in ("x", "y", "z")), shape
-            )
-        except ValueError:
-            return None
+        """``((x0, x1), (y0, y1), (z0, z1))``: the bounding box of the region, ``None`` without one."""
+        return self.region.box()
 
     def set_range(self, box) -> None:
-        """Write a box into the range controls (clipped to the volume)."""
+        """Make the box ``((x0, x1), (y0, y1), (z0, z1))`` the region (clipped to the volume)."""
         if self._shape is None:
             return
-        box = normalise_box(box, self._shape)
+        self.region.set_box(normalise_box(box, self._shape))
+
+    def set_range_whole(self) -> None:
+        self.region.set_region(None)
+
+    def use_dvc_roi(self) -> None:
+        """Copy the DVC region of interest of the reference volume into the region."""
+        mask = self._state.reference_mask()
+        if mask is None or self._shape is None or mask.shape != tuple(self._shape):
+            self._range_info.setText(self.tr("No region of interest on the reference volume."))
+            return
+        if not mask.any():
+            self._range_info.setText(self.tr("The region of interest is empty."))
+            return
+        self.region.set_region(mask)
+        self._state.log(self.tr("Texture region copied from the DVC region of interest"))
+
+    def _on_region_changed(self) -> None:
+        self._sync_box_spins()
+        self._update_range_info()
+        self._refresh_validity()
+
+    def _sync_box_spins(self) -> None:
+        box = self.range_box()
+        if box is None:
+            return
         self._updating = True
         try:
             for axis, (lo, hi) in zip(("x", "y", "z"), box):
@@ -483,115 +656,98 @@ class TextureWindow(QMainWindow):
                 self.range_hi[axis].setValue(hi)
         finally:
             self._updating = False
-        self._on_range_changed()
 
-    def set_range_whole(self) -> None:
-        if self._shape is not None:
-            self.set_range(whole_box(self._shape))
-
-    def set_range_from_roi(self) -> None:
-        """The bounding box of the region of interest (its holes and shape play no part)."""
-        mask = self._state.reference_mask()
-        if mask is None or self._shape is None or mask.shape != tuple(self._shape):
-            self._range_info.setText(self.tr("No region of interest on the reference volume."))
+    def _on_box_spins(self) -> None:
+        """Typing the box replaces the region by that box."""
+        if self._updating or self._shape is None:
             return
         try:
-            box = box_of_mask(mask)
+            box = normalise_box(
+                tuple((int(self.range_lo[a].value()), int(self.range_hi[a].value())) for a in ("x", "y", "z")), self._shape
+            )
         except ValueError:
-            self._range_info.setText(self.tr("The region of interest is empty."))
             return
-        self.set_range(box)
-        filled = float(mask.sum()) / float(np.prod(box_size(box)))
-        if filled < 0.5:
-            self._state.log(
-                self.tr("The region of interest fills only {pct:.0f} % of its bounding box; the range is the box.").format(
-                    pct=100.0 * filled
-                ),
-                "warning",
-            )
+        if box != self.range_box() or self.region.fill_fraction() < 1.0:
+            self.region.set_box(box)
 
-    def _on_draw_toggled(self, on: bool) -> None:
-        if self._viewer is None or not hasattr(self._viewer, "capture_box"):
-            self._btn_range_draw.setChecked(False)
-            return
-        self._viewer.capture_box(self._on_box_drawn if on else None)
-        if on:
-            self._range_info.setText(
-                self.tr(
-                    "Drag a rectangle on a slice: it sets the two axes of that slice. Drag on another slice for the third axis."
-                )
-            )
-        else:
-            self._update_range_info()
-
-    def _on_box_drawn(self, plane: str, h_span, v_span) -> None:
-        """A rectangle dragged on ``plane`` sets the range along that plane's two axes."""
-        if self._shape is None:
-            return
-        h_axis, v_axis = PLANE_AXES[plane]
-        self._updating = True
-        try:
-            for axis, (lo, hi) in ((h_axis, h_span), (v_axis, v_span)):
-                self.range_lo[axis].setValue(int(np.floor(lo + 0.5)))
-                self.range_hi[axis].setValue(int(np.floor(hi + 0.5)) + 1)
-        finally:
-            self._updating = False
-        self._on_range_changed()
-
-    def _on_range_changed(self) -> None:
-        if self._updating:
-            return
+    def _region_text(self) -> str:
         box = self.range_box()
-        if self._viewer is not None and hasattr(self._viewer, "set_range_box") and self.isVisible():
-            self._viewer.set_range_box(box)
-        self._update_range_info()
-        self._refresh_validity()
+        if box is None:
+            return self.tr("No region")
+        return self.tr("Region {size} voxel").format(size=" x ".join(str(v) for v in box_size(box)))
 
     def _update_range_info(self) -> None:
         box = self.range_box()
-        if box is None:
+        if self._shape is None:
             self._range_info.setText(self.tr("Load a reference volume first."))
             return
+        if box is None:
+            self._range_info.setText(self.tr("The region is empty: draw a shape or press Whole volume."))
+            return
         size = box_size(box)
+        fill = self.region.fill_fraction()
+        parts = [
+            self.tr("Bounding box {size} voxel ({mv} M voxels), {pct} % of it inside the drawn shape.").format(
+                size=" x ".join(str(v) for v in size), mv=f"{np.prod(size) / 1e6:.1f}", pct=f"{100 * fill:.0f}"
+            )
+        ]
+        if np.prod(size) > MAX_RANGE_VOXELS:
+            parts.append(
+                self.tr("Too large: reduce the region to {edge} voxel cubed at most.").format(
+                    edge=int(round(MAX_RANGE_VOXELS ** (1 / 3)))
+                )
+            )
+        elif fill < MIN_FILL:
+            parts.append(
+                self.tr(
+                    "The analysis uses the whole bounding box: voxels inside the box but outside the shape take part too. "
+                    "A box-like region avoids that."
+                )
+            )
+        self._range_info.setText(" ".join(parts))
+        self._sweep_region.setText(self._region_text())
+        self._update_acf_region()
+
+    def _update_acf_region(self) -> None:
+        box = self.range_box()
+        if box is None:
+            self._acf_region.setText(self._region_text())
+            return
         window = centred_window(box, int(self.window_size.value()))
         reach = lag_reach(box, window)
-        text = self.tr("Range {size} voxel ({mv} M voxels); window {w}: shifts up to {reach} voxel").format(
-            size=" x ".join(str(v) for v in size),
-            mv=f"{np.prod(size) / 1e6:.1f}",
-            w=" x ".join(str(b - a) for a, b in window),
-            reach=" x ".join(str(v) for v in reach),
+        text = (
+            self._region_text()
+            + "; "
+            + self.tr("window {w}: shifts up to {reach} voxel").format(
+                w=" x ".join(str(b - a) for a, b in window), reach=" x ".join(str(v) for v in reach)
+            )
         )
-        if np.prod(size) > MAX_RANGE_VOXELS:
-            text += " " + self.tr("Too large: reduce the range to {edge} voxel cubed at most.").format(
-                edge=int(round(MAX_RANGE_VOXELS ** (1 / 3)))
-            )
-        elif min(reach) < 1:
-            text += " " + self.tr(
-                "The window fills the range on one axis: no room to shift. Enlarge the range or reduce the window."
-            )
-        self._range_info.setText(text)
+        if min(reach) < 1:
+            text += " " + self.tr("The window fills the region on one axis: enlarge the region or reduce the window.")
+        self._acf_region.setText(text)
 
-    def showEvent(self, event) -> None:  # noqa: N802
-        super().showEvent(event)
-        if self._viewer is not None and hasattr(self._viewer, "set_range_box"):
-            self._viewer.set_range_box(self.range_box())
+    def _on_window_changed(self) -> None:
+        if self._updating:
+            return
+        self._update_acf_region()
+        self._update_window_source()
+        self._refresh_validity()
 
-    def hideEvent(self, event) -> None:  # noqa: N802
-        if self._btn_range_draw.isChecked():
-            self._btn_range_draw.setChecked(False)
-        if self._viewer is not None and hasattr(self._viewer, "set_range_box"):
-            self._viewer.set_range_box(None)
-        super().hideEvent(event)
+    def _update_window_source(self) -> None:
+        w = int(self.window_size.value())
+        rve = self._window_from_rve
+        if rve is None:
+            text = self.tr("Set by hand. Step 2 suggests the window from the texture itself.")
+        elif rve == w:
+            text = self.tr("From the RVE analysis ({n} voxel).").format(n=rve)
+        else:
+            text = self.tr("Set by hand; the RVE analysis suggested {n} voxel.").format(n=rve)
+        self._window_source.setText(text)
+        self._window_source.setStyleSheet(f"color: {REGION_COLOR};" if rve is not None and rve != w else "")
 
     # ------------------------------------------------------------------ inputs
-    def _reference(self):
-        """The reference volume, ``None`` without one."""
-        if not self._state.volumes:
-            return None
-        return np.asarray(self._state.volume_array(0))
-
     def current_source(self) -> dict | None:
-        """What an analysis started now would describe: reference identity, range, window, calibration."""
+        """What an analysis started now would describe: reference identity, region, window, calibration."""
         st = self._state
         box = self.range_box()
         if not st.volumes or box is None:
@@ -612,7 +768,7 @@ class TextureWindow(QMainWindow):
 
     @property
     def is_stale(self) -> bool:
-        """True when a result is shown but the reference, the range, the window or the calibration changed."""
+        """True when a result is shown but the reference, the region, the window or the calibration changed."""
         return self.result is not None and self._result_source != self.current_source()
 
     @property
@@ -630,18 +786,21 @@ class TextureWindow(QMainWindow):
         vol = self._reference()
         box = self.range_box()
         status = self._status if kind == "acf" else self._sweep_status
-        if vol is None or box is None:
+        if vol is None:
             status.setText(self.tr("Load a reference volume first."))
             return
+        if box is None:
+            status.setText(self.tr("The region is empty: draw a shape or press Whole volume."))
+            return
         if np.prod(box_size(box)) > MAX_RANGE_VOXELS:
-            status.setText(self.tr("The range is too large for one analysis: reduce it."))
+            status.setText(self.tr("The region is too large for one analysis: reduce it."))
             return
         spacing = tuple(float(v) for v in self._state.para.voxel_size)
         window = int(self.window_size.value())
         sweep = None
         if kind == "acf":
             if min(lag_reach(box, centred_window(box, window))) < 1:
-                status.setText(self.tr("The window fills the range: enlarge the range or reduce the window."))
+                status.setText(self.tr("The window fills the region: enlarge the region or reduce the window."))
                 return
         else:
             sweep = self.sweep_settings()
@@ -651,7 +810,7 @@ class TextureWindow(QMainWindow):
                 status.setText(str(exc))
                 return
             if len(sizes) < 2:
-                status.setText(self.tr("The range allows only one window size: enlarge it or reduce the first size."))
+                status.setText(self.tr("The region allows only one window size: enlarge it or reduce the first size."))
                 return
         self._worker = _TextureWorker(kind, vol, box, spacing, window, sweep, parent=self)
         self._job_source = self.current_source() if kind == "acf" else self._sweep_input()
@@ -672,8 +831,8 @@ class TextureWindow(QMainWindow):
             self._sweep_progress.setValue(0)
             self._sweep_status.setText(self.tr("Sweeping the window sizes..."))
         self._state.log(
-            self.tr("{what} started: range {size} voxel").format(
-                what=self.tr("Autocorrelation analysis") if kind == "acf" else self.tr("Window size analysis"),
+            self.tr("{what} started: region {size} voxel").format(
+                what=self.tr("Autocorrelation analysis") if kind == "acf" else self.tr("RVE analysis"),
                 size=" x ".join(str(v) for v in box_size(box)),
             )
         )
@@ -684,7 +843,7 @@ class TextureWindow(QMainWindow):
         self._start("acf")
 
     def run_sweep_analysis(self) -> None:
-        """The window size analysis: correlation length against the size of the window."""
+        """The RVE analysis: correlation length against the size of the window."""
         self._start("sweep")
 
     def cancel(self) -> None:
@@ -741,10 +900,11 @@ class TextureWindow(QMainWindow):
         for b in (self._btn_apply, self._btn_csv, self._btn_json, self._btn_png):
             b.setToolTip(note)
         self._btn_use_size.setEnabled(self.sweep_size() is not None and not self.is_sweep_stale)
-        self._btn_range_roi.setEnabled(self._shape is not None and self._state.reference_mask() is not None)
+        self._btn_region_roi.setEnabled(self._shape is not None and self._state.reference_mask() is not None)
         self._fill_suggestion()
         self._update_status()
         self._update_sweep_status()
+        self._update_steps()
 
     def _on_progress(self, fraction: float, message: str) -> None:
         if self._worker is not None and self._worker.kind == "sweep":
@@ -763,7 +923,7 @@ class TextureWindow(QMainWindow):
         self._settle()
         self._fill_table()
         self._draw_profiles()
-        self.tabs.setCurrentIndex(self.TAB_ACF)
+        self.go_to_step(TAB_ACF)
         one = result.length("radial")
         self._state.log(
             self.tr("Texture analysed: 1/e length {L} voxel (radial), window {w} voxel").format(
@@ -779,13 +939,13 @@ class TextureWindow(QMainWindow):
         self._sweep_progress.setValue(1000)
         self._settle()
         self._draw_sweep()
-        self.tabs.setCurrentIndex(self.TAB_SWEEP)
+        self.go_to_step(TAB_SWEEP)
         size = self.sweep_size()
         self._state.log(
-            self.tr("Window size analysis done: {verdict}").format(
+            self.tr("RVE analysis done: {verdict}").format(
                 verdict=self.tr("stable from {size} voxel").format(size=size)
                 if size is not None
-                else self.tr("no stable size in the range")
+                else self.tr("no stable size in the region")
             ),
             "success",
         )
@@ -810,7 +970,7 @@ class TextureWindow(QMainWindow):
         (self._status if kind == "acf" else self._sweep_status).setText(self.tr("Cancelled."))
 
     def _on_volumes_changed(self) -> None:
-        self._setup_range_boxes(self._volume_shape())
+        self._setup_region()
         has = bool(self._state.volumes) and not self._is_running()
         self._btn_analyse.setEnabled(has)
         self._btn_sweep.setEnabled(has)
@@ -818,8 +978,8 @@ class TextureWindow(QMainWindow):
 
     # ------------------------------------------------------------------ results
     def sweep_size(self) -> int | None:
-        """The window edge the sweep recommends: where the 1/e length became stable (else the largest stable
-        threshold), ``None`` when nothing stabilised."""
+        """The window edge the RVE analysis recommends: where the 1/e length became stable (else the largest
+        stable threshold), ``None`` when nothing stabilised."""
         sweep = self.sweep
         if sweep is None or not sweep.levels:
             return None
@@ -830,13 +990,17 @@ class TextureWindow(QMainWindow):
         return None
 
     def use_sweep_size(self) -> None:
-        """Write the sweep's stable size into the window of the autocorrelation analysis (rounded up to its step)."""
+        """Write the stable size into the window of step 3 (rounded up to its step) and go there."""
         size = self.sweep_size()
         if size is None or self.is_sweep_stale:
             return
         edge = int(np.ceil(size / WINDOW_STEP) * WINDOW_STEP)
-        self.window_size.setValue(max(self.window_size.minimum(), min(self.window_size.maximum(), edge)))
-        self._state.log(self.tr("Window set to {edge} voxel from the window size analysis").format(edge=edge))
+        edge = max(self.window_size.minimum(), min(self.window_size.maximum(), edge))
+        self._window_from_rve = edge
+        self.window_size.setValue(edge)
+        self._update_window_source()
+        self._state.log(self.tr("Window set to {edge} voxel from the RVE analysis").format(edge=edge))
+        self.go_to_step(TAB_ACF)
 
     def apply_recommendation(self) -> None:
         rec = self.recommendation
@@ -887,7 +1051,7 @@ class TextureWindow(QMainWindow):
     def _fill_suggestion(self) -> None:
         rec = self.recommendation
         if rec is None:
-            self._suggestion.setText(self.tr("Analyse the texture to get a subset suggestion."))
+            self._suggestion.setText(self.tr("Run step 3 to get a subset suggestion."))
             self._suggestion_notes.setText("")
             return
         self._suggestion.setText(
@@ -898,7 +1062,7 @@ class TextureWindow(QMainWindow):
         notes = [self.tr("{factor} x the 1/e correlation length per axis").format(factor=f"{rec.factor:g}")]
         notes += list(rec.notes)
         if self.is_stale:
-            notes.append(self.tr("From a previous input: the reference, range, window or calibration changed."))
+            notes.append(self.tr("From a previous input: the reference, region, window or calibration changed."))
         self._suggestion_notes.setText("\n".join(notes))
 
     def _update_status(self) -> None:
@@ -909,7 +1073,7 @@ class TextureWindow(QMainWindow):
             return
         res = self.result
         if res is None:
-            self._status.setText(self.tr("Ready. Run the window size analysis first to choose the window, then analyse."))
+            self._status.setText(self.tr("Ready."))
         elif res.status != "ok":
             self._status.setText(self.tr("No texture: the window has no grey-value variation."))
         else:
@@ -935,18 +1099,14 @@ class TextureWindow(QMainWindow):
             return
         sweep = self.sweep
         if sweep is None or not sweep.levels:
-            self._sweep_status.setText(
-                self.tr(
-                    "Windows of growing size, all centred in the range, are analysed with the same shifts; "
-                    "the size where the correlation length stops changing is the window to use."
-                )
-            )
+            self._sweep_status.setText(self.tr("No RVE analysis yet."))
+            self._btn_use_size.setText(self.tr("Use the stable size as the window"))
             return
         size = self.sweep_size()
         text = (
             self.tr("The correlation length is stable from {size} voxel: use that as the window.").format(size=size)
             if size is not None
-            else self.tr("No stable size in this range: enlarge the range or reduce the first size.")
+            else self.tr("No stable size in this region: enlarge the region or reduce the first size.")
         )
         values = []
         for t in THRESHOLDS:
@@ -958,6 +1118,11 @@ class TextureWindow(QMainWindow):
         if self.is_sweep_stale:
             text += " " + self.tr("(from a previous input: run again)")
         self._sweep_status.setText(text)
+        self._btn_use_size.setText(
+            self.tr("Use {size} voxel as the window → step 3").format(size=size)
+            if size is not None
+            else self.tr("Use the stable size as the window")
+        )
 
     # ------------------------------------------------------------------ figures
     def _theme(self) -> dict:
@@ -978,16 +1143,31 @@ class TextureWindow(QMainWindow):
     def _empty(self, ax, th: dict, text: str) -> None:
         ax.text(0.5, 0.5, text, ha="center", va="center", color=th["text"], fontsize=FONT["label"], transform=ax.transAxes)
 
+    def _threshold_lines(self, ax, th: dict) -> None:
+        for t in THRESHOLDS:
+            ax.axhline(t, color=th["threshold"], ls="--", lw=1.1, alpha=0.9)
+            ax.annotate(
+                THRESHOLD_LABELS.get(float(t), f"{t:.2f}"),
+                xy=(1.0, t),
+                xycoords=("axes fraction", "data"),
+                ha="right",
+                va="bottom",
+                fontsize=FONT["note"],
+                color=th["threshold"],
+            )
+
     def _redraw(self) -> None:
         self._draw_profiles()
         self._draw_sweep()
 
     def reset_view(self) -> None:
         """Back to the full plot after zooming or panning."""
-        (self.toolbar_sweep if self.tabs.currentIndex() == self.TAB_SWEEP else self.toolbar_profiles).home()
+        (self.toolbar_sweep if self.tabs.currentIndex() == TAB_SWEEP else self.toolbar_profiles).home()
 
     def _update_plot_tools(self) -> None:
-        on_profiles = self.tabs.currentIndex() == self.TAB_ACF
+        tab = self.tabs.currentIndex()
+        self._plot_tools.setVisible(tab != TAB_REGION)
+        on_profiles = tab == TAB_ACF
         controls = (self._plot_labels["scale"], self.plot_scale, self._plot_labels["curves"], self.show_band)
         for w in (*controls, *self.curve_checks.values()):
             w.setVisible(on_profiles)
@@ -1022,17 +1202,7 @@ class TextureWindow(QMainWindow):
                     cr = res.lengths[axis][float(t)]
                     if cr.found:
                         ax.plot([cr.value], [t], "o", color=color, ms=5)
-            for t in THRESHOLDS:
-                ax.axhline(t, color=th["threshold"], ls="--", lw=1.1, alpha=0.9)
-                ax.annotate(
-                    THRESHOLD_LABELS.get(float(t), f"{t:.2f}"),
-                    xy=(1.0, t),
-                    xycoords=("axes fraction", "data"),
-                    ha="right",
-                    va="bottom",
-                    fontsize=FONT["note"],
-                    color=th["threshold"],
-                )
+            self._threshold_lines(ax, th)
             if log:
                 ax.set_yscale("log")
                 positive = np.concatenate(
@@ -1042,32 +1212,75 @@ class TextureWindow(QMainWindow):
                 ax.set_ylim(max(1e-4, float(positive.min()) * 0.7), 1.3)
             if handles:
                 ax.legend(handles=handles, fontsize=FONT["legend"], loc="upper right", frameon=False, labelcolor=th["text"])
+            src = self._result_source or {}
+            box = src.get("range")
+            title = self.tr("window {w} voxel").format(w=" x ".join(str(b - a) for a, b in res.settings["window_xyz"]))
+            if box is not None:
+                title = self.tr("Region {size} voxel").format(size=" x ".join(str(v) for v in box_size(box))) + ", " + title
+            ax.set_title(title, fontsize=FONT["note"], color=th["text"])
         ax.set_ylabel(self.tr("autocorrelation") + (self.tr(" (log)") if log else ""))
         ax.set_xlabel(self.tr("shift [voxel]"))
         fig.tight_layout()
         self.canvas_profiles.draw_idle()
 
     def _draw_sweep(self) -> None:
+        """Top: the radial curve of every window size. Bottom: the correlation lengths against the size."""
         fig = self.fig_sweep
         th = self._theme()
         fig.clear()
         fig.set_facecolor(th["face"])
-        ax = fig.add_subplot(1, 1, 1)
-        self._style(ax, th)
+        ax_curves, ax_len = fig.subplots(2, 1, gridspec_kw={"hspace": 0.32})
+        self._style(ax_curves, th)
+        self._style(ax_len, th)
         sweep = self.sweep
         if sweep is None or not sweep.levels:
-            self._empty(ax, th, self.tr("No window size analysis yet: press Run window size analysis."))
+            self._empty(ax_curves, th, self.tr("No RVE analysis yet: press Run RVE analysis."))
         else:
             sizes = [max(lvl.size) for lvl in sweep.levels]
+            stable = self.sweep_size()
+            cmap = colormaps[SWEEP_CMAP]
+            n = len(sweep.levels)
+            for i, lvl in enumerate(sweep.levels):
+                p = getattr(lvl, "radial", None)
+                if p is None:
+                    continue
+                is_stable = stable is not None and sizes[i] == stable
+                ax_curves.plot(
+                    p.lag,
+                    p.mean,
+                    color=cmap(0.1 + 0.85 * i / max(1, n - 1)),
+                    lw=3.0 if is_stable else 1.3,
+                    alpha=1.0 if is_stable else 0.85,
+                    label=self.tr("{n} (stable)").format(n=sizes[i]) if is_stable else f"{sizes[i]}",
+                )
+            self._threshold_lines(ax_curves, th)
+            ax_curves.legend(
+                fontsize=FONT["note"],
+                frameon=False,
+                labelcolor=th["text"],
+                loc="upper right",
+                ncol=2 if n > 8 else 1,
+                title=self.tr("window [voxel]"),
+                title_fontsize=FONT["note"],
+            )
+            ax_curves.get_legend().get_title().set_color(th["text"])
+            src = self._sweep_source or {}
+            box = src.get("range")
+            if box is not None:
+                ax_curves.set_title(
+                    self.tr("Region {size} voxel").format(size=" x ".join(str(v) for v in box_size(box))),
+                    fontsize=FONT["note"],
+                    color=th["text"],
+                )
             verdicts = []
             for t in THRESHOLDS:
                 d = sweep.decisions[float(t)]
                 label = THRESHOLD_LABELS.get(float(t), f"{t:.2f}")
-                line = ax.plot(sizes, sweep.means(t), marker="o", ms=5, lw=1.6, label=label)[0]
+                line = ax_len.plot(sizes, sweep.means(t), marker="o", ms=5, lw=1.6, label=label)[0]
                 if d.converged:
-                    ax.axvline(sizes[d.start_index], color=line.get_color(), ls="--", lw=1.1)
-                    ax.axhspan(d.reference - d.tolerance, d.reference + d.tolerance, color=line.get_color(), alpha=0.08)
-                    ax.axhline(d.reference, color=line.get_color(), ls=":", lw=1.0, alpha=0.9)
+                    ax_len.axvline(sizes[d.start_index], color=line.get_color(), ls="--", lw=1.1)
+                    ax_len.axhspan(d.reference - d.tolerance, d.reference + d.tolerance, color=line.get_color(), alpha=0.08)
+                    ax_len.axhline(d.reference, color=line.get_color(), ls=":", lw=1.0, alpha=0.9)
                     verdicts.append(
                         self.tr("{name}: stable from {size} voxel, length {value} ± {tol} voxel").format(
                             name=label, size=sizes[d.start_index], value=f"{d.reference:.2f}", tol=f"{d.tolerance:.2f}"
@@ -1075,8 +1288,8 @@ class TextureWindow(QMainWindow):
                     )
                 else:
                     verdicts.append(self.tr("{name}: not stable ({why})").format(name=label, why=d.reason))
-            ax.legend(fontsize=FONT["legend"], frameon=False, labelcolor=th["text"], loc="upper right")
-            ax.text(
+            ax_len.legend(fontsize=FONT["legend"], frameon=False, labelcolor=th["text"], loc="upper right")
+            ax_len.text(
                 0.02,
                 0.02,
                 "\n".join(verdicts),
@@ -1084,10 +1297,12 @@ class TextureWindow(QMainWindow):
                 va="bottom",
                 fontsize=FONT["note"],
                 color=th["text"],
-                transform=ax.transAxes,
+                transform=ax_len.transAxes,
             )
-        ax.set_xlabel(self.tr("window edge [voxel]"))
-        ax.set_ylabel(self.tr("correlation length [voxel]"))
+        ax_curves.set_xlabel(self.tr("shift [voxel]"))
+        ax_curves.set_ylabel(self.tr("radial autocorrelation"))
+        ax_len.set_xlabel(self.tr("window edge [voxel]"))
+        ax_len.set_ylabel(self.tr("correlation length [voxel]"))
         fig.tight_layout()
         self.canvas_sweep.draw_idle()
 
@@ -1123,8 +1338,8 @@ class TextureWindow(QMainWindow):
             self._write(self.tr("Summary"), path, self.save_json)
 
     def _on_save_png(self) -> None:
-        sweep_tab = self.tabs.currentIndex() == self.TAB_SWEEP
-        name = "texture_window_sizes.png" if sweep_tab else "texture_profiles.png"
+        sweep_tab = self.tabs.currentIndex() == TAB_SWEEP
+        name = "texture_rve.png" if sweep_tab else "texture_profiles.png"
         path = self._ask_path(str(self._state.output_dir / name), "PNG (*.png)")
         if path:
             fig = self.fig_sweep if sweep_tab else self.fig_profiles
@@ -1144,43 +1359,71 @@ class TextureWindow(QMainWindow):
     # ------------------------------------------------------------------ misc
     def retranslate_ui(self) -> None:
         self.setWindowTitle(self.tr("Texture analysis"))
-        self.tabs.setTabText(self.TAB_SWEEP, self.tr("2. Window size"))
-        self.tabs.setTabText(self.TAB_ACF, self.tr("3. Autocorrelation"))
-        self.sections["range"].set_title(self.tr("1. Analysis range"))
-        self.sections["sweep"].set_title(self.tr("2. Window size analysis"))
-        self.sections["acf"].set_title(self.tr("3. Autocorrelation analysis"))
-        self.sections["export"].set_title(self.tr("Export"))
-        self._lengths_box.setTitle(self.tr("Correlation lengths [voxel]"))
+        self.tabs.setTabText(TAB_REGION, self.tr("1. Region"))
+        self.tabs.setTabText(TAB_SWEEP, self.tr("2. RVE"))
+        self.tabs.setTabText(TAB_ACF, self.tr("3. Autocorrelation"))
+        self.tabs.setTabToolTip(TAB_SWEEP, self.tr("Representative volume element: the window size to use"))
+        self.export_section.set_title(self.tr("Export"))
+        self._lengths_box.setTitle(self.tr("Autocorrelation lengths [voxel]"))
         self._suggestion_box.setTitle(self.tr("Subset suggestion"))
+        self._sweep_box.setTitle(self.tr("Result"))
+        self._region_banner.setText(
+            self.tr(
+                "Texture analysis region: the part of the volume whose texture is measured. "
+                "This is not the DVC region of interest; the two never affect each other."
+            )
+        )
+        self._headings["region"].setText(self.tr("1. Texture analysis region"))
+        self._hints["region"].setText(
+            self.tr(
+                "Draw the region on the slices (rectangle, ellipse, polygon, brush) or copy the DVC region of interest. "
+                "The analysis uses its bounding box, which is drawn dashed."
+            )
+        )
+        self._headings["sweep"].setText(self.tr("2. Representative volume element (RVE) analysis"))
+        self._hints["sweep"].setText(
+            self.tr(
+                "Windows of growing size, all centred in the region, are analysed with the same shifts. "
+                "The size from which the correlation length stops changing is the RVE: the window for step 3."
+            )
+        )
+        self._headings["acf"].setText(self.tr("3. Autocorrelation analysis"))
+        self._hints["acf"].setText(
+            self.tr(
+                "One window is compared with its shifted copies inside the region: the curves along x, y, z and over "
+                "spherical shells give the correlation lengths and the subset suggestion."
+            )
+        )
         texts = {
             "window_size": self.tr("Window [voxel]"),
             "sweep_start": self.tr("First size [voxel]"),
             "sweep_step": self.tr("Size step [voxel]"),
+            "box": self.tr("Bounding box [voxel]"),
         }
         for key, lab in self.labels.items():
             lab.setText(texts[key])
         self.labels["window_size"].setToolTip(
             self.tr(
-                "Edge of the cubic window compared with its shifted copies. The shifts reach (range - window) / 2 "
-                "on every axis, so a larger window inside the same range sees shorter shifts."
+                "Edge of the cubic window compared with its shifted copies. The shifts reach (region - window) / 2 "
+                "on every axis, so a larger window inside the same region sees shorter shifts."
             )
         )
         self.labels["sweep_start"].setToolTip(self.tr("Edge of the smallest window analysed"))
         self.labels["sweep_step"].setToolTip(self.tr("Growth of the window edge from one size to the next"))
-        self._btn_range_all.setText(self.tr("Whole volume"))
-        self._btn_range_roi.setText(self.tr("ROI box"))
-        self._btn_range_roi.setToolTip(self.tr("The bounding box of the region of interest (its shape and holes play no part)"))
-        self._btn_range_draw.setText(self.tr("Draw on slices"))
-        self._btn_range_draw.setToolTip(
-            self.tr("Drag rectangles on the Slices tab: each drag sets the two axes of its slice; the box is shown dashed")
+        self.labels["box"].setToolTip(self.tr("Typing a box replaces the drawn region by that box"))
+        self._btn_region_all.setText(self.tr("Whole volume"))
+        self._btn_region_roi.setText(self.tr("Same as DVC ROI"))
+        self._btn_region_roi.setToolTip(
+            self.tr("Copy the DVC region of interest of the reference volume into the texture region")
         )
         for axis, lab in self._range_axis_labels.items():
-            lab.setToolTip(self.tr("First and last voxel (exclusive) of the range along {axis}").format(axis=axis))
-        self._btn_analyse.setText(self.tr("Analyse texture"))
+            lab.setToolTip(self.tr("First and last voxel (exclusive) of the box along {axis}").format(axis=axis))
+        self._next["region"].setText(self.tr("Next: RVE analysis →"))
+        self._next["sweep"].setText(self.tr("Next: autocorrelation →"))
+        self._btn_analyse.setText(self.tr("Run autocorrelation analysis"))
         self._btn_cancel.setText(self.tr("Cancel"))
-        self._btn_sweep.setText(self.tr("Run window size analysis"))
+        self._btn_sweep.setText(self.tr("Run RVE analysis"))
         self._btn_sweep_cancel.setText(self.tr("Cancel"))
-        self._btn_use_size.setText(self.tr("Use this size as the window"))
         self._btn_apply.setText(self.tr("Apply to parameters"))
         self._btn_csv.setText(self.tr("Save profiles as CSV..."))
         self._btn_json.setText(self.tr("Save summary as JSON..."))
@@ -1205,16 +1448,19 @@ class TextureWindow(QMainWindow):
         self._table_hint.setText(
             self.tr(
                 'Distance at which the correlation drops to 1/e, 0.1 and 0.01. "not reached": still above the threshold '
-                'within the shifts the range allows; "no profile": no valid curve; '
+                'within the shifts the region allows; "no profile": no valid curve; '
                 '"plateau": the curve flattens at the threshold.'
             )
         )
+        self.region.retranslate_ui()
         self._fill_table()
         self._fill_suggestion()
         self._redraw()
         self._update_range_info()
+        self._update_window_source()
         self._update_status()
         self._update_sweep_status()
+        self._update_steps()
 
 
 # ---------------------------------------------------------------------- files (shared with the CLI)

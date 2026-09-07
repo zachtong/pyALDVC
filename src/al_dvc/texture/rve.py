@@ -54,6 +54,7 @@ class SizeLevel:
     mean: dict[float, float]  # NaN when no sample crossed
     std: dict[float, float]
     n_valid: dict[float, int]
+    radial: object | None = None  # the radial profile of a concentric sweep (one window per size)
 
     @property
     def effective(self) -> float:

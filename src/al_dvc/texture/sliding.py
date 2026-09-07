@@ -271,7 +271,7 @@ def sweep_concentric(
         mean = {float(t): (float(v) if (v := sub.lengths[float(t)]) is not None else float("nan")) for t in thresholds}
         std = {float(t): float("nan") for t in thresholds}
         n_valid = {float(t): int(sub.lengths[float(t)] is not None) for t in thresholds}
-        levels.append(SizeLevel(sub.size, [sub], mean, std, n_valid))
+        levels.append(SizeLevel(sub.size, [sub], mean, std, n_valid, res.profiles.get(axis)))
     if progress is not None:
         progress(1.0, "done")
     eff = np.array([lvl.effective for lvl in levels], dtype=np.float64)
