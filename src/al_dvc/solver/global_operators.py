@@ -72,13 +72,18 @@ def build_fem_operators(mesh: DVCMesh, gauss_pt_order: int = 2) -> GlobalOperato
 
 
 def _difference_operator(
-    grid_shape: tuple[int, int, int], axis_xyz: int, h: float, valid: NDArray[np.bool_]
+    grid_shape: tuple[int, int, int],
+    axis_xyz: int,
+    h: float,
+    valid: NDArray[np.bool_],
+    edge_ok: NDArray[np.bool_] | None = None,
 ) -> sparse.csr_matrix:
     """Central-difference operator along x (0), y (1) or z (2) on the node grid.
 
     Uses one-sided differences where only one neighbour is valid and a zero
     row where neither is (MATLAB ``funDerivativeOp3`` uses one-sided
-    differences at the grid border).
+    differences at the grid border). ``edge_ok`` (N,) marks the +axis edge of
+    every node; a neighbour across a cut edge counts as absent.
     """
     nz, ny, nx = grid_shape
     n = nz * ny * nx
@@ -92,6 +97,10 @@ def _difference_operator(
     has_prev[has_prev] &= v[idx.ravel()[has_prev] - stride]
     has_next = coord < size - 1
     has_next[has_next] &= v[idx.ravel()[has_next] + stride]
+    if edge_ok is not None:
+        eo = np.asarray(edge_ok, dtype=bool).ravel()
+        has_next &= eo
+        has_prev[has_prev] &= eo[idx.ravel()[has_prev] - stride]
     rows: list[NDArray] = []
     cols: list[NDArray] = []
     vals: list[NDArray] = []
@@ -118,7 +127,10 @@ def build_fd_operators(mesh: DVCMesh) -> GlobalOperators:
     """Finite-difference operators on the node grid (valid nodes only)."""
     n = mesh.n_nodes
     valid = np.asarray(mesh.node_valid, dtype=bool) if mesh.node_valid.size == n else np.ones(n, dtype=bool)
-    D = tuple(_difference_operator(mesh.grid_shape, j, mesh.spacing[j], valid) for j in range(3))
+    eo = mesh.edges_ok() if mesh.is_cut else None
+    D = tuple(
+        _difference_operator(mesh.grid_shape, j, mesh.spacing[j], valid, None if eo is None else eo[:, j]) for j in range(3)
+    )
     Kg = (D[0].T @ D[0] + D[1].T @ D[1] + D[2].T @ D[2]).tocsr()
     M = sparse.diags(valid.astype(np.float64), format="csr")
     G = tuple(Dj.T.tocsr() for Dj in D)

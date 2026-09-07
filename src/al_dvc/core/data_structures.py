@@ -260,10 +260,28 @@ class DVCMesh:
     spacing: tuple[float, float, float]
     node_valid: NDArray[np.bool_] = field(default_factory=lambda: np.empty(0, dtype=bool))
     boundary_nodes: NDArray[np.int64] = field(default_factory=lambda: np.empty(0, dtype=np.int64))
+    # (N, 3) bool, the +x, +y, +z edge of every node; False where the mesh was cut at a masked boundary
+    # (``subset_split``); empty when the mesh was not cut
+    edge_ok: NDArray[np.bool_] = field(default_factory=lambda: np.empty((0, 3), dtype=bool))
 
     @property
     def n_nodes(self) -> int:
         return int(self.coordinates.shape[0])
+
+    @property
+    def is_cut(self) -> bool:
+        """True when at least one edge of the node grid was cut at a boundary."""
+        return self.edge_ok.shape == (self.n_nodes, 3) and not bool(self.edge_ok.all())
+
+    def edges_ok(self) -> NDArray[np.bool_]:
+        """``(N, 3)`` edge flags (all True for a mesh that was not cut)."""
+        if self.edge_ok.shape == (self.n_nodes, 3):
+            return self.edge_ok
+        return np.ones((self.n_nodes, 3), dtype=bool)
+
+    def edges_ok_grid(self) -> NDArray[np.bool_] | None:
+        """``(nz, ny, nx, 3)`` edge flags for the grid operations, ``None`` when nothing was cut."""
+        return self.edge_ok.reshape(self.grid_shape + (3,)) if self.is_cut else None
 
     @property
     def n_elements(self) -> int:

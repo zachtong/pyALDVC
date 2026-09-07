@@ -23,6 +23,7 @@ from __future__ import annotations
 import numpy as np
 
 from .._numba_compat import JIT_CACHE, njit, prange
+from ..utils.flood_fill import flood_fill_centre
 from .interp_kernels import interp_margin_ok, sample_volume
 
 STATUS_CONVERGED = 0
@@ -216,64 +217,7 @@ def _grad_at(f, gx, gy, gz, zz, yy, xx):
 # ---------------------------------------------------------------------------
 
 
-@njit(cache=JIT_CACHE)
-def _flood_fill_centre(sub, out, queue):
-    """Mark in ``out`` the 6-connected component of ``sub`` (nonzero = in mask) that holds the centre.
-
-    ``sub`` and ``out`` are ``(Sz, Sy, Sx)`` uint8, ``queue`` an int64 scratch array of
-    ``Sz * Sy * Sx`` entries. Paths stay inside the window. Returns the number of voxels marked
-    (0 when the centre voxel itself is masked).
-    """
-    Sz = sub.shape[0]
-    Sy = sub.shape[1]
-    Sx = sub.shape[2]
-    for iz in range(Sz):
-        for iy in range(Sy):
-            for ix in range(Sx):
-                out[iz, iy, ix] = 0
-    cz = Sz // 2
-    cy = Sy // 2
-    cx = Sx // 2
-    if sub[cz, cy, cx] == 0:
-        return 0
-    head = 0
-    tail = 0
-    queue[tail] = (cz * Sy + cy) * Sx + cx
-    tail += 1
-    out[cz, cy, cx] = 1
-    count = 1
-    while head < tail:
-        lin = queue[head]
-        head += 1
-        iz = lin // (Sy * Sx)
-        rem = lin - iz * (Sy * Sx)
-        iy = rem // Sx
-        ix = rem - iy * Sx
-        for k in range(6):
-            jz = iz
-            jy = iy
-            jx = ix
-            if k == 0:
-                jz = iz - 1
-            elif k == 1:
-                jz = iz + 1
-            elif k == 2:
-                jy = iy - 1
-            elif k == 3:
-                jy = iy + 1
-            elif k == 4:
-                jx = ix - 1
-            else:
-                jx = ix + 1
-            if jz < 0 or jz >= Sz or jy < 0 or jy >= Sy or jx < 0 or jx >= Sx:
-                continue
-            if sub[jz, jy, jx] == 0 or out[jz, jy, jx] != 0:
-                continue
-            out[jz, jy, jx] = 1
-            count += 1
-            queue[tail] = (jz * Sy + jy) * Sx + jx
-            tail += 1
-    return count
+_flood_fill_centre = flood_fill_centre  # the shared 6-connected fill, seeded at the window centre
 
 
 @njit(parallel=True, cache=JIT_CACHE)

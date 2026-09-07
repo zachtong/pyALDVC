@@ -342,6 +342,14 @@ class ResultsPanel(QWidget):
                     k=k + 1, r=fr.ref_frame, z=z, beta=beta, std=std, status=status
                 )
             )
+            sf = fr.split_fraction
+            if sf is not None:
+                cut = np.asarray(sf)[np.isfinite(sf) & (np.asarray(sf) < 1.0)]
+                lines.append(
+                    self.tr("  split at boundaries: {n} subsets cut, median {p} % of their voxels kept").format(
+                        n=int(cut.size), p=f"{100 * float(np.median(cut)):.0f}" if cut.size else "-"
+                    )
+                )
         lines.append(
             self.tr("Time: total {t:.1f} s (local {l:.1f} s, ADMM local {s1:.1f} s)").format(
                 t=t.get("total", 0.0), l=t.get("local_icgn", 0.0), s1=t.get("subpb1", 0.0)

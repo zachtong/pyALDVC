@@ -1,5 +1,6 @@
 {
   "  (~{s:.0f} s left)": "（约剩 {s:.0f} 秒）",
+  "  split at boundaries: {n} subsets cut, median {p} % of their voxels kept": "  边界处拆分：切割了 {n} 个子集，保留体素的中位数为 {p} %",
   " (click again to stop drawing)": "（再次点击停止绘制）",
   " (limited to {n} frames for {fmt})": "（{fmt} 最多 {n} 帧）",
   " (log)": "（对数）",
@@ -28,6 +29,7 @@
   "A run is in progress. Stop it before changing the session.": "有分析正在运行。请先停止，再更换会话。",
   "A small window gives a noisy length: it sees only a few speckles. The representative volume element is the window size from which the length no longer changes. Windows of growing size, all centred in the region, are analysed with the same shifts; the first size of the stable run becomes the window of step 3.": "小窗口给出的相关长度噪声很大：它只看到寥寥几个散斑。代表体积单元就是相关长度不再变化的窗口尺寸。以区域中心为中心、尺寸逐渐增大的窗口用同样的平移量分析；稳定段的第一个尺寸就成为第 3 步的窗口。",
   "A subset must span several correlation lengths on every axis, so it always holds enough texture. The suggestion is 4 times the 1/e length per axis (the factor can be changed in step 3), rounded to an odd number of voxels, with a step of half the subset. It is a recommended start, not a guarantee: a noisy scan may need a larger subset, a finely varying displacement field a smaller one. Check the run and adjust. Apply writes both into the DVC parameters.": "子集在每个轴上都必须跨越若干个相关长度，才能始终包含足够的纹理。建议值为每个轴 1/e 长度的 4 倍（倍数可在第 3 步修改），取整为奇数体素，步长为子集的一半。这是推荐的起点，不是保证：噪声大的扫描可能需要更大的子集，变化剧烈的位移场可能需要更小的。请检查运行结果并调整。「应用」把两者写入 DVC 参数。",
+  "A subset that touches a hole, the region edge or a crack keeps only the part connected to its centre, and the node grid is cut there too, so nothing reaches across a boundary. Off: the whole in-mask subset is used and the grid stays connected.": "触及孔洞、区域边缘或裂纹的子集只保留与其中心连通的那部分，节点网格也在同一处切断，任何计算都不跨越边界。关闭时使用掩膜内的整个子集，网格保持连通。",
   "ADMM iterations": "ADMM 迭代次数",
   "ADMM penalty mu": "ADMM 罚参数 mu",
   "AL-DVC": "AL-DVC",
@@ -477,6 +479,7 @@
   "Solver gradient (direct)": "求解器梯度（直接）",
   "Some checks failed.": "部分检查失败。",
   "Speed": "速度",
+  "Split at boundaries": "在边界处拆分",
   "Spread of the radial curve inside each shell (direction dependence plus noise)": "径向曲线在每个球壳内的离散度（方向依赖性加噪声）",
   "Stable length [voxel]": "稳定长度 [体素]",
   "Start": "开始",

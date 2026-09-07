@@ -162,3 +162,31 @@ def test_split_without_boundaries_changes_nothing(wall_pair):
         outs.append(res.result_disp[0])
     assert np.array_equal(outs[0].U, outs[1].U) and np.array_equal(outs[0].zncc, outs[1].zncc)
     assert np.all(outs[1].split_fraction[np.asarray(outs[1].status) == 0] == 1.0)
+
+
+def test_mesh_is_cut_at_the_wall_and_the_admm_result_keeps_the_jump(wall_pair):
+    from al_dvc.mesh.mesh_cut import cut_edge_nodes
+
+    f, g, disp, mask_ref, mask_def = wall_pair
+    para = dvcpara_default(winsize=WIN, winstepsize=8, search_radius=5, verbose=False, backend="numba", subset_split=True)
+    res = run_aldvc(para, [f, g], masks=[mask_ref, mask_def], compute_strain=True, resume=False)
+    mesh = res.dvc_mesh
+    x = mesh.coordinates[:, 0]
+    nx = mesh.grid_shape[2]
+    assert mesh.is_cut
+    straddle = (x < WALL) & (x + mesh.spacing[0] > WALL) & np.asarray(mesh.node_valid)
+    assert straddle.any() and not mesh.edge_ok[straddle, 0].any()  # every +x edge across the wall is cut
+    assert mesh.edge_ok[~straddle, 0].all() and mesh.edge_ok[:, 1].all() and mesh.edge_ok[:, 2].all()
+    assert set(cut_edge_nodes(mesh.edge_ok, mesh.grid_shape)) <= set(mesh.boundary_nodes.tolist())
+    live = mesh.elements[mesh.elements[:, 0] >= 0]
+    assert not np.any((x[live[:, 0]] < WALL) & (x[live[:, 1]] > WALL))  # no surviving element spans the wall
+    fr = res.result_disp[0]
+    err = np.linalg.norm(fr.U - evaluate_at_nodes(disp, mesh.coordinates), axis=1)
+    dist = np.abs(x - WALL)
+    near = (dist <= WIN / 2) & (dist > 1.0) & np.asarray(mesh.node_valid, dtype=bool)
+    assert fr.admm is not None and float(np.sqrt(np.mean(err[near] ** 2))) < 0.05  # the global step no longer smooths it
+    # rigid bodies: the strain next to the wall stays small because the plane fit does not reach across
+    sr = res.result_strain[0]
+    exx = np.asarray(sr.exx)
+    assert np.nanmax(np.abs(exx[near & np.isfinite(exx)])) < 0.01
+    assert nx > 0

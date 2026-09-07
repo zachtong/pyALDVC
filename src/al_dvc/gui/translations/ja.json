@@ -1,5 +1,6 @@
 {
   "  (~{s:.0f} s left)": "（残り約 {s:.0f} 秒）",
+  "  split at boundaries: {n} subsets cut, median {p} % of their voxels kept": "  境界で分割：{n} 個のサブセットを切断、保持ボクセルの中央値 {p} %",
   " (click again to stop drawing)": "（もう一度クリックで描画終了）",
   " (limited to {n} frames for {fmt})": "（{fmt} は最大 {n} フレーム）",
   " (log)": "（対数）",
@@ -28,6 +29,7 @@
   "A run is in progress. Stop it before changing the session.": "解析が実行中です。セッションを変更する前に停止してください。",
   "A small window gives a noisy length: it sees only a few speckles. The representative volume element is the window size from which the length no longer changes. Windows of growing size, all centred in the region, are analysed with the same shifts; the first size of the stable run becomes the window of step 3.": "小さな窓では相関長がばらつきます。見えるスペックルが少ないからです。代表体積要素とは、相関長が変化しなくなる窓サイズのことです。領域の中心に置いた大きさの異なる窓を同じシフトで解析し、安定した区間の最初のサイズがステップ 3 の窓になります。",
   "A subset must span several correlation lengths on every axis, so it always holds enough texture. The suggestion is 4 times the 1/e length per axis (the factor can be changed in step 3), rounded to an odd number of voxels, with a step of half the subset. It is a recommended start, not a guarantee: a noisy scan may need a larger subset, a finely varying displacement field a smaller one. Check the run and adjust. Apply writes both into the DVC parameters.": "サブセットは各軸で相関長の数倍にわたる必要があり、そうして常に十分なテクスチャを含みます。提案値は各軸の 1/e 長の 4 倍（倍率はステップ 3 で変更可能）を奇数ボクセルに丸めたもので、ステップはサブセットの半分です。これは推奨の出発点であり保証ではありません。ノイズの多いスキャンではより大きなサブセットが、細かく変化する変位場ではより小さなサブセットが必要になることがあります。実行結果を確認して調整してください。「適用」で両方が DVC パラメータに書き込まれます。",
+  "A subset that touches a hole, the region edge or a crack keeps only the part connected to its centre, and the node grid is cut there too, so nothing reaches across a boundary. Off: the whole in-mask subset is used and the grid stays connected.": "穴、領域の縁、亀裂に触れるサブセットは中心とつながった部分だけを使い、節点格子も同じ場所で切断されるため、境界をまたぐ計算はありません。オフではマスク内のサブセット全体を使い、格子はつながったままです。",
   "ADMM iterations": "ADMM 反復回数",
   "ADMM penalty mu": "ADMM ペナルティ mu",
   "AL-DVC": "AL-DVC",
@@ -477,6 +479,7 @@
   "Solver gradient (direct)": "ソルバー勾配（直接）",
   "Some checks failed.": "一部のチェックに失敗しました。",
   "Speed": "速度",
+  "Split at boundaries": "境界で分割",
   "Spread of the radial curve inside each shell (direction dependence plus noise)": "各シェル内での径方向曲線のばらつき（方向依存性とノイズ）",
   "Stable length [voxel]": "安定した長さ [ボクセル]",
   "Start": "開始",

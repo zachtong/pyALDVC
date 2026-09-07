@@ -32,12 +32,17 @@ def fill_nan_nearest(grid: NDArray[np.float64]) -> NDArray[np.float64]:
     return arr[tuple(idx)]
 
 
-def fill_nan_grid(grid: NDArray[np.float64], method: str = "spring") -> NDArray[np.float64]:
+def fill_nan_grid(
+    grid: NDArray[np.float64], method: str = "spring", edge_ok: NDArray[np.bool_] | None = None
+) -> NDArray[np.float64]:
     """Fill NaN nodes of a ``(nz, ny, nx)`` (or 2-D / 1-D) grid.
 
     Args:
         grid: array with NaN at unknown nodes.
         method: ``"spring"`` (harmonic extension, default) or ``"nearest"``.
+        edge_ok: ``(nz, ny, nx, 3)`` edge flags (x, y, z) of a cut mesh: the springs across
+            cut edges are removed, so a hole is filled from its own side only (the
+            ``"nearest"`` fallback ignores the cut).
     """
     arr = np.array(grid, dtype=np.float64, copy=True)
     nan = np.isnan(arr)
@@ -74,6 +79,9 @@ def fill_nan_grid(grid: NDArray[np.float64], method: str = "spring") -> NDArray[
         sl_b[ax] = slice(1, None)
         a = idx_grid[tuple(sl_a)].ravel()
         b = idx_grid[tuple(sl_b)].ravel()
+        if edge_ok is not None and arr.ndim == 3:
+            ok = np.asarray(edge_ok, dtype=bool)[..., 2 - ax][tuple(sl_a)].ravel()
+            a, b = a[ok], b[ok]
         for p, q in ((a, b), (b, a)):
             # equation of unknown p gets contribution from neighbour q
             pu = pos[p]
@@ -112,12 +120,17 @@ def fill_nan_grid(grid: NDArray[np.float64], method: str = "spring") -> NDArray[
     return flat.reshape(shape)
 
 
-def fill_nan_nodes(values: NDArray[np.float64], grid_shape: tuple[int, int, int], method: str = "spring") -> NDArray[np.float64]:
+def fill_nan_nodes(
+    values: NDArray[np.float64],
+    grid_shape: tuple[int, int, int],
+    method: str = "spring",
+    edge_ok: NDArray[np.bool_] | None = None,
+) -> NDArray[np.float64]:
     """Fill NaNs of a per-node array ``(N,)`` or ``(N, C)`` laid out on ``grid_shape``."""
     v = np.asarray(values, dtype=np.float64)
     if v.ndim == 1:
-        return fill_nan_grid(v.reshape(grid_shape), method).ravel()
+        return fill_nan_grid(v.reshape(grid_shape), method, edge_ok).ravel()
     out = v.copy()
     for c in range(v.shape[1]):
-        out[:, c] = fill_nan_grid(v[:, c].reshape(grid_shape), method).ravel()
+        out[:, c] = fill_nan_grid(v[:, c].reshape(grid_shape), method, edge_ok).ravel()
     return out

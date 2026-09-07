@@ -73,12 +73,18 @@ diagnostic says what happened.
 D6. **Default off.** `DVCPara.subset_split = False`; existing results, sessions and the MATLAB
 agreement do not change unless the user turns it on.
 
-D7. **The global step is a separate phase with a separate criterion.** Splitting changes which
-voxels a node correlates, not `node_valid`; the FEM and FD operators would still couple the two
-sides of a boundary. The cut criterion for node pairs is "the straight segment between the two
-nodes crosses a masked voxel", applied identically to FD stencils, hex8 element edges, bad-node
-inpainting, the median test and the strain plane fit, so mesh topology and solver validity never
-disagree.
+D7. **The global step is a separate phase, cut per element the way pyALDIC does it.** Splitting
+changes which voxels a node correlates, not `node_valid`; the FEM and FD operators would still
+couple the two sides of a boundary. pyALDIC never had this problem because its mesh is trimmed by
+`mesh/mark_bridging.py` (applied in the default pipeline, `core/pipeline.py:1178`): the material
+pixels inside an element's bounding box are labelled (4-connected) and the element is removed when
+its corner nodes fall in different components. The 3-D port is the same test on the hex8 box with
+6-connectivity: corners in different components -> the element is dropped. An edge is "ok" when at
+least one surviving element contains it, and that `edge_ok (N, 3)` table drives the FD stencils,
+bad-node inpainting, the median test and the strain plane fit, so mesh topology and solver
+validity never disagree. A plain segment test was rejected: a grid edge through a small pore would
+cut the regulariser all over a porous material although the material is connected around the pore;
+the box labelling keeps such elements, and it stops by itself at a crack front.
 
 D8. **The initial guess stays split-blind in phase 1** (as in pyALDIC), with the same-side
 neighbour fallback of phase 2 as the cheap fix.
@@ -147,20 +153,23 @@ the noise correction already scales with `n_valid / n_full` (`numba_kernels.py:5
 approximation that remains is that the noise pattern's geometric moments are those of the full
 cube; acceptable, and cheap to recompute per split node in the precompute if a test shows it matters.
 
-### 5.4 Segment test for the global step (phase 2)
+### 5.4 Element cut for the global step (phase 3)
 
 ```
-segment_crosses_mask(mask, p, q) -> bool     # samples the segment every 0.5 voxel, nearest voxel
-edge_ok: (N, 3) bool                          # node n to its +x, +y, +z grid neighbour
+bridging_elements(mask, coords, elements) -> bool (E,)   # per hex8: label the in-mask voxels of the
+                                                          # element's bounding box (6-connected, numba flood
+                                                          # fill from one corner); True when the 8 corners
+                                                          # are not all in one component
+edge_ok: (N, 3) bool                                      # node n to its +x, +y, +z grid neighbour: some
+                                                          # surviving element contains the edge
 ```
 
-FD: `has_prev` / `has_next` in `global_operators._difference_operator` also require `edge_ok`.
-FEM: `active_elements` requires all eight corners valid and all twelve edges ok.
-Inpainting (`fill_bad_nodes`, `fill_nan_grid`), `universal_median_test` and the strain plane fit
-take neighbours only across ok edges (or, for the plane fit, only neighbours whose segment from
-the centre node does not cross the mask).
-
-Cost: 3N segments of `step` samples, about 2 M lookups for 82 800 nodes at step 8.
+FEM: `active_elements` also drops bridging elements. FD: `has_prev` / `has_next` in
+`global_operators._difference_operator` also require `edge_ok`. Inpainting (`fill_bad_nodes`,
+`fill_nan_grid`), `universal_median_test` and the strain plane fit take neighbours only through ok
+edges (path connectivity inside their window, decision 3). Nodes next to a dropped element join
+`boundary_nodes` for the beta sweep. Cost: one `(step + 1)^3` labelling per element, a few seconds
+for 80 000 elements.
 
 ## 6. Changes by file
 

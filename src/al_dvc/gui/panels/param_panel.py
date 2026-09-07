@@ -138,6 +138,7 @@ class ParamPanel(QWidget):
         self.init_outlier = dspin(0.0, 20.0, 2)
         self.hessian_cond = dspin(1.0, 1e15, 0)
         self.min_valid_ratio = dspin(0.05, 1.0, 2)
+        self.subset_split = QCheckBox()
         self.checkpoint = QCheckBox()
         self.checkpoint.setChecked(bool(state.write_checkpoints))
         advanced = self._add_section(
@@ -159,6 +160,7 @@ class ParamPanel(QWidget):
                 ("init_outlier", self.init_outlier),
                 ("hessian_cond", self.hessian_cond),
                 ("min_valid_ratio", self.min_valid_ratio),
+                ("subset_split", self.subset_split),
             ],
             expanded=False,
         )
@@ -229,6 +231,7 @@ class ParamPanel(QWidget):
         self.init_outlier.valueChanged.connect(lambda v: self._set("init_outlier_threshold", float(v)))
         self.hessian_cond.valueChanged.connect(lambda v: self._set("hessian_cond_max", float(v)))
         self.min_valid_ratio.valueChanged.connect(lambda v: self._set("min_valid_ratio", float(v)))
+        self.subset_split.toggled.connect(lambda v: self._set("subset_split", bool(v)))
         self.checkpoint.toggled.connect(lambda v: setattr(self._state, "write_checkpoints", bool(v)))
 
     def _set(self, name: str, value: Any) -> None:
@@ -326,6 +329,7 @@ class ParamPanel(QWidget):
             self.init_outlier.setValue(float(p.init_outlier_threshold))
             self.hessian_cond.setValue(float(p.hessian_cond_max))
             self.min_valid_ratio.setValue(float(p.min_valid_ratio))
+            self.subset_split.setChecked(bool(getattr(p, "subset_split", False)))
             self.checkpoint.setChecked(bool(self._state.write_checkpoints))
         finally:
             self._updating = False
@@ -391,6 +395,7 @@ class ParamPanel(QWidget):
             "init_outlier": self.tr("Initial-guess outlier threshold"),
             "hessian_cond": self.tr("Max Hessian condition"),
             "min_valid_ratio": self.tr("Min valid subset fraction"),
+            "subset_split": self.tr("Split at boundaries"),
         }
         for key, label in self.labels.items():
             label.setText(texts[key])
@@ -451,6 +456,11 @@ class ParamPanel(QWidget):
             "init_outlier": self.tr("Median-test threshold for the initial guess (0 = off)."),
             "hessian_cond": self.tr("Subsets whose Hessian is worse conditioned than this are skipped (no texture)."),
             "min_valid_ratio": self.tr("Minimum fraction of a subset inside the region of interest for the node to be solved."),
+            "subset_split": self.tr(
+                "A subset that touches a hole, the region edge or a crack keeps only the part connected to its centre, and "
+                "the node grid is cut there too, so nothing reaches across a boundary. Off: the whole in-mask subset is used "
+                "and the grid stays connected."
+            ),
         }
         for key, tip in tips.items():
             self.labels[key].setToolTip(tip)

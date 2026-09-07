@@ -168,7 +168,10 @@ def subpb1_solver(
         good = ~bad
         if good.sum() > 27:
             flag = universal_median_test(
-                U.reshape(mesh.grid_shape + (3,)), good.reshape(mesh.grid_shape), para.local_outlier_threshold
+                U.reshape(mesh.grid_shape + (3,)),
+                good.reshape(mesh.grid_shape),
+                para.local_outlier_threshold,
+                edge_ok=mesh.edges_ok_grid(),
             )
             bad |= flag.ravel()
     n_bad = int(np.sum(bad & (status != STATUS_INVALID_SUBSET) & (status != STATUS_SKIPPED)))

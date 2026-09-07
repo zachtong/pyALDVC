@@ -1,5 +1,6 @@
 {
   "  (~{s:.0f} s left)": "  (~{s:.0f} s restantes)",
+  "  split at boundaries: {n} subsets cut, median {p} % of their voxels kept": "  Scindés aux frontières : {n} sous-ensembles coupés, médiane de {p} % de leurs voxels conservés",
   " (click again to stop drawing)": " (cliquer à nouveau pour arrêter)",
   " (limited to {n} frames for {fmt})": " (limité à {n} images pour {fmt})",
   " (log)": " (log)",
@@ -28,6 +29,7 @@
   "A run is in progress. Stop it before changing the session.": "Une analyse est en cours. Arrêtez-la avant de changer de session.",
   "A small window gives a noisy length: it sees only a few speckles. The representative volume element is the window size from which the length no longer changes. Windows of growing size, all centred in the region, are analysed with the same shifts; the first size of the stable run becomes the window of step 3.": "Une petite fenêtre donne une longueur bruitée : elle ne voit que quelques grains. Le volume élémentaire représentatif est la taille de fenêtre à partir de laquelle la longueur ne change plus. Des fenêtres de taille croissante, toutes centrées dans la région, sont analysées avec les mêmes décalages ; la première taille de la série stable devient la fenêtre de l'étape 3.",
   "A subset must span several correlation lengths on every axis, so it always holds enough texture. The suggestion is 4 times the 1/e length per axis (the factor can be changed in step 3), rounded to an odd number of voxels, with a step of half the subset. It is a recommended start, not a guarantee: a noisy scan may need a larger subset, a finely varying displacement field a smaller one. Check the run and adjust. Apply writes both into the DVC parameters.": "Un sous-ensemble doit couvrir plusieurs longueurs de corrélation sur chaque axe, afin de toujours contenir assez de texture. La suggestion est 4 fois la longueur 1/e par axe (le facteur se règle à l'étape 3), arrondie à un nombre impair de voxels, avec un pas de la moitié du sous-ensemble. C'est un point de départ recommandé, pas une garantie : un scan bruité peut demander un sous-ensemble plus grand, un champ de déplacement finement variable un plus petit. Vérifiez le calcul et ajustez. Appliquer écrit les deux dans les paramètres DVC.",
+  "A subset that touches a hole, the region edge or a crack keeps only the part connected to its centre, and the node grid is cut there too, so nothing reaches across a boundary. Off: the whole in-mask subset is used and the grid stays connected.": "Un sous-ensemble qui touche un trou, le bord de la région ou une fissure ne garde que la partie reliée à son centre, et la grille de nœuds est coupée au même endroit : rien ne traverse une frontière. Désactivé : tout le sous-ensemble dans le masque est utilisé et la grille reste connectée.",
   "ADMM iterations": "Itérations ADMM",
   "ADMM penalty mu": "Pénalité ADMM mu",
   "AL-DVC": "AL-DVC",
@@ -477,6 +479,7 @@
   "Solver gradient (direct)": "Gradient du solveur (direct)",
   "Some checks failed.": "Certaines vérifications ont échoué.",
   "Speed": "Vitesse",
+  "Split at boundaries": "Scinder aux frontières",
   "Spread of the radial curve inside each shell (direction dependence plus noise)": "Dispersion de la courbe radiale dans chaque coquille (dépendance directionnelle plus bruit)",
   "Stable length [voxel]": "Longueur stable [voxels]",
   "Start": "Démarrer",

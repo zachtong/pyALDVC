@@ -47,6 +47,8 @@ def export_npz(result: PipelineResult, path: str | Path) -> Path:
             arrays["U_accum" + tag] = fr.U_accum
         if fr.zncc is not None:
             arrays["zncc" + tag] = fr.zncc
+        if fr.split_fraction is not None:
+            arrays["split_fraction" + tag] = fr.split_fraction
         if fr.status is not None:
             arrays["status" + tag] = fr.status
         if fr.U_local is not None:

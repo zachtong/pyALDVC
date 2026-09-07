@@ -71,11 +71,12 @@ def compute_strain(
             logger.warning("No active elements for FEM strain; falling back to plane_fit.")
             method = "plane_fit"
 
+    edge_ok = mesh.edges_ok_grid()  # a cut mesh: every stencil stays on its own side of the boundary
     if method == "plane_fit":
-        F_grid, complete = gradient_plane_fit(U_grid, mesh.spacing, para.strain_plane_fit_halfwidth, valid_grid)
+        F_grid, complete = gradient_plane_fit(U_grid, mesh.spacing, para.strain_plane_fit_halfwidth, valid_grid, edge_ok)
         F = F_grid.reshape(N, 3, 3)
     elif method == "fd":
-        F_grid, complete = gradient_fd(U_grid, mesh.spacing, valid_grid)
+        F_grid, complete = gradient_fd(U_grid, mesh.spacing, valid_grid, edge_ok)
         F = F_grid.reshape(N, 3, 3)
     elif method == "fem":
         from ..solver.global_operators import nodal_gradient

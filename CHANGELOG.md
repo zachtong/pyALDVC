@@ -12,10 +12,16 @@ All notable changes to pyALDVC are documented here. The format follows
   a subset next to a hole, the region edge or a crack no longer mixes the two sides. Same
   rule for every boundary, computed once per reference at full resolution and stored as
   packed bits for the affected nodes only; `min_valid_ratio` then applies to the kept part.
-  Results carry `split_fraction` per node (kept share, exported and checkpointed like
-  ZNCC). CPU kernels (numba and NumPy reference) only: the CUDA backend falls back to the
-  CPU kernels for the local steps while splitting is on. The global step still couples
-  the two sides of a boundary (next phase).
+  Results carry `split_fraction` per node (kept share, exported to NumPy, MATLAB and
+  ParaView and checkpointed like ZNCC). The node grid is cut at the same boundaries:
+  every hex8 element whose corners the mask separates inside its box is dropped (the
+  3-D port of pyALDIC's `mark_bridging`), and the cut edges keep the finite-difference
+  operators, the bad-node inpainting, the median test and the strain plane fit on one
+  side, so the global step no longer smooths a jump away. On two rigid bodies
+  separated by a masked wall the displacement error next to the wall drops from 0.38
+  to 0.02 voxel (`reports/subset_split.pdf`). Check box "Split at boundaries" in the
+  advanced parameters. CPU kernels (numba and NumPy reference): the CUDA backend runs
+  the local steps on the CPU while splitting is on.
 
 ## [0.6.0] - 2026-09-07
 

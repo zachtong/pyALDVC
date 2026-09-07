@@ -92,6 +92,7 @@ class Checkpoint:
             "node_valid": np.asarray(mesh.node_valid, dtype=bool),
             "elements": np.asarray(mesh.elements, dtype=np.int64),
             "boundary_nodes": np.asarray(mesh.boundary_nodes, dtype=np.int64),
+            "edge_ok": np.asarray(mesh.edge_ok, dtype=bool),
         }
         for name in ("U_accum", "U_local", "F_local", "U0", "zncc", "status", "U_std", "split_fraction"):
             val = getattr(fr, name)
@@ -124,6 +125,7 @@ class Checkpoint:
             node_valid=d["node_valid"].astype(bool),
             elements=d["elements"].astype(np.int64),
             boundary_nodes=d["boundary_nodes"].astype(np.int64),
+            edge_ok=d["edge_ok"].astype(bool) if "edge_ok" in d else np.empty((0, 3), dtype=bool),
         )
         admm = None
         if "admm_scalars" in d:

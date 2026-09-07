@@ -77,6 +77,8 @@ def export_vtk(
         data: dict[str, np.ndarray] = {"displacement": U, "node_valid": mesh.node_valid.astype(np.float32)}
         if fr.zncc is not None:
             data["zncc"] = fr.zncc
+        if fr.split_fraction is not None:
+            data["split_fraction"] = np.asarray(fr.split_fraction, dtype=np.float32)
         if fr.U_std is not None:
             data["displacement_std"] = np.asarray(fr.U_std) * vs[None, :]
         for f in fields:

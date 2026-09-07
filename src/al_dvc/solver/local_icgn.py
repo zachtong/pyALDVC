@@ -393,7 +393,9 @@ def local_icgn(
         good = ~bad
         if good.sum() > 27:
             U_grid = U.reshape(mesh.grid_shape + (3,))
-            flag = universal_median_test(U_grid, good.reshape(mesh.grid_shape), para.local_outlier_threshold)
+            flag = universal_median_test(
+                U_grid, good.reshape(mesh.grid_shape), para.local_outlier_threshold, edge_ok=mesh.edges_ok_grid()
+            )
             bad |= flag.ravel()
     n_bad = int(np.sum(bad & (status != STATUS_INVALID_SUBSET) & (status != STATUS_SKIPPED)))
     logger.info(
@@ -427,11 +429,12 @@ def fill_bad_nodes(
             F = np.zeros_like(F)
         return U, F
     shape = mesh.grid_shape
+    edge_ok = mesh.edges_ok_grid()  # a cut mesh is filled from each side separately
     U_out = U.copy()
     for c in range(3):
         comp = U[:, c].reshape(shape).copy()
         comp[bad.reshape(shape)] = np.nan
-        U_out[:, c] = fill_nan_grid(comp).ravel()
+        U_out[:, c] = fill_nan_grid(comp, edge_ok=edge_ok).ravel()
     F_out = None
     if F is not None:
         F_out = F.copy()
@@ -439,5 +442,5 @@ def fill_bad_nodes(
             for j in range(3):
                 comp = F[:, i, j].reshape(shape).copy()
                 comp[bad.reshape(shape)] = np.nan
-                F_out[:, i, j] = fill_nan_grid(comp).ravel()
+                F_out[:, i, j] = fill_nan_grid(comp, edge_ok=edge_ok).ravel()
     return U_out, F_out

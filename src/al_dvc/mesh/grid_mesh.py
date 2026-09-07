@@ -11,6 +11,7 @@ from numpy.typing import NDArray
 
 from ..core.data_structures import DVCMesh, VOIRange
 from ..io.volume_ops import GRADIENT_BORDER
+from .mesh_cut import cut_edge_nodes, cut_mesh
 
 INTERP_MARGIN = 2  # voxels needed by the tricubic kernel on each side
 
@@ -176,12 +177,15 @@ def apply_mask_to_mesh(
     mask: NDArray[np.uint8] | NDArray[np.bool_] | None,
     winsize: tuple[int, int, int],
     min_valid_ratio: float,
+    cut_bridging: bool = False,
 ) -> DVCMesh:
     """Mark nodes invalid (outside the mask / poor coverage) and drop elements.
 
     A node is valid when its centre voxel is inside the mask and at least
     ``min_valid_ratio`` of its subset voxels are. Elements with any invalid
-    corner are removed (row set to -1). Returns a new ``DVCMesh``.
+    corner are removed (row set to -1). With ``cut_bridging`` the elements that
+    span a masked boundary are removed too and the cut edges are recorded in
+    ``edge_ok`` (see :mod:`al_dvc.mesh.mesh_cut`). Returns a new ``DVCMesh``.
     """
     n = mesh.n_nodes
     if mask is None:
@@ -201,6 +205,10 @@ def apply_mask_to_mesh(
             bad_elem = ~node_valid[elements].all(axis=1)
             elements[bad_elem, :] = -1
 
+    edge_ok = np.empty((0, 3), dtype=bool)
+    if mask is not None and cut_bridging and elements.size:
+        elements, edge_ok, _n_cut = cut_mesh(elements, mesh.coordinates, np.asarray(mask), n)
+
     boundary = set(grid_surface_nodes(mesh.grid_shape).tolist())
     if not node_valid.all():
         # valid nodes adjacent (6-connectivity) to an invalid node are boundary
@@ -212,6 +220,8 @@ def apply_mask_to_mesh(
             sl = tuple(slice(1 + s, 1 + s + d) for s, d in zip(shift, (nz, ny, nx)))
             near_invalid |= ~pad[sl]
         boundary |= set(np.flatnonzero((near_invalid & v).ravel()).tolist())
+    if edge_ok.size:  # nodes at a cut edge see a boundary too (beta sweep, diagnostics)
+        boundary |= set(cut_edge_nodes(edge_ok, mesh.grid_shape).tolist())
 
     return DVCMesh(
         coordinates=mesh.coordinates,
@@ -223,6 +233,7 @@ def apply_mask_to_mesh(
         spacing=mesh.spacing,
         node_valid=node_valid,
         boundary_nodes=np.array(sorted(boundary), dtype=np.int64),
+        edge_ok=edge_ok,
     )
 
 

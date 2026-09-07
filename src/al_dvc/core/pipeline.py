@@ -182,7 +182,13 @@ def run_aldvc(
         f = presmooth_volume(provider.get_normalized(ref_idx), para.prefilter_sigma)
         mask = provider.get_mask(ref_idx)
         bundle = build_reference_bundle(f, mask, para.gradient_mode)
-        mesh = apply_mask_to_mesh(base_mesh, bundle.mask if mask is not None else None, para.winsize, para.min_valid_ratio)
+        mesh = apply_mask_to_mesh(
+            base_mesh,
+            bundle.mask if mask is not None else None,
+            para.winsize,
+            para.min_valid_ratio,
+            cut_bridging=bool(getattr(para, "subset_split", False)),
+        )
         ctx = precompute_local_context(mesh, bundle, para)
         mesh.node_valid = ctx.valid.copy()
         ops = None
