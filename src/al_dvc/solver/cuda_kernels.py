@@ -185,6 +185,17 @@ def clear_device_cache() -> None:
     _cache.clear()
 
 
+def _split_device(n_nodes: int, split_index, split_keep):
+    """Device arrays of the subset-splitting rows; placeholders (nothing split) when they are ``None``."""
+    if split_index is None or split_keep is None:
+        idx = np.full(int(n_nodes), -1, dtype=np.int64)
+        rows = np.zeros((1, 1), dtype=np.uint8)
+    else:
+        idx = np.ascontiguousarray(split_index, dtype=np.int64)
+        rows = np.ascontiguousarray(split_keep, dtype=np.uint8)
+    return _cache.get(idx), _cache.get(rows)
+
+
 # --------------------------------------------------------------------------- kernels (compiled lazily)
 _kernels: dict[str, Any] = {}
 
@@ -444,6 +455,8 @@ def _build_kernels() -> dict[str, Any]:
         gz,
         stored,
         mask,
+        split_index,
+        split_keep,
         g,
         mode,
         L_all,
@@ -465,6 +478,7 @@ def _build_kernels() -> dict[str, Any]:
         blk = cuda.blockIdx.x
         tid = cuda.threadIdx.x
         n = idx[blk]
+        keep_row = split_index[n]  # subset splitting: row of the packed keep bits, -1 when the subset is whole
         red = cuda.shared.array((RED_Q, BLOCK), float32)
         P = cuda.shared.array(12, float64)
         dP = cuda.shared.array(12, float64)
@@ -546,7 +560,12 @@ def _build_kernels() -> dict[str, Any]:
                 zz = z0 + dz
                 yy = y0 + dy
                 xx = x0 + dx
-                if mask[zz, yy, xx] == 0:
+                if keep_row >= 0:
+                    # subset splitting: the packed keep row also excludes voxels outside the volume
+                    if (split_keep[keep_row, v >> 3] >> (v & 7)) & 1 == 0:
+                        gbuf[blk, v] = math.nan
+                        continue
+                elif mask[zz, yy, xx] == 0:
                     gbuf[blk, v] = math.nan
                     continue
                 nref += F32(1.0)
@@ -824,6 +843,8 @@ def _build_kernels() -> dict[str, Any]:
         gz,
         stored,
         mask,
+        split_index,
+        split_keep,
         g,
         mode,
         H_all,
@@ -845,6 +866,7 @@ def _build_kernels() -> dict[str, Any]:
         blk = cuda.blockIdx.x
         tid = cuda.threadIdx.x
         n = idx[blk]
+        keep_row = split_index[n]  # subset splitting: row of the packed keep bits, -1 when the subset is whole
         red = cuda.shared.array((RED_Q, BLOCK), float32)
         P = cuda.shared.array(12, float64)
         st = cuda.shared.array(8, float64)
@@ -933,7 +955,12 @@ def _build_kernels() -> dict[str, Any]:
                 zz = z0 + dz
                 yy = y0 + dy
                 xx = x0 + dx
-                if mask[zz, yy, xx] == 0:
+                if keep_row >= 0:
+                    # subset splitting: the packed keep row also excludes voxels outside the volume
+                    if (split_keep[keep_row, v >> 3] >> (v & 7)) & 1 == 0:
+                        gbuf[blk, v] = math.nan
+                        continue
+                elif mask[zz, yy, xx] == 0:
                     gbuf[blk, v] = math.nan
                     continue
                 nref += F32(1.0)
@@ -1117,7 +1144,7 @@ def _build_kernels() -> dict[str, Any]:
     _kernels["icgn3"] = icgn3_kernel
 
     @cuda.jit
-    def precompute_kernel(coords, hx, hy, hz, stride, f, gx, gy, gz, stored, mask, H_out, sums_out):
+    def precompute_kernel(coords, hx, hy, hz, stride, f, gx, gy, gz, stored, mask, split_index, split_keep, H_out, sums_out):
         """Per node: the 78 upper-triangle entries of ``sum J J^T``, ``sum f``, ``sum f^2``, ``n_valid``, and a bounds flag.
 
         ``H_out[n, 12, 12]`` is filled symmetrically in float64 by thread 0 after a float32 block reduction
@@ -1133,7 +1160,8 @@ def _build_kernels() -> dict[str, Any]:
         nz = f.shape[0]
         ny = f.shape[1]
         nx = f.shape[2]
-        if x0 - hx < 0 or x0 + hx >= nx or y0 - hy < 0 or y0 + hy >= ny or z0 - hz < 0 or z0 + hz >= nz:
+        keep_row = split_index[n]
+        if keep_row < 0 and (x0 - hx < 0 or x0 + hx >= nx or y0 - hy < 0 or y0 + hy >= ny or z0 - hz < 0 or z0 + hz >= nz):
             if tid == 0:
                 sums_out[n, 0] = 0.0
                 sums_out[n, 1] = 0.0
@@ -1158,7 +1186,11 @@ def _build_kernels() -> dict[str, Any]:
             zz = z0 + dz
             yy = y0 + dy
             xx = x0 + dx
-            if mask[zz, yy, xx] == 0:
+            if keep_row >= 0:
+                # subset splitting: the packed keep row also excludes voxels outside the volume
+                if (split_keep[keep_row, v >> 3] >> (v & 7)) & 1 == 0:
+                    continue
+            elif mask[zz, yy, xx] == 0:
                 continue
             fv = f[zz, yy, xx]
             gxv, gyv, gzv = grad_at(f, gx, gy, gz, stored, zz, yy, xx)
@@ -1337,6 +1369,8 @@ def icgn_12dof_cuda(
     pattern=None,
     noise_gain=0.0,
     predictive=True,
+    split_index=None,
+    split_keep=None,
     chunk: int = CHUNK_NODES,
     progress_fn=None,
 ):
@@ -1378,6 +1412,7 @@ def icgn_12dof_cuda(
     d_niter = cuda.to_device(n_iter)
     d_status = cuda.to_device(np.zeros(N, dtype=np.int32))
     d_zncc = cuda.to_device(zncc)
+    d_split_index, d_split_keep = _split_device(N, split_index, split_keep)
     S = ((2 * hx) // stride + 1) * ((2 * hy) // stride + 1) * ((2 * hz) // stride + 1)
     chunk = max(1, int(chunk))
     gbuf = cuda.device_array((min(chunk, idx_all.size), S), np.float32)
@@ -1398,6 +1433,8 @@ def icgn_12dof_cuda(
             d_gz,
             bool(stored),
             d_mask,
+            d_split_index,
+            d_split_keep,
             d_g,
             int(mode),
             d_L,
@@ -1455,6 +1492,8 @@ def icgn_3dof_cuda(
     n_full=0.0,
     noise_gain=0.0,
     predictive=True,
+    split_index=None,
+    split_keep=None,
     chunk: int = CHUNK_NODES,
     progress_fn=None,
 ):
@@ -1488,6 +1527,7 @@ def icgn_3dof_cuda(
     d_niter = cuda.to_device(n_iter)
     d_status = cuda.to_device(np.zeros(N, dtype=np.int32))
     d_zncc = cuda.to_device(zncc)
+    d_split_index, d_split_keep = _split_device(N, split_index, split_keep)
     S = ((2 * hx) // stride + 1) * ((2 * hy) // stride + 1) * ((2 * hz) // stride + 1)
     chunk = max(1, int(chunk))
     gbuf = cuda.device_array((min(chunk, idx_all.size), S), np.float32)
@@ -1510,6 +1550,8 @@ def icgn_3dof_cuda(
             d_gz,
             bool(stored),
             d_mask,
+            d_split_index,
+            d_split_keep,
             d_g,
             int(mode),
             d_H,
@@ -1539,7 +1581,23 @@ def icgn_3dof_cuda(
     return U_out, n_iter, status, zncc
 
 
-def precompute_nodes_cuda(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_ratio, cond_max, stride=1, chunk: int = CHUNK_NODES):
+def precompute_nodes_cuda(
+    coords,
+    hx,
+    hy,
+    hz,
+    f,
+    gx,
+    gy,
+    gz,
+    mask,
+    min_valid_ratio,
+    cond_max,
+    stride=1,
+    split_index=None,
+    split_keep=None,
+    chunk: int = CHUNK_NODES,
+):
     """Same contract as :func:`al_dvc.solver.numba_kernels.precompute_nodes`, on the GPU.
 
     The 12x12 sums are accumulated in float32 (relative error ~1e-6, i.e. far below the
@@ -1559,6 +1617,7 @@ def precompute_nodes_cuda(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_rat
     d_gz = _cache.get(np.ascontiguousarray(gz, dtype=np.float32))
     d_mask = _cache.get(np.ascontiguousarray(mask, dtype=np.uint8))
     d_coords = cuda.to_device(np.ascontiguousarray(coords, dtype=np.int64))
+    d_split_index, d_split_keep = _split_device(N, split_index, split_keep)
     H_all = np.zeros((N, 12, 12))
     sums = np.zeros((N, 4))
     d_H = cuda.to_device(H_all)
@@ -1578,6 +1637,8 @@ def precompute_nodes_cuda(coords, hx, hy, hz, f, gx, gy, gz, mask, min_valid_rat
             d_gz,
             bool(stored),
             d_mask,
+            d_split_index[start:stop],
+            d_split_keep,
             d_H[start:stop],
             d_sums[start:stop],
         )

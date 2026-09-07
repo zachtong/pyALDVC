@@ -157,9 +157,6 @@ def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara)
     backend = resolve_backend(para)
     split = split_rows(mesh, ref, para, coords_int, (hx, hy, hz), stride)
     split_kw = {} if split is None else {"split_index": split[0], "split_keep": split[1]}
-    if backend == "cuda" and split is not None:
-        logger.warning("Subset splitting is not on the CUDA backend yet: the local kernels run on the CPU (numba)")
-        backend = "numba"
     if backend == "cuda":
         from .cuda_kernels import precompute_nodes_cuda
 
@@ -176,6 +173,7 @@ def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara)
             float(para.min_valid_ratio),
             float(para.hessian_cond_max),
             stride,
+            **split_kw,
         )
     elif backend == "numba":
         from .numba_kernels import precompute_nodes
@@ -287,8 +285,6 @@ def local_icgn(
 
     t0 = time.perf_counter()
     backend = resolve_backend(para)
-    if backend == "cuda" and ctx.n_split:
-        backend = "numba"  # the split rows live on the CPU until the CUDA kernels take them
     if backend == "cuda":
         from .cuda_kernels import icgn_12dof_cuda
 
@@ -318,6 +314,7 @@ def local_icgn(
             pattern,
             gain,
             bool(para.icgn_predictive_stop),
+            **ctx.split_args(),
         )
     elif backend == "numba":
         from .numba_kernels import icgn_12dof_parallel

@@ -1,6 +1,7 @@
 # Subset splitting at boundaries (window splitting) — implementation plan
 
-Status: proposal, 2026-09-07. Port of pyALDIC's masked-subset IC-GN to 3-D.
+Status: implemented 2026-09-07 (phases 0-4; the CUDA gate and the same-side initial guess included).
+Port of pyALDIC's masked-subset IC-GN to 3-D. Measured effect and cost: `reports/subset_split.pdf`.
 
 ## 1. Definition
 

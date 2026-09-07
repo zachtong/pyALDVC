@@ -20,8 +20,9 @@ All notable changes to pyALDVC are documented here. The format follows
   side, so the global step no longer smooths a jump away. On two rigid bodies
   separated by a masked wall the displacement error next to the wall drops from 0.38
   to 0.02 voxel (`reports/subset_split.pdf`). Check box "Split at boundaries" in the
-  advanced parameters. CPU kernels (numba and NumPy reference): the CUDA backend runs
-  the local steps on the CPU while splitting is on.
+  advanced parameters. All three backends (numba, NumPy reference, CUDA) share the same
+  gate, and the initial guess of a cut subset is taken from its own side of the boundary
+  instead of the integer search, whose template still spans it.
 
 ## [0.6.0] - 2026-09-07
 

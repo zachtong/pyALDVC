@@ -349,7 +349,10 @@ loop except one `S`-sized scratch buffer per node), `scipy.fft` with
   `mark_bridging` in 3-D) and `DVCMesh.edge_ok (N, 3)` records the cut +x/+y/+z
   edges, which the FD operators, the inpainting, the median test and the strain
   fit respect. Every zero of the mask is a boundary: the region edge, holes,
-  cracks; a crack front leaves the window and the element connected, as in 2-D;
+  cracks; a crack front leaves the window and the element connected, as in 2-D.
+  The three backends share the gate (the CUDA kernels read the same packed rows
+  from the device), and a cut subset takes its initial guess from its own side
+  because the integer search still correlates the whole template;
   low-texture subsets rejected by a Cholesky check on the Hessian.
 * Out-of-bounds warps, singular updates and NaNs terminate a node with a
   status code instead of an exception; bad nodes are inpainted from good
@@ -393,7 +396,7 @@ CLI: `al-dvc run config.yaml`, `al-dvc synth ...`, `al-dvc info volume.tif`,
 | 0.3 (released 2026-09-03) | standalone PySide6 GUI in `al_dvc.gui` (see section 11): `AppState` + panels + worker thread + sessions + JSON-dictionary i18n + kernel warm-up + self-test, three-plane slice viewer with node-grid overlays; portable Windows bundle (PyInstaller spec, build script, frozen-bundle tests, release workflow attaching `pyALDVC-<version>-win64.zip` to each tag) |
 | 0.3.1 | GUI follow-ups: pyvista 3-D view, mask drawing on the slice viewer, batch runs over several sessions (dialog and `al-dvc batch`) |
 | 0.4 | GPU backend (numba.cuda: tricubic sampling + per-node IC-GN, one block per node; global step stays on the CPU). A 2-3 day prototype measures the real speed-up first; Blackwell (sm_120) support in numba-cuda must be confirmed |
-| later | adaptive octree mesh (3D analogue of pyALDIC's quadtree) with hanging-node hex elements; second-order (30-DOF) subset shape functions to remove the first-order curvature bias; subset splitting on the CUDA kernels (the CPU kernels have it since 0.7) |
+| later | adaptive octree mesh (3D analogue of pyALDIC's quadtree) with hanging-node hex elements; second-order (30-DOF) subset shape functions to remove the first-order curvature bias; enriched shape functions at a crack front, where the window stays connected and subset splitting cannot help |
 
 Decisions recorded 2026-09-02: GUI before GPU (the CPU code already handles the
 82,800-node reference case in minutes, whereas nobody has used the code on real

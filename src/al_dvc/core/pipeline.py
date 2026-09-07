@@ -245,7 +245,9 @@ def run_aldvc(
             if int(para.init_coarse_factor) > 1 and previous is None:
                 U0, F0, init_info = coarse_initial_guess(bundle, g_norm, g_prep, mesh, para)
             else:
-                U0, init_info = compute_initial_guess(bundle.f, g_norm, mesh, para, previous=previous)
+                U0, init_info = compute_initial_guess(
+                    bundle.f, g_norm, mesh, para, previous=previous, split_fraction=ctx.split_fraction
+                )
             timings["init_guess"] = timings.get("init_guess", 0.0) + time.perf_counter() - t0
             progress(base + 0.15 * span, f"Frame {k}: initial guess ({init_info.get('method')})")
             if should_stop():

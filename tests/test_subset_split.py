@@ -190,3 +190,57 @@ def test_mesh_is_cut_at_the_wall_and_the_admm_result_keeps_the_jump(wall_pair):
     exx = np.asarray(sr.exx)
     assert np.nanmax(np.abs(exx[near & np.isfinite(exx)])) < 0.01
     assert nx > 0
+
+
+@pytest.mark.skipif(not __import__("al_dvc.solver.cuda_kernels", fromlist=["x"]).cuda_available(), reason="no CUDA device")
+def test_cuda_matches_the_cpu_kernels_on_split_subsets(wall_pair):
+    f, g, disp, mask_ref, mask_def = wall_pair
+    out = {}
+    for backend in ("numba", "cuda"):
+        para = dvcpara_default(
+            winsize=WIN,
+            winstepsize=8,
+            search_radius=5,
+            verbose=False,
+            backend=backend,
+            subset_split=True,
+            local_outlier_threshold=0.0,
+        )
+        res = run_aldvc(para, [f, g], masks=[mask_ref, mask_def], compute_strain=False, resume=False)
+        out[backend] = res.result_disp[0]
+    a, b = out["numba"], out["cuda"]
+    assert np.allclose(a.split_fraction, b.split_fraction, equal_nan=True)
+    assert np.array_equal(a.status, b.status)
+    assert np.max(np.abs(a.U - b.U)) < 5e-3  # float32 accumulation on the GPU, float64 on the CPU
+    assert np.nanmax(np.abs(a.zncc - b.zncc)) < 1e-4
+
+
+def test_split_nodes_take_their_initial_guess_from_their_own_side():
+    """The integer search still spans the boundary; a cut node is filled from its own side instead."""
+    from al_dvc.mesh.grid_mesh import mesh_setup
+    from al_dvc.solver.init_disp import clean_initial_guess
+
+    axis = np.arange(5.0)
+    mesh = mesh_setup(axis, axis, axis)
+    n = mesh.n_nodes
+    grid = mesh.grid_shape
+    mesh.node_valid = np.ones(n, dtype=bool)
+    ix = (np.arange(n) % grid[2]).reshape(grid)
+    edge_ok = np.ones(grid + (3,), dtype=bool)
+    edge_ok[:, :, 1, 0] = False  # the +x edge between ix = 1 and ix = 2 is cut everywhere
+    mesh.edge_ok = edge_ok.reshape(n, 3)
+    disp = np.zeros((n, 3))
+    disp[(ix <= 1).ravel(), 0] = 1.0
+    disp[(ix >= 2).ravel(), 0] = -1.0
+    disp[(ix == 1).ravel(), 0] = 0.0  # the contaminated peak: halfway between the two sides
+    split_fraction = np.ones(n, dtype=np.float32)
+    split_fraction[(ix == 1).ravel()] = 0.6
+    para = dvcpara_default(winsize=WIN, winstepsize=8, init_outlier_threshold=0.0, verbose=False)
+    ok = np.ones(n, dtype=bool)
+    out, bad = clean_initial_guess(disp.copy(), ok, None, mesh, para, split_fraction)
+    cut = (ix == 1).ravel()
+    assert bad[cut].all() and not bad[~cut].any()
+    assert np.allclose(out[cut, 0], 1.0, atol=1e-6)  # filled from ix = 0, not from the far side
+    assert np.allclose(out[(ix >= 2).ravel(), 0], -1.0)
+    out2, bad2 = clean_initial_guess(disp.copy(), ok, None, mesh, para, None)
+    assert not bad2.any() and np.allclose(out2[cut, 0], 0.0)  # without the split info the guess stays contaminated

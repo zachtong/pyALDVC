@@ -22,6 +22,24 @@ from .integer_search import (
 logger = logging.getLogger(__name__)
 
 
+SPLIT_GUESS_MAX_KEEP = 0.9  # a subset that lost more than 10 % of its voxels gets its guess from its own side
+SPLIT_GUESS_MIN_NEIGHBOURS = 2  # ... but only when that many same-side neighbours have a usable guess
+
+
+def same_side_neighbours(good: NDArray[np.bool_], edge_ok: NDArray[np.bool_], grid_shape: tuple[int, int, int]):
+    """``(N,)`` count of the six direct neighbours that are ``good`` and not across a cut edge."""
+    g = np.asarray(good, dtype=bool).reshape(grid_shape)
+    eo = np.asarray(edge_ok, dtype=bool).reshape(grid_shape + (3,))
+    cnt = np.zeros(grid_shape, dtype=np.int64)
+    cnt[:, :, :-1] += g[:, :, 1:] & eo[:, :, :-1, 0]  # +x
+    cnt[:, :, 1:] += g[:, :, :-1] & eo[:, :, :-1, 0]  # -x
+    cnt[:, :-1, :] += g[:, 1:, :] & eo[:, :-1, :, 1]  # +y
+    cnt[:, 1:, :] += g[:, :-1, :] & eo[:, :-1, :, 1]  # -y
+    cnt[:-1, :, :] += g[1:, :, :] & eo[:-1, :, :, 2]  # +z
+    cnt[1:, :, :] += g[:-1, :, :] & eo[:-1, :, :, 2]  # -z
+    return cnt.ravel()
+
+
 def _ncc_backend(para: DVCPara) -> str:
     """``'cuda'`` when the parameter set resolves to the GPU backend, else ``'numba'``."""
     from .local_icgn import resolve_backend
@@ -38,8 +56,13 @@ def compute_initial_guess(
     mesh: DVCMesh,
     para: DVCPara,
     previous: NDArray[np.float64] | None = None,
+    split_fraction: NDArray[np.float32] | None = None,
 ) -> tuple[NDArray[np.float64], dict]:
-    """Return ``U0`` (N, 3) and an info dict according to ``para.init_guess_method``."""
+    """Return ``U0`` (N, 3) and an info dict according to ``para.init_guess_method``.
+
+    ``split_fraction`` (subset splitting) marks the nodes whose correlation template still spans
+    the boundary: their guess is taken from their own side instead (see :func:`clean_initial_guess`).
+    """
     N = mesh.n_nodes
     method = para.init_guess_method
     if method == "zero":
@@ -111,7 +134,7 @@ def compute_initial_guess(
             "clipped": res["clipped"],
         }
 
-    U0, bad = clean_initial_guess(disp, ok, pce, mesh, para)
+    U0, bad = clean_initial_guess(disp, ok, pce, mesh, para, split_fraction)
     info["n_bad"] = int(bad.sum())
     info["global_shift"] = shift
     return U0, info
@@ -123,8 +146,15 @@ def clean_initial_guess(
     pce: NDArray[np.float64],
     mesh: DVCMesh,
     para: DVCPara,
+    split_fraction: NDArray[np.float32] | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.bool_]]:
-    """Reject failed / low-quality / outlying nodes and inpaint them."""
+    """Reject failed / low-quality / outlying nodes and inpaint them.
+
+    The integer search correlates the whole rectangular template, so at a boundary its peak can
+    come from the far side. Nodes whose subset the split cut by more than
+    ``1 - SPLIT_GUESS_MAX_KEEP`` are therefore dropped as well and filled from their own side,
+    provided they have ``SPLIT_GUESS_MIN_NEIGHBOURS`` usable neighbours there.
+    """
     N = mesh.n_nodes
     d = np.array(disp, dtype=np.float64).reshape(N, 3)
     bad = ~np.asarray(ok, dtype=bool) | ~np.all(np.isfinite(d), axis=1)
@@ -135,15 +165,25 @@ def clean_initial_guess(
         bad |= np.isfinite(p) & (p < para.init_min_pce)
     d[bad] = np.nan
     grid = mesh.grid_shape
+    edge_ok = mesh.edges_ok_grid()
     if para.init_outlier_threshold > 0 and (~bad).sum() > 27:
-        flag = universal_median_test(d.reshape(grid + (3,)), (~bad).reshape(grid), para.init_outlier_threshold)
+        flag = universal_median_test(d.reshape(grid + (3,)), (~bad).reshape(grid), para.init_outlier_threshold, edge_ok=edge_ok)
         bad |= flag.ravel()
         d[bad] = np.nan
+    if split_fraction is not None and edge_ok is not None:
+        sf = np.asarray(split_fraction, dtype=np.float64)
+        cut = np.isfinite(sf) & (sf < SPLIT_GUESS_MAX_KEEP) & ~bad
+        if cut.any():
+            n_side = same_side_neighbours(~bad, mesh.edges_ok(), grid)
+            take = cut & (n_side >= SPLIT_GUESS_MIN_NEIGHBOURS)
+            bad |= take
+            d[take] = np.nan
+            logger.info("Initial guess: %d split nodes take their guess from their own side", int(take.sum()))
     if bad.all():
         logger.warning("Initial guess failed at every node; starting from zero displacement.")
         return np.zeros((N, 3)), bad
     out = np.empty_like(d)
     for c in range(3):
-        out[:, c] = fill_nan_grid(d[:, c].reshape(grid)).ravel()
+        out[:, c] = fill_nan_grid(d[:, c].reshape(grid), edge_ok=edge_ok).ravel()
     logger.info("Initial guess: %d/%d nodes replaced by inpainting (%.1f%%)", int(bad.sum()), N, 100 * bad.mean())
     return out, bad
