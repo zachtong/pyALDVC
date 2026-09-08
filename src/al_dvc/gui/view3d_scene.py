@@ -297,6 +297,19 @@ def _frame_arrays(result: PipelineResult, frame: int, fields: tuple[str, ...]):
     return values, np.asarray(displacement_physical(fr, result.dvc_para.voxel_size), dtype=np.float64)
 
 
+def _live_cells(result: PipelineResult, n_cells: int):
+    """``(n_cells,)`` bool of the elements the mesh kept, ``None`` when nothing was dropped.
+
+    ``ImageData`` numbers its cells x fastest, then y, then z, exactly like ``mesh_setup`` builds the
+    hex8 elements, so the two line up one to one.
+    """
+    elements = getattr(result.dvc_mesh, "elements", None)
+    if elements is None or elements.shape[0] != n_cells:
+        return None
+    live = np.asarray(elements)[:, 0] >= 0
+    return None if live.all() else live
+
+
 def node_grid(
     result: PipelineResult, frame: int, fields: tuple[str, ...] = ("disp_magnitude",), blend: float = 0.0
 ) -> "pv.ImageData":
@@ -465,8 +478,13 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
         info.actors["iso_level"] = level
     else:  # warped: the lattice of the valid nodes moved by the displacement, drawn with its cell edges
         grid.point_data["_valid"] = finite.astype(np.float32)
-        # only cells whose 8 nodes are valid: a cell with one NaN corner would be drawn fully transparent
+        # only cells whose 8 nodes are valid (a cell with one NaN corner would be drawn fully transparent)
+        # and which the solver kept: an element the mask separates was dropped, and no edge may span it
         cells = grid.threshold(0.5, scalars="_valid", preference="point", all_scalars=True)
+        live = _live_cells(result, grid.n_cells)
+        if live is not None:
+            grid.cell_data["_live"] = live.astype(np.float32)
+            cells = cells.threshold(0.5, scalars="_live", preference="cell")
         if cells.n_cells:
             warped = cells.warp_by_vector(DISPLACEMENT_ARRAY, factor=opts.warp_scale)
             info.actors["field"] = plotter.add_mesh(

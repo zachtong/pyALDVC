@@ -4,6 +4,21 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- The node grid drawn on the slices and the deformed lattice in the 3-D view joined nodes that
+  the mask separates, so a crack or a hole looked bridged even though the solver had cut the
+  mesh there. Both now stop at the boundary: the slice preview marks the cut edges with the
+  same bridging test the solver uses (also before a run, while the subset and step are being
+  chosen), and the 3-D lattice draws only the elements the mesh kept. Whether a node column
+  happened to land inside the crack decided how it looked before, which is why it seemed to
+  depend on the subset size and the step.
+
+### Changed
+- The synthetic case generator stretches the grey values of the material over the whole range
+  (one window for every frame), so the speckle has about three times the contrast it had.
+
 ## [0.7.0] - 2026-09-07
 
 ### Added

@@ -45,6 +45,8 @@ PORES = (((48.0, 60.0, 64.0), 12.0), ((150.0, 128.0, 40.0), 9.0))  # ((x, y, z),
 OPENING_PER_FRAME = 0.8  # voxels, each face
 SPECKLE_SIGMA = 2.0
 GREY_MAX = 4000  # uint16 range of the written volumes
+STRETCH = (0.5, 99.5)  # percentiles of the reference material mapped to 0 and GREY_MAX
+VOID_LEVEL = 0.06  # grey level of the crack and the pores, as a fraction of the material range
 
 
 def scaled(shape, quick: bool):
@@ -125,14 +127,19 @@ def warp(ref: np.ndarray, mask: np.ndarray, disp, n_iter: int = 25):
     return g, m
 
 
-def to_uint16(vol: np.ndarray, noise: float, seed: int) -> np.ndarray:
-    """Scale to the 0 .. GREY_MAX range and add read-out noise."""
-    v = np.asarray(vol, dtype=np.float64)
-    lo, hi = float(v.min()), float(v.max())
-    v = (v - lo) / max(hi - lo, 1e-12)
+def grey_window(vol: np.ndarray, mask: np.ndarray) -> tuple[float, float]:
+    """``(lo, hi)`` of the contrast stretch: the percentiles of the material, so the speckle fills the range."""
+    lo, hi = np.percentile(np.asarray(vol, dtype=np.float64)[mask > 0], STRETCH)
+    return float(lo), float(hi)
+
+
+def to_uint16(vol: np.ndarray, window: tuple[float, float], noise: float, seed: int) -> np.ndarray:
+    """Stretch ``window`` to 0 .. GREY_MAX, add read-out noise and clip (all frames share one window)."""
+    lo, hi = window
+    v = (np.asarray(vol, dtype=np.float64) - lo) / max(hi - lo, 1e-12)
     if noise > 0:
         v = v + np.random.default_rng(seed).normal(0.0, noise, v.shape)
-    return np.clip(v * GREY_MAX, 0, 65535).astype(np.uint16)
+    return np.clip(v * GREY_MAX, 0, GREY_MAX).astype(np.uint16)
 
 
 def main() -> None:
@@ -154,12 +161,19 @@ def main() -> None:
     print(f"pyALDVC {__version__}: synthetic crack case {nx} x {ny} x {nz} voxels, {args.frames} deformed frames")
     speckle = generate_speckle_volume(shape, sigma=SPECKLE_SIGMA, seed=7)
     mask_ref = material_mask(shape, geo)
+    window = grey_window(speckle, mask_ref)
     # the crack and the pores are dark in the reference too, as they would be in a scan
-    ref = np.where(mask_ref > 0, speckle, 0.05 * speckle)
+    void = window[0] + VOID_LEVEL * (window[1] - window[0])
+    ref = np.where(mask_ref > 0, speckle, void)
 
-    save_volume(out / "volumes" / "frame_00.tif", to_uint16(ref, args.noise, 100))
+    frame0 = to_uint16(ref, window, args.noise, 100)
+    save_volume(out / "volumes" / "frame_00.tif", frame0)
     save_volume(out / "masks" / "mask_00.tif", mask_ref)
-    print(f"  frame 00: reference, mask keeps {100 * mask_ref.mean():.1f} % of the voxels")
+    inside = frame0[mask_ref > 0]
+    print(
+        f"  frame 00: reference, mask keeps {100 * mask_ref.mean():.1f} % of the voxels, "
+        f"material grey {np.percentile(inside, 1):.0f} .. {np.percentile(inside, 99):.0f} of {GREY_MAX}"
+    )
 
     step = 8 if not args.quick else 4
     gz, gy, gx = np.mgrid[0:nz:step, 0:ny:step, 0:nx:step]
@@ -183,8 +197,8 @@ def main() -> None:
         disp = displacement(k, geo, centre)
         g, m = warp(ref, mask_ref, disp)
         m &= material_mask(shape, geo, opened=OPENING_PER_FRAME * k)  # the crack is wider once it is open
-        g = np.where(m > 0, g, 0.05 * np.abs(g))
-        save_volume(out / "volumes" / f"frame_{k:02d}.tif", to_uint16(g, args.noise, 100 + k))
+        g = np.where(m > 0, g, void)
+        save_volume(out / "volumes" / f"frame_{k:02d}.tif", to_uint16(g, window, args.noise, 100 + k))
         save_volume(out / "masks" / f"mask_{k:02d}.tif", m.astype(np.uint8))
         u, v, w = disp(coords[:, 0], coords[:, 1], coords[:, 2])
         truth[f"U_{k:02d}"] = np.column_stack([u, v, w])

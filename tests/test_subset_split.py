@@ -244,3 +244,31 @@ def test_split_nodes_take_their_initial_guess_from_their_own_side():
     assert np.allclose(out[(ix >= 2).ravel(), 0], -1.0)
     out2, bad2 = clean_initial_guess(disp.copy(), ok, None, mesh, para, None)
     assert not bad2.any() and np.allclose(out2[cut, 0], 0.0)  # without the split info the guess stays contaminated
+
+
+def test_the_drawn_grid_stops_at_the_wall():
+    """The lattice preview and the 3-D lattice must not join nodes the mask separates."""
+    from al_dvc.gui.lattice_preview import layer_segments, plan_lattice
+    from al_dvc.mesh.grid_mesh import build_grid_axes, mesh_setup
+    from al_dvc.mesh.mesh_cut import cut_mesh
+
+    shape = (48, 64, 96)
+    mask = np.ones(shape, np.uint8)
+    mask[:, :, 46:49] = 0  # a wall three voxels wide, right through the volume
+    para = dvcpara_default(winsize=16, winstepsize=6, verbose=False)
+    plan = plan_lattice(shape, para.winsize, para.winstepsize, None, mask)
+    assert plan.edge_ok is not None and not plan.edge_ok.all()
+    for plane, index in (("xy", 24), ("xz", 32), ("yz", 20)):
+        seg, _ = layer_segments(plan, plane, index)
+        if plane == "yz":  # the wall is normal to x: this plane never crosses it
+            continue
+        h = seg[:, :, 0]  # the horizontal axis of xy and xz is x
+        assert not np.any((h.min(axis=1) < 45) & (h.max(axis=1) > 49)), plane
+    # the mesh the solver builds drops the same connections
+    x0, y0, z0 = build_grid_axes(para.voi, shape, para.winsize, para.winstepsize)
+    mesh = mesh_setup(x0, y0, z0)
+    elements, edge_ok, dropped = cut_mesh(mesh.elements, mesh.coordinates, mask, mesh.n_nodes)
+    assert dropped > 0 and np.array_equal(edge_ok.reshape(mesh.grid_shape + (3,)), plan.edge_ok)
+    live = elements[elements[:, 0] >= 0]
+    x = mesh.coordinates[:, 0]
+    assert not np.any((x[live[:, 0]] < 45) & (x[live[:, 1]] > 49))

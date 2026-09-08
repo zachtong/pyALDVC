@@ -32,6 +32,9 @@ class LatticePlan:
     winsize: tuple[int, int, int]  # even; the subset spans winsize + 1 voxels (2h + 1)
     winstepsize: tuple[int, int, int]
     centre_valid: NDArray[np.bool_] | None = None  # (nz, ny, nx) over the lattice; None without a mask
+    # (nz, ny, nx, 3) flags of the +x, +y, +z edge of every node: False where the mask separates the two
+    # nodes (a crack, a hole), so the drawn grid stops there like the solver's mesh; None when nothing is cut
+    edge_ok: NDArray[np.bool_] | None = None
 
     @property
     def grid_shape(self) -> tuple[int, int, int]:
@@ -65,10 +68,13 @@ def plan_lattice(
     winstepsize: tuple[int, int, int],
     voi: VOIRange | None = None,
     mask: NDArray | None = None,
+    cut: bool = True,
 ) -> LatticePlan:
     """The lattice the pipeline would build for ``shape`` (``(nz, ny, nx)``) with these parameters.
 
-    Raises ``ValueError`` with the pipeline's own message when the subset does not fit.
+    With ``cut`` and a mask, the grid edges the mask separates (a crack, a hole) are marked, as the
+    solver's mesh would cut them. Raises ``ValueError`` with the pipeline's own message when the
+    subset does not fit.
     """
     nz, ny, nx = (int(s) for s in shape)
     box = voi if voi is not None else VOIRange(x=(0, nx - 1), y=(0, ny - 1), z=(0, nz - 1))
@@ -76,6 +82,7 @@ def plan_lattice(
     st = tuple(int(s) for s in winstepsize)
     x0, y0, z0 = build_grid_axes(box, (nz, ny, nx), ws, st)  # type: ignore[arg-type]
     centre_valid = None
+    edge_ok = None
     if mask is not None:
         m = np.asarray(mask)
         if m.shape != (nz, ny, nx):
@@ -84,7 +91,13 @@ def plan_lattice(
         cy = np.clip(np.round(y0).astype(int), 0, ny - 1)
         cx = np.clip(np.round(x0).astype(int), 0, nx - 1)
         centre_valid = m[np.ix_(cz, cy, cx)] > 0
-    return LatticePlan(x0, y0, z0, ws, st, centre_valid)  # type: ignore[arg-type]
+        if cut:
+            from ..mesh.mesh_cut import lattice_edge_ok
+
+            eo = lattice_edge_ok(x0, y0, z0, m)
+            if not eo.all():
+                edge_ok = eo.reshape(len(z0), len(y0), len(x0), 3)
+    return LatticePlan(x0, y0, z0, ws, st, centre_valid, edge_ok)  # type: ignore[arg-type]
 
 
 def plan_from_result(result, frame: int) -> LatticePlan:
@@ -104,13 +117,42 @@ def plan_from_result(result, frame: int) -> LatticePlan:
     valid = valid.reshape(mesh.grid_shape)
     ws = tuple(int(w) for w in para.winsize)
     st = tuple(int(s) for s in para.winstepsize)
-    return LatticePlan(np.asarray(mesh.x0), np.asarray(mesh.y0), np.asarray(mesh.z0), ws, st, valid)  # type: ignore[arg-type]
+    return LatticePlan(
+        np.asarray(mesh.x0),
+        np.asarray(mesh.y0),
+        np.asarray(mesh.z0),
+        ws,  # type: ignore[arg-type]
+        st,  # type: ignore[arg-type]
+        valid,
+        mesh.edges_ok_grid() if hasattr(mesh, "edges_ok_grid") else None,
+    )
 
 
 def layer_index(plan: LatticePlan, plane: str, slice_index: int) -> int:
     """Index of the lattice layer nearest to ``slice_index`` along the plane's normal axis."""
     normal = plan.axes()[PLANE_AXES[plane][2]]
     return int(np.argmin(np.abs(normal - float(slice_index))))
+
+
+def layer_edges(plan: LatticePlan, plane: str, slice_index: int):
+    """``(ok_h, ok_v)`` of the layer: may a line be drawn to the next node along h / along v?
+
+    Shapes follow the layer grid: ``ok_h`` is ``(rows, cols - 1)`` and ``ok_v`` ``(rows - 1, cols)``.
+    All True when nothing is cut.
+    """
+    ih, iv, _inorm = PLANE_AXES[plane]
+    H, V, _valid, _d = layer_grid(plan, plane, slice_index)
+    if plan.edge_ok is None:
+        return np.ones((H.shape[0], H.shape[1] - 1), bool), np.ones((H.shape[0] - 1, H.shape[1]), bool)
+    k = layer_index(plan, plane, slice_index)
+    eo = plan.edge_ok  # (nz, ny, nx, 3), last axis = the +x, +y, +z edge of the node
+    if plane == "xy":
+        layer = eo[k]  # (ny, nx, 3), rows = y, cols = x
+    elif plane == "xz":
+        layer = eo[:, k, :]  # (nz, nx, 3), rows = z, cols = x
+    else:
+        layer = eo[:, :, k]  # (nz, ny, 3), rows = z, cols = y
+    return layer[:, :-1, ih], layer[:-1, :, iv]
 
 
 def layer_grid(
@@ -147,14 +189,16 @@ def layer_nodes(
 
 
 def layer_segments(plan: LatticePlan, plane: str, slice_index: int) -> tuple[NDArray[np.float64], float]:
-    """Grid lines of the layer: segments between neighbouring nodes whose centres are both valid.
+    """Grid lines of the layer: segments between neighbouring nodes whose centres are both valid and
+    which the mask does not separate.
 
     Returns ``(segments (n, 2, 2), distance)``; drawn as a grid this shows the step inside the region
-    of interest and stops at its edge.
+    of interest and stops at its edge, at a hole and at a crack.
     """
     H, V, valid, dist = layer_grid(plan, plane, slice_index)
-    along_h = valid[:, :-1] & valid[:, 1:]
-    along_v = valid[:-1, :] & valid[1:, :]
+    ok_h, ok_v = layer_edges(plan, plane, slice_index)
+    along_h = valid[:, :-1] & valid[:, 1:] & ok_h
+    along_v = valid[:-1, :] & valid[1:, :] & ok_v
     a = np.stack([H[:, :-1][along_h], V[:, :-1][along_h]], axis=-1)
     b = np.stack([H[:, 1:][along_h], V[:, 1:][along_h]], axis=-1)
     c = np.stack([H[:-1, :][along_v], V[:-1, :][along_v]], axis=-1)

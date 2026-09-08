@@ -125,6 +125,19 @@ def cut_mesh(
     return elements, edge_ok, int(bridging.sum())
 
 
+def lattice_edge_ok(x0, y0, z0, mask) -> NDArray[np.bool_]:
+    """``(N, 3)`` edge flags of the lattice ``x0 x y0 x z0`` under ``mask`` (no mesh object needed).
+
+    Used by the previews, which show the grid before a run: the same bridging test as
+    :func:`cut_mesh`, so the lines they draw stop where the solver's elements do.
+    """
+    from .grid_mesh import mesh_setup
+
+    mesh = mesh_setup(np.asarray(x0, float), np.asarray(y0, float), np.asarray(z0, float))
+    _elements, edge_ok, _n = cut_mesh(mesh.elements, mesh.coordinates, np.asarray(mask), mesh.n_nodes)
+    return edge_ok
+
+
 def cut_edge_nodes(edge_ok: NDArray[np.bool_], grid_shape: tuple[int, int, int]) -> NDArray[np.int64]:
     """Indices of the nodes at either end of a cut edge."""
     nz, ny, nx = grid_shape
