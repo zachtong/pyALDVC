@@ -144,7 +144,8 @@ def to_uint16(vol: np.ndarray, window: tuple[float, float], noise: float, seed: 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=str(ROOT.parent / "pyALDVC_synthetic_crack"))
+    # datasets/ is ignored by git, so the volumes can never be committed by mistake
+    ap.add_argument("--out", default=str(ROOT / "datasets" / "synthetic_crack"))
     ap.add_argument("--frames", type=int, default=3, help="deformed frames after the reference")
     ap.add_argument("--noise", type=float, default=0.01, help="grey-value noise (fraction of the range)")
     ap.add_argument("--quick", action="store_true", help="half-size volume")

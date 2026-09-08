@@ -245,3 +245,35 @@ def test_panel_without_results_shows_hint(qapp):
     assert panel._stack.currentWidget() is panel._hint
     assert panel.screenshot("nowhere.png") is None
     window.close()
+
+
+def test_warped_lattice_drops_the_cells_the_mask_separates(small_result):
+    """A mesh cut at a boundary must still render, and without the cells that span it."""
+    import copy
+
+    from al_dvc.gui.view3d_scene import _live_cells
+
+    res, ref = small_result
+    mesh = res.dvc_mesh
+    n_cells = (mesh.grid_shape[0] - 1) * (mesh.grid_shape[1] - 1) * (mesh.grid_shape[2] - 1)
+    assert _live_cells(res, n_cells) is None  # nothing cut: the fast path
+
+    cut = copy.copy(res)
+    cut_mesh_ = copy.copy(mesh)
+    elements = np.array(mesh.elements, copy=True)
+    elements[0] = -1  # as cut_mesh leaves an element the mask separates
+    cut_mesh_.elements = elements
+    object.__setattr__(cut, "dvc_mesh", cut_mesh_)
+    live = _live_cells(cut, n_cells)
+    assert live is not None and live.sum() == n_cells - 1
+
+    shots = []
+    for r in (res, cut):
+        pl = pv.Plotter(off_screen=True, window_size=(300, 240))
+        info = build_scene(pl, r, SceneOptions(mode="warped", show_volume_slices=False), volume=ref)
+        assert "field" in info.actors and info.note != "nodes_only"
+        img = pl.screenshot(None, return_img=True)
+        pl.close()
+        assert img.std() > 1.0  # the lattice is on screen, not a blank frame
+        shots.append(img.astype(np.float64))
+    assert np.abs(shots[0] - shots[1]).mean() > 0.1  # the dropped element is missing from the picture
