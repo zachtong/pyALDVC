@@ -40,6 +40,7 @@ sequence of 3-D scans into displacement and strain fields.
 ## Why pyALDVC
 
 - **Accurate where subset DVC breaks down.** Local subsets are coupled to a global smoothness step, so steep gradients, boundaries and noisy scans stay sub-voxel accurate.
+- **Cracks and holes stay sharp.** A subset that meets a boundary keeps only the material on its own side of it, and the smoothing never crosses it, so a displacement jump survives instead of being averaged away.
 - **Fast.** A 1024 x 1024 x 306 micro-CT scan with 79 200 nodes takes 23 s on an NVIDIA GPU, 3.6 min on a 24-core CPU.
 - **Point and click.** Load the scans, draw the region of interest on the slices, run, look, export. No code.
 - **Knows your data.** The texture analysis measures your scan and suggests the subset size and step.
@@ -74,6 +75,7 @@ Micro-CT scan of the MATLAB example, 1024 x 1024 x 306 voxels, 79 200 nodes:
 | GPU | - | NVIDIA CUDA, one install flag |
 | Region of interest | box | masks drawn on the slices, auto-segmentation, per-frame masks |
 | Subset size | by hand | texture analysis suggests it from the scan |
+| Cracks and holes | subsets and smoothing reach across them | subsets and smoothing stop at the boundary |
 | Strain | in the run | its own window, four methods, four measures, recomputed on demand |
 | 3-D view | - | slices, lattice, arrows, animations, GIF / MP4 recording |
 | Formats | MATLAB | TIFF, MATLAB, NumPy, HDF5, NIfTI, NRRD, DICOM; ParaView export |
