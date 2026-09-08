@@ -15,6 +15,14 @@
   from the borders you care about: the gradient stencil and the tricubic
   sampler need a 5-voxel margin.
 
+### A synthetic case to try
+
+`python scripts/make_synthetic_case.py` writes a speckled block with a crack that stops at a front,
+two pores and a per-frame region of interest, plus the exact displacement of every frame. Load the
+four files of `volumes/` and the matching masks, run with subset 32 and step 8, and compare a run
+with "Split at boundaries" on and off: the displacement next to the crack changes, the far field does
+not. The folder's own `README.md` says how to evaluate the truth.
+
 ## 2. Choosing parameters
 
 | situation | suggestion |
