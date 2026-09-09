@@ -244,6 +244,24 @@ def prepare_deformed(vol: NDArray[np.float32], interp_method: str, mask: NDArray
     return out
 
 
+GRADIENT_AUTO_BYTES = 8 * 1024**3  # above this, "auto" gives up the stored gradients
+
+
+def resolve_gradient_mode(mode: str, shape: tuple[int, int, int]) -> str:
+    """``"auto"`` -> ``"stored"`` or ``"on_the_fly"`` for a volume of ``shape``; other values pass through.
+
+    The three gradient volumes are 12 bytes per voxel and the reference bundle holds them for the
+    whole run: 12.9 GB on a 1024^3 scan, 103 GB on a 2048^3 one. Above
+    :data:`GRADIENT_AUTO_BYTES` that is the allocation that ends the run, so ``"auto"`` evaluates
+    the same 7-point stencil inside the kernels instead. The switch costs about 15-20 % of the local
+    step and refuses nodes within 3 voxels of a volume face, where the stencil has no samples --
+    ``"stored"`` writes a zero gradient there instead, which is not a better answer.
+    """
+    if mode != "auto":
+        return mode
+    return "on_the_fly" if 12 * int(np.prod(shape)) > GRADIENT_AUTO_BYTES else "stored"
+
+
 def build_reference_bundle(
     f: NDArray[np.float32],
     mask: NDArray[np.bool_] | None,
@@ -258,6 +276,7 @@ def build_reference_bundle(
     recognise the placeholder by its shape and count every voxel.
     """
     f = np.ascontiguousarray(f, dtype=np.float32)
+    gradient_mode = resolve_gradient_mode(gradient_mode, f.shape)
     if gradient_mode == "on_the_fly":
         gx = gy = gz = np.zeros((1, 1, 1), dtype=np.float32)
     elif gradient_mode == "stored":
@@ -345,6 +364,11 @@ class ListVolumeProvider:
     def n_cached(self) -> int:
         return len(self._cache)
 
+    @property
+    def has_masks(self) -> bool:
+        """True when at least one frame has a mask (the memory model charges for the masked path)."""
+        return self._masks is not None and any(m is not None for m in self._masks)
+
     def get_mask(self, idx: int) -> NDArray[np.bool_] | None:
         return self._masks[idx]
 
@@ -365,8 +389,11 @@ def memory_model(
     copy of the deformed volume (``masked``). ``n_volumes`` normalised
     volumes are held (2 for a pair; the streaming provider keeps a bounded
     cache). Raw input volumes and the per-node arrays are not included.
+    ``gradient_mode="auto"`` is resolved for ``shape`` first, so the figure is
+    the one the run will actually pay.
     """
-    per_voxel = 4.0 * n_volumes + 1.0
+    gradient_mode = resolve_gradient_mode(gradient_mode, shape)
+    per_voxel = 4.0 * n_volumes + (1.0 if masked else 0.0)  # the mask is a 1x1x1 placeholder without one
     if gradient_mode == "stored":
         per_voxel += 12.0
     if interp_method == "bspline":

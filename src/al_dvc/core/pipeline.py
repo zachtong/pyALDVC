@@ -28,6 +28,7 @@ from ..io.volume_ops import (
     memory_model,
     prepare_deformed,
     presmooth_volume,
+    resolve_gradient_mode,
 )
 from ..mesh.grid_mesh import apply_mask_to_mesh, build_grid_axes, mesh_setup
 from ..solver.beta_tuning import auto_tune_beta
@@ -136,7 +137,18 @@ def run_aldvc(
     progress(0.0, "Section 2: building node grid")
     x0, y0, z0 = build_grid_axes(para.voi, shape, para.winsize, para.winstepsize)  # type: ignore[arg-type]
     base_mesh = mesh_setup(x0, y0, z0)
-    mem = memory_model(shape, para.gradient_mode, para.interp_method, masks is not None)
+    # resolve "auto" once, here, where the volume shape is known: everything downstream -- the memory
+    # model, the reference bundles, the checkpoint metadata -- then sees a concrete mode
+    resolved = resolve_gradient_mode(para.gradient_mode, shape)
+    if resolved != para.gradient_mode:
+        logger.info(
+            "gradient_mode=auto -> %s: the stored gradients would be %.1f GB for a %s volume",
+            resolved,
+            12 * float(np.prod(shape)) / 1e9,
+            shape,
+        )
+        para = replace(para, gradient_mode=resolved)
+    mem = memory_model(shape, para.gradient_mode, para.interp_method, provider.has_masks)
     logger.info(
         "Resident volume memory per frame pair: %.1f bytes/voxel, %.2f GB (gradient_mode=%s)",
         mem["bytes_per_voxel"],

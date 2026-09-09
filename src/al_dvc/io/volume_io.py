@@ -468,6 +468,13 @@ class FileVolumeProvider:
             self._cache.popitem(last=False)
         return vol
 
+    @property
+    def has_masks(self) -> bool:
+        """True when at least one frame has a mask, from paths or arrays, without reading any of them."""
+        if self._masks is not None and any(m is not None for m in self._masks):
+            return True
+        return self._mask_paths is not None and any(p is not None for p in self._mask_paths)
+
     def get_mask(self, idx: int) -> NDArray[np.bool_] | None:
         if self._masks is not None and self._masks[idx] is not None:
             mask = np.asarray(self._masks[idx], dtype=bool)

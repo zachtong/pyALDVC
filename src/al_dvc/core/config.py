@@ -127,8 +127,9 @@ class DVCPara:
     backend: Literal["auto", "numba", "numpy", "cuda"] = (
         "auto"  # auto: CUDA when an NVIDIA GPU and numba-cuda are available, else numba
     )
-    gradient_mode: Literal["stored", "on_the_fly"] = "stored"  # "on_the_fly": no gradient volumes (-12 bytes/voxel),
-    # about 15-20 % slower local step
+    # "on_the_fly": no gradient volumes (-12 bytes/voxel), about 15-20 % slower local step.
+    # "auto" keeps them until they are the allocation that would end the run (see resolve_gradient_mode).
+    gradient_mode: Literal["auto", "stored", "on_the_fly"] = "auto"
     n_threads: int = 0  # 0 = all cores
     store_local_result: bool = True  # keep U_local / F_local in FrameResult
     verbose: bool = True
@@ -287,8 +288,8 @@ def validate_dvcpara(p: DVCPara) -> None:
         raise ValueError("cumulative_interp must be 'linear' or 'cubic'.")
     if p.backend not in ("auto", "numba", "numpy", "cuda"):
         raise ValueError("backend must be 'auto', 'numba', 'numpy' or 'cuda'.")
-    if p.gradient_mode not in ("stored", "on_the_fly"):
-        raise ValueError("gradient_mode must be 'stored' or 'on_the_fly'.")
+    if p.gradient_mode not in ("auto", "stored", "on_the_fly"):
+        raise ValueError("gradient_mode must be 'auto', 'stored' or 'on_the_fly'.")
     if p.gradient_mode == "on_the_fly" and p.backend == "numpy":
         raise ValueError("gradient_mode='on_the_fly' needs the numba backend.")
     if p.n_threads < 0:

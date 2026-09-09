@@ -344,7 +344,9 @@ class ParamPanel(QWidget):
         has_mask = any(v.mask_path or v.mask is not None for v in self._state.volumes) or self._state.mask_editor is not None
         voi = self._state.effective_voi()
         box_shape = tuple(int(e) for e in voi.clamp(shape).extent) if voi is not None else shape
-        mem = memory_model(box_shape, p.gradient_mode, p.interp_method, has_mask)
+        from al_dvc.io.volume_ops import resolve_gradient_mode
+
+        mem = memory_model(box_shape, resolve_gradient_mode(p.gradient_mode, box_shape), p.interp_method, has_mask)
         text = self.tr("Memory for a frame pair: {bpv:.0f} bytes/voxel, {gb:.2f} GB").format(
             bpv=mem["bytes_per_voxel"], gb=mem["total_gb"]
         )
@@ -430,7 +432,8 @@ class ParamPanel(QWidget):
             "n_threads": self.tr("CPU threads for the Numba kernels; 0 uses every core."),
             "gradient_mode": self.tr(
                 "Precomputed: the three gradient volumes are stored once (fast, 21-25 bytes per voxel). "
-                "On the fly: gradients are recomputed for every subset (slower, 9 bytes per voxel), for large scans."
+                "On the fly: gradients are recomputed for every subset (slower, 9 bytes per voxel), for large scans. "
+                "Automatic keeps them until they would need more than 8 GB, which is where a large scan stops fitting."
             ),
             "subpb2": self.tr(
                 "How the global step of AL-DVC is discretised: finite elements (hexahedral mesh, default) or finite "

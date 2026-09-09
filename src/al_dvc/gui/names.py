@@ -37,6 +37,7 @@ CHOICES: dict[str, dict[str, str]] = {
         "fd": tr_noop("Finite differences"),
     },
     "gradient": {
+        "auto": tr_noop("Automatic (by volume size)"),
         "stored": tr_noop("Precomputed (fast, more memory)"),
         "on_the_fly": tr_noop("On the fly (less memory)"),
     },

@@ -136,10 +136,38 @@ def test_bundle_and_memory_model(affine_pair):
         build_reference_bundle(fn, None, "sometimes")
     m_s = memory_model((1000, 1000, 1000), "stored")
     m_f = memory_model((1000, 1000, 1000), "on_the_fly")
-    assert m_s["bytes_per_voxel"] == 21.0 and m_f["bytes_per_voxel"] == 9.0
-    assert m_s["total_gb"] == pytest.approx(21.0)
+    # two normalised volumes + the gradients; no mask means no mask volume, only a 1x1x1 placeholder
+    assert m_s["bytes_per_voxel"] == 20.0 and m_f["bytes_per_voxel"] == 8.0
+    assert m_s["total_gb"] == pytest.approx(20.0)
+    assert memory_model((1000, 1000, 1000), "stored", masked=True)["bytes_per_voxel"] == 25.0  # mask + masked copy
     assert memory_model((10, 10, 10), "stored", "bspline", masked=True)["bytes_per_voxel"] == 29.0
     with pytest.raises(ValueError):
         dvcpara_default(gradient_mode="fast")
     with pytest.raises(ValueError):
         dvcpara_default(gradient_mode="on_the_fly", backend="numpy")
+
+
+def test_auto_keeps_the_gradients_until_they_are_the_thing_that_does_not_fit():
+    from al_dvc.io.volume_ops import GRADIENT_AUTO_BYTES, resolve_gradient_mode
+
+    assert resolve_gradient_mode("auto", (256, 256, 256)) == "stored"  # 0.2 GB of gradients
+    assert resolve_gradient_mode("auto", (1024, 1024, 1024)) == "on_the_fly"  # 12.9 GB
+    edge = int(round((GRADIENT_AUTO_BYTES / 12) ** (1 / 3)))
+    assert resolve_gradient_mode("auto", (edge - 2,) * 3) == "stored"
+    assert resolve_gradient_mode("auto", (edge + 2,) * 3) == "on_the_fly"
+    for mode in ("stored", "on_the_fly"):  # an explicit choice is never overridden
+        assert resolve_gradient_mode(mode, (2048, 2048, 2048)) == mode
+
+
+def test_auto_is_resolved_before_the_bundle_and_the_checkpoint_see_it(normalized_pair):
+    """Everything downstream must see a concrete mode, never the word "auto"."""
+    from al_dvc.io.volume_ops import build_reference_bundle
+
+    d = normalized_pair
+    bundle = build_reference_bundle(d["f"], None, "auto")
+    assert bundle.stored_gradients  # a small volume keeps them
+    assert not bundle.has_mask and bundle.mask.shape == (1, 1, 1)
+    para = dvcpara_default(winsize=16, winstepsize=8, verbose=False)
+    assert para.gradient_mode == "auto"
+    res = run_aldvc(para, [d["f"], d["g"]], compute_strain=False)
+    assert res.dvc_para.gradient_mode == "stored"  # resolved, and that is what a checkpoint records
