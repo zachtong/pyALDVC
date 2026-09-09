@@ -155,3 +155,70 @@ def test_many_operations_fold_into_the_base():
         assert len(ed.ops) <= 5 and ed.base is not None
     finally:
         mask_editor.MAX_UNDO_REPLAY_OPS = old
+
+
+def _apply_through_a_full_volume(mask, op, shape):
+    """What ``apply`` did before it learned to write through the slab: the equivalence oracle."""
+    region = rasterise(op, shape)
+    out = mask.copy()
+    if op.mode == "replace":
+        out[...] = region
+    elif op.mode == "add":
+        out |= region
+    else:
+        out &= ~region
+    return out
+
+
+@pytest.mark.parametrize("plane", ["xy", "xz", "yz"])
+@pytest.mark.parametrize("mode", ["replace", "add", "cut"])
+def test_writing_through_the_slab_equals_the_full_volume_combine(plane, mode):
+    """Nothing volume-sized is allocated any more, so the result must be proved identical."""
+    nz, ny, nx = SHAPE
+    h_len, v_len = {"xy": (nx, ny), "xz": (nx, nz), "yz": (ny, nz)}[plane]
+    n_len = {"xy": nz, "xz": ny, "yz": nx}[plane]
+    rng = np.random.default_rng(11)
+    depths = [None, (0, 0), (n_len // 2, n_len // 2), (1, n_len - 2), (-5, 2), (n_len - 1, n_len + 9), (n_len + 2, n_len + 5)]
+    shapes = [
+        ("rectangle", ((1.0, 1.0), (h_len - 2.0, v_len - 2.0)), {}),
+        ("ellipse", ((0.5, 0.5), (h_len - 1.5, v_len - 1.5)), {}),
+        ("polygon", ((1.0, 1.0), (h_len - 2.0, 2.0), (h_len / 2, v_len - 2.0)), {}),
+        ("brush", tuple((2.0 + k, 3.0 + 0.5 * k) for k in range(4)), {"radius": 2.5}),
+        ("rectangle", ((-9.0, -9.0), (-3.0, -3.0)), {}),  # entirely off the plane
+    ]
+    for depth in depths:
+        for shape_name, points, extra in shapes:
+            op = MaskOp(shape_name, plane=plane, points=points, depth=depth, mode=mode, **extra)
+            start = rng.random(SHAPE) > 0.5
+            ed = MaskEditor(SHAPE, base=start.copy())
+            ed.apply(op)
+            np.testing.assert_array_equal(ed.mask, _apply_through_a_full_volume(start, op, SHAPE), err_msg=f"{op}")
+
+
+def test_the_full_base_is_symbolic_and_costs_one_volume():
+    ed = MaskEditor(SHAPE, base="full")
+    assert ed.mask.all() and ed.base is None  # nothing stored for it
+    assert ed.coverage == 1.0 and ed.box() == ((0, 20), (0, 16), (0, 12))
+    ed.reset(base="full")
+    assert ed.mask.all() and ed.base is None
+    with pytest.raises(ValueError, match="base must be an array"):
+        MaskEditor(SHAPE, base="everything")
+
+
+def test_the_box_and_count_caches_follow_every_edit():
+    """They are read a dozen times per edit, so they are cached -- and every writer must invalidate."""
+    ed = MaskEditor(SHAPE, base="full")
+    assert ed.count == 12 * 16 * 20
+    ed.apply(MaskOp("rectangle", "xy", ((4, 5), (9, 10)), mode="replace", depth=(2, 3)))
+    assert ed.box() == ((4, 10), (5, 11), (2, 4)) and ed.count == 6 * 6 * 2
+    ed.apply(MaskOp("empty"))
+    assert ed.box() is None and ed.count == 0
+    ed.undo()  # back to the rectangle
+    assert ed.box() == ((4, 10), (5, 11), (2, 4)) and ed.count == 6 * 6 * 2
+    ed.undo()  # back to the base with no operations left: _replay never reaches apply()
+    assert ed.box() == ((0, 20), (0, 16), (0, 12)) and ed.count == 12 * 16 * 20
+    ed.redo()
+    assert ed.count == 6 * 6 * 2
+    ed.reset()
+    assert ed.box() is None and ed.count == 0
+    assert all(isinstance(v, int) for pair in MaskEditor(SHAPE, base="full").box() for v in pair)

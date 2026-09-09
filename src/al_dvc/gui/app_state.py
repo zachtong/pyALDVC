@@ -23,7 +23,7 @@ from PySide6.QtCore import QObject, Signal
 from al_dvc.core.config import DVCPara, dvcpara_default
 from al_dvc.core.data_structures import PipelineResult, VOIRange, voi_from_mask
 
-from .mask_editor import MaskEditor, MaskOp
+from .mask_editor import FULL_BASE, MaskEditor, MaskOp
 
 logger = logging.getLogger(__name__)
 _NUMBER = re.compile(r"(\d+)")
@@ -303,7 +303,7 @@ class AppState(QObject):
                 self.log(f"mask shape {base_mask.shape} differs from the volume {tuple(shape)}; starting empty", "warning")
                 base_mask = None
         elif base == "full":
-            base_mask = np.ones(shape, dtype=bool)
+            base_mask = FULL_BASE  # symbolic: the editor never materialises a second volume
         volume = None
         try:
             volume = self.volume_array(self.current_frame)

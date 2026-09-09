@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 from ..app_state import AppState
 from ..icons import tool_button
 from ..mask_editor import MaskOp
+from ..mask_editor import mask_coverage as _coverage
 from ..widgets import guard_wheel
 
 TOOLS = ("none", "rectangle", "ellipse", "polygon", "brush")
@@ -255,7 +256,7 @@ class MaskToolbar(QWidget):
             return
         mask = self._state.current_mask()
         if mask is not None:
-            self._state.log(self.tr("Automatic mask: material {pct:.1f}% of the volume").format(pct=100.0 * float(mask.mean())))
+            self._state.log(self.tr("Automatic mask: material {pct:.1f}% of the volume").format(pct=100.0 * _coverage(mask)))
 
     def _on_save(self) -> None:
         if self._state.current_mask() is None:
@@ -290,7 +291,7 @@ class MaskToolbar(QWidget):
         if mask is None:
             self._status.setText(self.tr("no mask") if has_volume else "")
         else:
-            cov = 100.0 * float(mask.mean())
+            cov = 100.0 * _coverage(mask)
             n_ops = len(ed.ops) if ed is not None else 0
             self._status.setText(self.tr("material {cov:.1f} %, {n} operation(s)").format(cov=cov, n=n_ops))
         self._status.setToolTip(self._status.text())

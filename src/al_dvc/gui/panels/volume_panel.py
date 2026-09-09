@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..app_state import AppState, lexical_key, natural_key
+from ..mask_editor import mask_coverage as _coverage
 
 VOLUME_FILTER = "Volumes (*.tif *.tiff *.mat *.npy *.npz *.h5 *.hdf5 *.nii *.nii.gz *.nrrd);;All files (*)"
 COLUMNS = ("thumb", "index", "name", "shape", "region")
@@ -348,7 +349,7 @@ class VolumePanel(QWidget):
             if not has_mask:
                 return self.tr("whole volume")
             mask = self._state.reference_mask()
-            return self.tr("ROI {pct:.0f}%").format(pct=100.0 * float(mask.mean())) if mask is not None else self.tr("ROI")
+            return self.tr("ROI {pct:.0f}%").format(pct=100.0 * _coverage(mask)) if mask is not None else self.tr("ROI")
         return self.tr("own mask") if has_mask else "-"
 
     def refresh(self) -> None:
@@ -417,7 +418,7 @@ class VolumePanel(QWidget):
                 self.tr("No region of interest: the whole volume is analysed. Draw one on the slices to crop.")
             )
         else:
-            frac = 100.0 * float(mask.mean())
+            frac = 100.0 * _coverage(mask)
             self._roi_hint.setText(self.tr("Region of interest covers {pct:.0f}% of the reference volume.").format(pct=frac))
 
     def retranslate_ui(self) -> None:

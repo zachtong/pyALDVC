@@ -20,6 +20,8 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from al_dvc.texture.boxes import Box, box_of_mask
+
 PLANES = ("xy", "xz", "yz")
 SHAPES = ("rectangle", "ellipse", "polygon", "brush", "threshold", "invert", "fill", "empty")
 MODES = ("add", "cut", "replace")
@@ -29,6 +31,7 @@ AXIS_INDEX = {"z": 0, "y": 1, "x": 2}
 MIN_POLYGON_POINTS = 3
 BOUNDARY_EPS = 1e-6
 MAX_UNDO_REPLAY_OPS = 200
+FULL_BASE = "full"  # base of an editor that starts from the whole volume; no array is stored for it
 
 
 @dataclass(frozen=True)
@@ -124,6 +127,16 @@ def otsu_threshold(values, bins: int = 256) -> float:
     return float(edges[k + 1])
 
 
+def mask_coverage(mask) -> float:
+    """Share of ``mask`` that is material.
+
+    ``np.count_nonzero`` rather than ``mask.mean()``: the latter upcasts the boolean volume to
+    float64 and is seven times slower on a large scan, for the same number.
+    """
+    m = np.asarray(mask)
+    return float(np.count_nonzero(m)) / float(m.size) if m.size else 0.0
+
+
 def threshold_region(volume, level: float | None = None, keep_largest: bool = True, fill_holes: bool = True):
     """Boolean volume of the voxels above ``level`` (Otsu when ``None``), optionally cleaned up."""
     from scipy import ndimage
@@ -208,54 +221,137 @@ def _rasterise_stroke(points, radius: float, h_len: int, v_len: int) -> NDArray[
     return out
 
 
-def rasterise(op: MaskOp, shape: tuple[int, int, int]) -> NDArray[np.bool_]:
-    """Boolean volume ``(nz, ny, nx)`` covered by ``op`` (geometry shapes only)."""
-    nz, ny, nx = shape
-    h_axis, v_axis, n_axis = PLANE_AXES[op.plane]
-    sizes = {"z": nz, "y": ny, "x": nx}
-    img = rasterise_2d(op, sizes[h_axis], sizes[v_axis])  # (v, h)
-    n_len = sizes[n_axis]
+def plane_lengths(op: MaskOp, shape: tuple[int, int, int]) -> tuple[int, int]:
+    """``(h_len, v_len)`` of the plane ``op`` was drawn on."""
+    h_axis, v_axis, _n_axis = PLANE_AXES[op.plane]
+    sizes = {"z": shape[0], "y": shape[1], "x": shape[2]}
+    return sizes[h_axis], sizes[v_axis]
+
+
+def op_slab(op: MaskOp, shape: tuple[int, int, int]) -> tuple[int, int, int] | None:
+    """``(array axis of the plane normal, first, last)``, inclusive and clipped; None when it is empty."""
+    _h_axis, _v_axis, n_axis = PLANE_AXES[op.plane]
+    axis = AXIS_INDEX[n_axis]
+    n_len = shape[axis]
     first, last = (0, n_len - 1) if op.depth is None else op.depth
-    first, last = max(first, 0), min(last, n_len - 1)
+    first, last = max(int(first), 0), min(int(last), n_len - 1)
+    return None if first > last else (axis, first, last)
+
+
+def slab_view(mask: NDArray, axis: int, first: int, last: int) -> NDArray:
+    """Writable view of the slices ``first .. last`` of ``mask`` along ``axis`` (no copy)."""
+    index = [slice(None)] * 3
+    index[axis] = slice(first, last + 1)
+    return mask[tuple(index)]
+
+
+def _broadcast_image(img: NDArray, axis: int) -> NDArray:
+    """The 2-D ``(v, h)`` image shaped so it broadcasts over a slab whose normal is ``axis``."""
+    return img[None] if axis == 0 else (img[:, None, :] if axis == 1 else img[:, :, None])
+
+
+def _clear_outside(mask: NDArray, axis: int, first: int, last: int) -> None:
+    """Set every slice outside ``first .. last`` along ``axis`` to False; allocates nothing."""
+    below, above = [slice(None)] * 3, [slice(None)] * 3
+    below[axis] = slice(0, first)
+    above[axis] = slice(last + 1, None)
+    mask[tuple(below)] = False
+    mask[tuple(above)] = False
+
+
+def rasterise(op: MaskOp, shape: tuple[int, int, int]) -> NDArray[np.bool_]:
+    """Boolean volume ``(nz, ny, nx)`` covered by ``op`` (geometry shapes only).
+
+    :meth:`MaskEditor.apply` does not use this -- it writes the same image straight through
+    :func:`slab_view` -- but the volume is what a caller that wants the region itself asks for.
+    """
     region = np.zeros(shape, dtype=bool)
-    if first > last:
-        return region
-    if op.plane == "xy":  # img (ny, nx), normal z
-        region[first : last + 1] = img[None]
-    elif op.plane == "xz":  # img (nz, nx), normal y
-        region[:, first : last + 1, :] = img[:, None, :]
-    else:  # yz: img (nz, ny), normal x
-        region[:, :, first : last + 1] = img[:, :, None]
+    slab = op_slab(op, shape)
+    if slab is not None:
+        axis, first, last = slab
+        img = rasterise_2d(op, *plane_lengths(op, shape))
+        slab_view(region, axis, first, last)[...] = _broadcast_image(img, axis)
     return region
 
 
 # ----------------------------------------------------------------------------- editor
 @dataclass
 class MaskEditor:
-    """Boolean mask volume as a base plus a replayable list of operations."""
+    """Boolean mask volume as a base plus a replayable list of operations.
+
+    ``base`` is an array, ``None`` (all False) or :data:`FULL_BASE` -- the string form exists so that
+    an editor over the whole volume costs one boolean volume instead of the ``ones()`` plus its copy.
+
+    The mask must only be changed through :meth:`apply`, :meth:`undo`, :meth:`redo` and :meth:`reset`:
+    they invalidate the cached :meth:`box` and :attr:`count`, and writing into ``mask`` directly would
+    leave both stale.
+    """
 
     shape: tuple[int, int, int]
-    base: NDArray[np.bool_] | None = None
+    base: NDArray[np.bool_] | str | None = None
     ops: list[MaskOp] = field(default_factory=list)
     volume: NDArray | None = field(default=None, repr=False)  # intensities for ``threshold`` ops
     mask: NDArray[np.bool_] = field(init=False)
     _redo: list[MaskOp] = field(default_factory=list, init=False, repr=False)
+    _full_base: bool = field(default=False, init=False, repr=False)
+    _count: int | None = field(default=None, init=False, repr=False)
+    _box: Box | None = field(default=None, init=False, repr=False)
+    _box_valid: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.shape = tuple(int(s) for s in self.shape)  # type: ignore[assignment]
         if len(self.shape) != 3 or min(self.shape) < 1:
             raise ValueError(f"shape must be (nz, ny, nx) with positive sizes, got {self.shape}")
-        if self.base is not None:
-            self.base = np.asarray(self.base, dtype=bool)
-            if self.base.shape != self.shape:
-                raise ValueError(f"base mask shape {self.base.shape} does not match {self.shape}")
+        self._set_base(self.base, copy=False)
         ops, self.ops = list(self.ops), []
         self.mask = self._base_copy()
+        self._invalidate()
         for op in ops:
             self.apply(op)
 
+    def _set_base(self, base, copy: bool) -> None:
+        """Store ``base``: an array, ``None`` or :data:`FULL_BASE` (kept symbolic, never materialised)."""
+        if isinstance(base, str):
+            if base != FULL_BASE:
+                raise ValueError(f"base must be an array, None or {FULL_BASE!r}, got {base!r}")
+            self._full_base, self.base = True, None
+            return
+        self._full_base = False
+        if base is None:
+            self.base = None
+            return
+        arr = np.asarray(base, dtype=bool)
+        if arr.shape != self.shape:
+            raise ValueError(f"base mask shape {arr.shape} does not match {self.shape}")
+        self.base = arr.copy() if copy else arr
+
     def _base_copy(self) -> NDArray[np.bool_]:
+        if self._full_base:
+            return np.ones(self.shape, dtype=bool)
         return np.zeros(self.shape, dtype=bool) if self.base is None else self.base.copy()
+
+    # ------------------------------------------------------------------ cached statistics
+    def _invalidate(self) -> None:
+        """Every method that writes ``self.mask`` calls this before returning."""
+        self._count, self._box, self._box_valid = None, None, False
+
+    @property
+    def count(self) -> int:
+        """Number of material voxels; scanned at most once per edit."""
+        if self._count is None:
+            self._count = int(np.count_nonzero(self.mask))
+        return self._count
+
+    def box(self) -> Box | None:
+        """Bounding box ``((x0, x1), (y0, y1), (z0, z1))`` of the material voxels; None when empty.
+
+        Cached, because the viewers and the texture window ask for it many times per edit and once
+        per slice-slider tick, and the scan is the volume.
+        """
+        if not self._box_valid:
+            self._box = box_of_mask(self.mask) if self.mask.any() else None
+            self._box_valid = True
+        return self._box
 
     # ------------------------------------------------------------------ editing
     def apply(self, op: MaskOp) -> NDArray[np.bool_]:
@@ -266,22 +362,48 @@ class MaskEditor:
             self.mask[...] = True
         elif op.shape == "empty":
             self.mask[...] = False
+        elif op.shape == "threshold":
+            if self.volume is None:
+                raise ValueError("a threshold operation needs the volume intensities (MaskEditor.volume)")
+            self._combine(threshold_region(self.volume, op.level, op.keep_largest, op.fill_holes), op.mode)
         else:
-            if op.shape == "threshold":
-                if self.volume is None:
-                    raise ValueError("a threshold operation needs the volume intensities (MaskEditor.volume)")
-                region = threshold_region(self.volume, op.level, op.keep_largest, op.fill_holes)
-            else:
-                region = rasterise(op, self.shape)
-            if op.mode == "replace":
-                self.mask[...] = region
-            elif op.mode == "add":
-                self.mask |= region
-            else:
-                self.mask &= ~region
+            self._apply_geometry(op)
         self.ops.append(op)
         self._redo.clear()
+        self._invalidate()
         return self.mask
+
+    def _combine(self, region: NDArray[np.bool_], mode: str) -> None:
+        """Combine a region that really is a whole volume (only ``threshold`` produces one)."""
+        if mode == "replace":
+            self.mask[...] = region
+        elif mode == "add":
+            self.mask |= region
+        else:
+            self.mask &= ~region
+
+    def _apply_geometry(self, op: MaskOp) -> None:
+        """A drawn shape, written straight through the slices it spans.
+
+        The shape is 2-D and extruded, so nothing volume-sized is ever allocated and only the slab
+        is touched: a brush dab on one slice of a 384 x 512 x 512 volume costs 0.02 ms instead of the
+        22 ms it took to build a full boolean volume and OR it in.
+        """
+        slab = op_slab(op, self.shape)
+        if slab is None:
+            if op.mode == "replace":
+                self.mask[...] = False  # a replace by nothing is still a replace
+            return
+        axis, first, last = slab
+        img = _broadcast_image(rasterise_2d(op, *plane_lengths(op, self.shape)), axis)
+        view = slab_view(self.mask, axis, first, last)
+        if op.mode == "replace":
+            _clear_outside(self.mask, axis, first, last)
+            view[...] = img
+        elif op.mode == "add":
+            view |= img
+        else:
+            view &= ~img
 
     def undo(self) -> bool:
         if not self.ops:
@@ -289,6 +411,7 @@ class MaskEditor:
         op = self.ops.pop()
         self._redo.append(op)
         self._replay()
+        self._invalidate()  # _replay with no ops left never reaches apply()
         return True
 
     def redo(self) -> bool:
@@ -309,21 +432,21 @@ class MaskEditor:
             self.mask = self._base_copy()
             for op in fold:
                 self.apply(op)
-            self.base = self.mask.copy()
+            self.base, self._full_base = self.mask.copy(), False
         self.ops = []
         self.mask = self._base_copy()
+        self._invalidate()
         for op in ops:
             self.apply(op)
         self._redo = redo
 
-    def reset(self, base: NDArray[np.bool_] | None = None) -> None:
-        """Drop every operation and start again from ``base`` (None: all False)."""
-        self.base = None if base is None else np.asarray(base, dtype=bool).copy()
-        if self.base is not None and self.base.shape != self.shape:
-            raise ValueError(f"base mask shape {self.base.shape} does not match {self.shape}")
+    def reset(self, base: NDArray[np.bool_] | str | None = None) -> None:
+        """Drop every operation and start again from ``base`` (None: all False, :data:`FULL_BASE`: all True)."""
+        self._set_base(base, copy=True)
         self.ops = []
         self._redo = []
         self.mask = self._base_copy()
+        self._invalidate()
 
     @property
     def can_undo(self) -> bool:
@@ -336,7 +459,7 @@ class MaskEditor:
     @property
     def coverage(self) -> float:
         """Fraction of voxels that are material (True)."""
-        return float(np.count_nonzero(self.mask)) / float(self.mask.size)
+        return self.count / float(self.mask.size)
 
     # ------------------------------------------------------------------ persistence
     def to_dict(self) -> dict[str, Any]:

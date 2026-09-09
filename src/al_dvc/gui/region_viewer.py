@@ -24,10 +24,8 @@ from matplotlib.patches import Ellipse, Rectangle
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QButtonGroup, QComboBox, QHBoxLayout, QLabel, QSlider, QSpinBox, QVBoxLayout, QWidget
 
-from al_dvc.texture import box_of_mask
-
 from .icons import tool_button
-from .mask_editor import MaskEditor, MaskOp
+from .mask_editor import FULL_BASE, MaskEditor, MaskOp
 from .theme import COLORS
 from .widgets import guard_wheel
 
@@ -300,7 +298,7 @@ class RegionViewer(QWidget):
             self.tools.setEnabled(False)
         else:
             nz, ny, nx = self._vol.shape
-            self._editor = MaskEditor(self._vol.shape, base=np.ones(self._vol.shape, dtype=bool))
+            self._editor = MaskEditor(self._vol.shape, base=FULL_BASE)
             step = max(1, int(round((self._vol.size / DISPLAY_SAMPLE) ** (1 / 3))))
             sample = self._vol[::step, ::step, ::step]
             lo, hi = np.percentile(sample, [1, 99])
@@ -332,19 +330,19 @@ class RegionViewer(QWidget):
         return None if self._editor is None else self._editor.mask
 
     def box(self):
-        """Bounding box ``((x0, x1), (y0, y1), (z0, z1))`` of the region, ``None`` when it is empty."""
-        m = self.mask
-        if m is None or not m.any():
-            return None
-        return box_of_mask(m)
+        """Bounding box ``((x0, x1), (y0, y1), (z0, z1))`` of the region, ``None`` when it is empty.
+
+        The editor caches it: the texture window asks for it a dozen times per edit and once per
+        slice-slider tick, and computing it is a pass over the whole volume.
+        """
+        return None if self._editor is None else self._editor.box()
 
     def fill_fraction(self) -> float:
         """Share of the bounding box that the region covers (1.0 for a box)."""
-        m = self.mask
         box = self.box()
-        if m is None or box is None:
+        if self._editor is None or box is None:
             return 0.0
-        return float(m.sum()) / float(np.prod([b - a for a, b in box]))
+        return self._editor.count / float(np.prod([b - a for a, b in box]))
 
     # ------------------------------------------------------------------ centre point and cubes
     @property
@@ -395,7 +393,7 @@ class RegionViewer(QWidget):
         """Replace the region by ``mask`` (``None``: the whole volume); the drawing history is dropped."""
         if self._editor is None:
             return
-        base = np.ones(self._editor.shape, dtype=bool) if mask is None else np.asarray(mask, dtype=bool)
+        base = FULL_BASE if mask is None else np.asarray(mask, dtype=bool)
         self._cancel_gesture()
         self._editor.reset(base)
         self._after_edit()
