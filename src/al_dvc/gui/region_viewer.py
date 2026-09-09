@@ -14,6 +14,7 @@ slice cuts it.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 import numpy as np
@@ -46,6 +47,8 @@ LEFT, RIGHT = 1, 3
 POINT_DECIMALS = 2
 DISPLAY_SAMPLE = 2_000_000  # voxels looked at for the grey-level limits
 MIN_CANVAS = 40  # pixels: below this the axes transform is singular and matplotlib cannot place anything
+DISPLAY_PIXELS = 640  # a slice is decimated to about this many samples per axis before it is drawn
+MAX_CUBE_PATCHES = 24  # rectangles kept per pane for the concentric-cube overlay
 
 __all__ = ["RegionSettings", "RegionTools", "RegionViewer"]
 
@@ -57,6 +60,44 @@ class RegionSettings:
     depth: str
     depth_range: tuple[int, int]
     radius: int
+
+
+def display_stride(shape: tuple[int, int]) -> tuple[int, int]:
+    """``(sv, sh)``: how many voxels one drawn sample covers, so a slice is not sent at full resolution.
+
+    A pane is a few hundred pixels wide; drawing a 2048 x 2048 slice into it costs matplotlib 2.7 s
+    per frame (measured, image + tint + outline) against 0.14 s for the decimated one, and the extra
+    samples are resampled away before anything reaches the screen.
+    """
+    return tuple(max(1, -(-n // DISPLAY_PIXELS)) for n in shape)  # type: ignore[return-value]
+
+
+def _decimate(img: np.ndarray, stride: tuple[int, int]) -> np.ndarray:
+    """Point-sample the grey values: they are a background, and the eye cannot use what is dropped."""
+    sv, sh = stride
+    return img if sv == 1 and sh == 1 else img[::sv, ::sh]
+
+
+def _decimate_region(m2d: np.ndarray, stride: tuple[int, int]) -> np.ndarray:
+    """Reduce a region slice conservatively: a sample is inside only when every voxel it covers is.
+
+    Point-sampling would drop a thin excluded sliver and show excluded material as part of the
+    region, which is the one error this display must not make. Blocks that hang over the edge keep
+    the plain sample, so the reduction never invents material either.
+    """
+    sv, sh = stride
+    if sv == 1 and sh == 1:
+        return m2d
+    h, w = m2d.shape
+    hh, ww = h // sv, w // sh
+    if hh == 0 or ww == 0:
+        return m2d[::sv, ::sh]
+    whole = m2d[: hh * sv, : ww * sh].reshape(hh, sv, ww, sh).all(axis=(1, 3))
+    if hh * sv == h and ww * sh == w:
+        return whole
+    out = m2d[::sv, ::sh].copy()  # the ragged last row / column keeps the point sample
+    out[:hh, :ww] = whole
+    return out
 
 
 def _voxel_point(event) -> tuple[float, float]:
@@ -238,6 +279,9 @@ class RegionViewer(QWidget):
         self._pick_centre = False
         self._revision = 0  # bumped on every change of the region, so a stale result can be spotted
         self._pending_redraw = False  # a redraw asked for while the widget had no room to draw in
+        self._artists: list[dict] | None = None  # one dict of persistent artists per pane
+        self._contour_key: tuple | None = None  # what the drawn region outlines were built from
+        self._hold = 0  # >0 while a burst of changes is collected into a single redraw
         self._vmin, self._vmax = 0.0, 1.0
         self.tools = RegionTools()  # placed by the owner, next to the other controls of the region step
         self.figure = Figure(figsize=(9, 3.6))
@@ -290,6 +334,7 @@ class RegionViewer(QWidget):
         self._cancel_gesture()
         self._vol = None if vol is None else np.asarray(vol)
         self._centre, self._cubes, self._active_cube = None, [], None  # they belong to the volume that just went
+        self._artists = None  # so do the drawn artists: the slice shapes change with it
         self._revision += 1
         if self._vol is None:
             self._editor = None
@@ -362,16 +407,20 @@ class RegionViewer(QWidget):
         new = (min(max(cx, 0), nx - 1), min(max(cy, 0), ny - 1), min(max(cz, 0), nz - 1))
         changed = new != self._centre
         self._centre = new
-        if move_slices:
-            self.set_slices(new[2], new[1], new[0])  # the three panes cut through the centre
-        self.redraw()
-        if changed:
-            self.centre_changed.emit()
+        with self._held():
+            if move_slices:
+                self.set_slices(new[2], new[1], new[0])  # the three panes cut through the centre
+            self.redraw()
+            if changed:
+                self.centre_changed.emit()
 
     def set_cubes(self, boxes, active: int | None = None) -> None:
         """Draw ``boxes`` (``((x0, x1), (y0, y1), (z0, z1))`` each); ``active`` is the one the analysis uses."""
-        self._cubes = [tuple(tuple(int(v) for v in pair) for pair in b) for b in (boxes or [])]
-        self._active_cube = active if (active is not None and 0 <= active < len(self._cubes)) else None
+        cubes = [tuple(tuple(int(v) for v in pair) for pair in b) for b in (boxes or [])]
+        active = active if (active is not None and 0 <= active < len(cubes)) else None
+        if cubes == self._cubes and active == self._active_cube:
+            return  # the overlay is recomputed on every refresh; only a real change is worth a redraw
+        self._cubes, self._active_cube = cubes, active
         self.redraw()
 
     def set_pick_centre(self, on: bool) -> None:
@@ -424,8 +473,9 @@ class RegionViewer(QWidget):
     def _after_edit(self) -> None:
         self._revision += 1
         self._refresh_edit_buttons()
-        self.redraw()
-        self.region_changed.emit()
+        with self._held():  # the owner reacts by moving the centre and the cubes: one redraw for all of it
+            self.redraw()
+            self.region_changed.emit()
 
     def _refresh_edit_buttons(self) -> None:
         ed = self._editor
@@ -437,8 +487,9 @@ class RegionViewer(QWidget):
         return (int(self.sliders["z"].value()), int(self.sliders["y"].value()), int(self.sliders["x"].value()))
 
     def set_slices(self, iz: int, iy: int, ix: int) -> None:
-        for axis, v in (("z", iz), ("y", iy), ("x", ix)):
-            self.sliders[axis].setValue(int(v))
+        with self._held():  # three sliders, one redraw
+            for axis, v in (("z", iz), ("y", iy), ("x", ix)):
+                self.sliders[axis].setValue(int(v))
 
     def _on_slider(self, axis: str) -> None:
         self._cancel_gesture()
@@ -450,100 +501,188 @@ class RegionViewer(QWidget):
         if self._pending_redraw:
             self.redraw()
 
-    def redraw(self) -> None:
-        if self.canvas.width() < MIN_CANVAS or self.canvas.height() < MIN_CANVAS:
-            self._pending_redraw = True  # no room to draw in yet: try again when the widget is shown
-            return
-        self._pending_redraw = False
+    @contextmanager
+    def _held(self):
+        """Collect a burst of changes into one redraw: an edit moves the region, the box and the cubes."""
+        self._hold += 1
+        try:
+            yield
+        finally:
+            self._hold -= 1
+            if self._hold == 0 and self._pending_redraw:
+                self.redraw()
+
+    def _pane_geometry(self):
+        """Per pane: ``(slice image, region slice, (w, h), h label, v label, title, (ch, cv))``."""
+        vol, m = self._vol, self.mask
+        iz, iy, ix = self.slice_indices()
+        nz, ny, nx = vol.shape
+        return [
+            (vol[iz], m[iz], (nx, ny), "x", "y", f"XY  z = {iz}", (ix, iy)),
+            (vol[:, iy, :], m[:, iy, :], (nx, nz), "x", "z", f"XZ  y = {iy}", (ix, iz)),
+            (vol[:, :, ix], m[:, :, ix], (ny, nz), "y", "z", f"YZ  x = {ix}", (iy, iz)),
+        ]
+
+    def _build_artists(self) -> None:
+        """Create every artist once. Rebuilding them per redraw cost 40 ms on a 512^2 slice."""
+        self._artists = []
+        self._contour_key = None
         vol = self._vol
-        for ax in self.axes:
+        nz, ny, nx = vol.shape
+        sizes = [(nx, ny), (nx, nz), (ny, nz)]
+        for ax, (w, h) in zip(self.axes, sizes):
             ax.clear()
             ax.set_facecolor(COLORS.BG_CANVAS)
             ax.tick_params(colors=COLORS.TEXT_SECONDARY, labelsize=7)
             for spine in ax.spines.values():
                 spine.set_color(COLORS.BORDER)
+            ax.set_axis_on()
+            extent = [-0.5, w - 0.5, -0.5, h - 0.5]
+            empty = np.zeros((1, 1), dtype=np.float32)
+            image = ax.imshow(empty, cmap="gray", origin="lower", vmin=self._vmin, vmax=self._vmax, extent=extent)
+            tint = ax.imshow(
+                np.ma.masked_where(np.ones((1, 1), dtype=bool), empty),
+                cmap=REGION_TINT,
+                origin="lower",
+                alpha=OUTSIDE_ALPHA,
+                extent=extent,
+                interpolation="nearest",
+            )
+            box_patch = ax.add_patch(Rectangle((0, 0), 0, 0, fill=False, ec=REGION_COLOR, lw=1.6, ls="--", alpha=0.95))
+            cubes = [ax.add_patch(Rectangle((0, 0), 0, 0, fill=False, ec=CUBE_COLOR, lw=0.9)) for _ in range(MAX_CUBE_PATCHES)]
+            for patch in (box_patch, *cubes):
+                patch.set_visible(False)
+            vline = ax.axvline(0, color=CROSSHAIR_COLOR, lw=0.6, alpha=0.6)
+            hline = ax.axhline(0, color=CROSSHAIR_COLOR, lw=0.6, alpha=0.6)
+            (centre,) = ax.plot([], [], marker="+", color=CUBE_COLOR, ms=11, mew=1.8, ls="none")
+            ax.set_xlim(extent[0], extent[1])
+            ax.set_ylim(extent[2], extent[3])
+            self._artists.append(
+                {
+                    "ax": ax,
+                    "image": image,
+                    "tint": tint,
+                    "box": box_patch,
+                    "cubes": cubes,
+                    "vline": vline,
+                    "hline": hline,
+                    "centre": centre,
+                    "contour": None,
+                }
+            )
+
+    def _show_placeholder(self) -> None:
+        """No volume: one line of text and no axes."""
+        self._artists = None
+        self._contour_key = None
+        for ax in self.axes:
+            ax.clear()
+            ax.set_facecolor(COLORS.BG_CANVAS)
+            ax.set_axis_off()
+        self.axes[1].text(
+            0.5,
+            0.5,
+            self.tr("Load a reference volume first."),
+            ha="center",
+            va="center",
+            color=COLORS.TEXT_SECONDARY,
+            transform=self.axes[1].transAxes,
+        )
+        self.canvas.draw_idle()
+
+    def redraw(self) -> None:
+        if self._hold > 0:
+            self._pending_redraw = True  # inside a burst: one redraw when it ends
+            return
+        if self.canvas.width() < MIN_CANVAS or self.canvas.height() < MIN_CANVAS:
+            self._pending_redraw = True  # no room to draw in yet: try again when the widget is shown
+            return
+        self._pending_redraw = False
+        vol = self._vol
         for axis, val in self._slider_values.items():
             val.setText(str(self.sliders[axis].value()) if vol is not None else "-")
         if vol is None:
-            self.axes[1].text(
-                0.5,
-                0.5,
-                self.tr("Load a reference volume first."),
-                ha="center",
-                va="center",
-                color=COLORS.TEXT_SECONDARY,
-                transform=self.axes[1].transAxes,
-            )
-            for ax in self.axes:
-                ax.set_axis_off()
-            self.canvas.draw_idle()
+            self._show_placeholder()
             return
+        if self._artists is None:
+            self._build_artists()
         iz, iy, ix = self.slice_indices()
-        nz, ny, nx = vol.shape
-        m = self.mask
-        panes = [
-            (self.axes[0], vol[iz], m[iz], (nx, ny), "x", "y", f"XY  z = {iz}", (ix, iy)),
-            (self.axes[1], vol[:, iy, :], m[:, iy, :], (nx, nz), "x", "z", f"XZ  y = {iy}", (ix, iz)),
-            (self.axes[2], vol[:, :, ix], m[:, :, ix], (ny, nz), "y", "z", f"YZ  x = {ix}", (iy, iz)),
-        ]
         box = self.box()
         spans = None
         if box is not None:
             (x0, x1), (y0, y1), (z0, z1) = box
             spans = {"xy": ((x0, x1), (y0, y1)), "xz": ((x0, x1), (z0, z1)), "yz": ((y0, y1), (z0, z1))}
-        for plane, (ax, img, m2d, (w, h), xl, yl, title, (ch, cv)) in zip(PLANE_OF_AXIS, panes):
-            ax.set_axis_on()
-            extent = [-0.5, w - 0.5, -0.5, h - 0.5]
-            ax.imshow(img, cmap="gray", origin="lower", vmin=self._vmin, vmax=self._vmax, extent=extent)
-            outside = np.ma.masked_where(m2d, np.ones_like(m2d, dtype=np.float32))
-            ax.imshow(outside, cmap=REGION_TINT, origin="lower", alpha=OUTSIDE_ALPHA, extent=extent, interpolation="nearest")
-            if m2d.any() and not m2d.all():
-                ax.contour(m2d.astype(np.float32), levels=[0.5], colors=[REGION_COLOR], linewidths=0.8)
-            if spans is not None:
+        contour_key = (self._revision, iz, iy, ix)
+        rebuild_contours = contour_key != self._contour_key
+        for plane, art, (img, m2d, (w, h), xl, yl, title, (ch, cv)) in zip(PLANE_OF_AXIS, self._artists, self._pane_geometry()):
+            stride = display_stride((h, w))
+            small = _decimate_region(m2d, stride)
+            art["image"].set_data(_decimate(img, stride))
+            art["tint"].set_data(np.ma.masked_where(small, np.ones(small.shape, dtype=np.float32)))
+            if rebuild_contours:
+                self._set_contour(art, small, stride, (w, h))
+            if spans is None:
+                art["box"].set_visible(False)
+            else:
                 (h0, h1), (v0, v1) = spans[plane]
-                ax.add_patch(
-                    Rectangle((h0 - 0.5, v0 - 0.5), h1 - h0, v1 - v0, fill=False, ec=REGION_COLOR, lw=1.6, ls="--", alpha=0.95)
-                )
-            ax.axvline(ch, color=CROSSHAIR_COLOR, lw=0.6, alpha=0.6)
-            ax.axhline(cv, color=CROSSHAIR_COLOR, lw=0.6, alpha=0.6)
-            self._draw_cubes(ax, plane, (iz, iy, ix))
-            ax.set_title(title, color=COLORS.TEXT_SECONDARY, fontsize=8)
-            ax.set_xlabel(xl, color=COLORS.TEXT_SECONDARY, fontsize=7)
-            ax.set_ylabel(yl, color=COLORS.TEXT_SECONDARY, fontsize=7)
+                art["box"].set_bounds(h0 - 0.5, v0 - 0.5, h1 - h0, v1 - v0)
+                art["box"].set_visible(True)
+            art["vline"].set_xdata([ch, ch])
+            art["hline"].set_ydata([cv, cv])
+            self._draw_cubes(art, plane, (iz, iy, ix))
+            art["ax"].set_title(title, color=COLORS.TEXT_SECONDARY, fontsize=8)
+            art["ax"].set_xlabel(xl, color=COLORS.TEXT_SECONDARY, fontsize=7)
+            art["ax"].set_ylabel(yl, color=COLORS.TEXT_SECONDARY, fontsize=7)
+        if rebuild_contours:
+            self._contour_key = contour_key
         self.canvas.draw_idle()
 
-    def _draw_cubes(self, ax, plane: str, slices: tuple[int, int, int]) -> None:
+    def _set_contour(self, art: dict, small: np.ndarray, stride: tuple[int, int], size: tuple[int, int]) -> None:
+        """The region outline. A contour set cannot be updated, so it is replaced when it changes."""
+        old = art["contour"]
+        if old is not None:
+            old.remove()
+            art["contour"] = None
+        if not small.any() or small.all():
+            return
+        sv, sh = stride
+        w, h = size
+        art["contour"] = art["ax"].contour(
+            np.arange(small.shape[1]) * sh,
+            np.arange(small.shape[0]) * sv,
+            small.astype(np.float32),
+            levels=[0.5],
+            colors=[REGION_COLOR],
+            linewidths=0.8,
+        )
+
+    def _draw_cubes(self, art: dict, plane: str, slices: tuple[int, int, int]) -> None:
         """The concentric cubes and the centre point, on the slices that cut them."""
         order = {"xy": (0, 1, 2), "xz": (0, 2, 1), "yz": (1, 2, 0)}[plane]  # (horizontal, vertical, normal) axis
         here = {"xy": slices[0], "xz": slices[1], "yz": slices[2]}[plane]
+        patches = art["cubes"]
+        used = 0
         for i, box in enumerate(self._cubes):
             (n0, n1) = box[order[2]]
             if not n0 <= here < n1:
                 continue  # this slice misses the cube: drawing its outline here would be a lie
+            if used >= len(patches):
+                break  # the pool is the cap on how many cubes a sweep may draw
             (h0, h1), (v0, v1) = box[order[0]], box[order[1]]
             active = i == self._active_cube
-            ax.add_patch(
-                Rectangle(
-                    (h0 - 0.5, v0 - 0.5),
-                    h1 - h0,
-                    v1 - v0,
-                    fill=False,
-                    ec=CUBE_COLOR,
-                    lw=2.0 if active else 0.9,
-                    ls="-" if active else (0, (4, 3)),
-                    alpha=1.0 if active else 0.65,
-                )
-            )
-        if self._centre is not None:
-            ax.plot(
-                [self._centre[order[0]]],
-                [self._centre[order[1]]],
-                marker="+",
-                color=CUBE_COLOR,
-                ms=11,
-                mew=1.8,
-                ls="none",
-            )
+            patch = patches[used]
+            patch.set_bounds(h0 - 0.5, v0 - 0.5, h1 - h0, v1 - v0)
+            patch.set_linewidth(2.0 if active else 0.9)
+            patch.set_linestyle("-" if active else (0, (4, 3)))
+            patch.set_alpha(1.0 if active else 0.65)
+            patch.set_visible(True)
+            used += 1
+        for patch in patches[used:]:
+            patch.set_visible(False)
+        if self._centre is None:
+            art["centre"].set_data([], [])
+        else:
+            art["centre"].set_data([self._centre[order[0]]], [self._centre[order[1]]])
 
     # ------------------------------------------------------------------ gestures
     def _plane_at(self, event) -> str | None:
