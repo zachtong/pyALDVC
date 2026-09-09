@@ -14,7 +14,10 @@ the voxels where both ``x`` and ``x + h`` lie in the region. Two normalisations 
     kept for comparison.
 
 Both are evaluated only where the overlap is at least ``min_overlap`` of the region (NaN
-elsewhere); beyond that the estimate rests on too few pairs to be reliable.
+elsewhere); beyond that the estimate rests on too few pairs to be reliable. The default 0.3 is
+chosen for the analysis this package runs: lags up to a quarter of the edge on every axis, whose
+worst corner keeps ``0.75 ** 3 = 0.42`` of the pairs, so the reported lag cube has no hole in it
+and the radial average is not biased towards the axis directions.
 
 The inverse FFT is shifted before the lags ``[-L_j, L_j]`` are cut around the true zero lag.
 Cutting first and shifting afterwards, as the original scripts did, mislabels the negative
@@ -30,7 +33,7 @@ from numpy.typing import NDArray
 from scipy.fft import irfftn, next_fast_len, rfftn
 
 ESTIMATORS = ("overlap", "window")
-DEFAULT_MIN_OVERLAP = 0.5  # fraction of the region's voxel pairs a lag must keep to be reported
+DEFAULT_MIN_OVERLAP = 0.3  # fraction of the region's voxel pairs a lag must keep to be reported
 NO_TEXTURE_RELATIVE_VARIANCE = 1e-12  # variance below this times max(1, mean^2) is "no texture"
 AXES = ("x", "y", "z")  # index 0, 1, 2 of every (x, y, z) tuple; array axes run (z, y, x)
 

@@ -194,6 +194,16 @@ def cmd_info(args: argparse.Namespace) -> int:
     return 0
 
 
+def _sweep_edge(sweep) -> int | None:
+    """The edge the sweep settled on: the first threshold that converged, else None."""
+    if sweep is None or not sweep.levels:
+        return None
+    for d in sweep.decisions.values():
+        if d.converged and d.start_index is not None:
+            return int(max(sweep.levels[d.start_index].size))
+    return None
+
+
 def cmd_texture(args: argparse.Namespace) -> int:
     """Correlation lengths (and optionally the size sweep) of a volume, written as CSV, JSON and PNG."""
     import matplotlib
@@ -206,8 +216,11 @@ def cmd_texture(args: argparse.Namespace) -> int:
     from .texture import (
         THRESHOLD_LABELS,
         THRESHOLDS,
-        analyse_range,
+        analyse_cube,
+        box_centre,
         box_of_mask,
+        cube_box,
+        cube_limits,
         normalise_box,
         recommend_parameters,
         sweep_concentric,
@@ -216,27 +229,41 @@ def cmd_texture(args: argparse.Namespace) -> int:
 
     vol = np.asarray(load_volume(args.volume))
     box = whole_box(vol.shape)
+    mask = None
     if args.roi:
         mask = np.asarray(load_volume(args.roi)) > 0
         if mask.shape != vol.shape:
             print(f"error: region shape {mask.shape} does not match the volume shape {vol.shape}", file=sys.stderr)
             return 2
-        box = box_of_mask(mask)  # the analysis range is the region's bounding box
-    if args.range:
-        x0, x1, y0, y1, z0, z1 = args.range
+        box = box_of_mask(mask)  # the cubes stay inside the region's bounding box
+        if mask.all():
+            mask = None
+    if args.region:
+        x0, x1, y0, y1, z0, z1 = args.region
         box = ((x0, x1), (y0, y1), (z0, z1))
+        mask = None
     try:
         box = normalise_box(box, vol.shape)
+        centre = tuple(int(v) for v in args.centre) if args.centre else box_centre(box)
+        limits = cube_limits(centre, box)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     spacing = tuple(args.spacing) if args.spacing else 1.0
     t0 = time.perf_counter()
-    result = analyse_range(vol, box, args.window, spacing)
-    rec = recommend_parameters(result) if result.status == "ok" else None
     sweep = None
-    if args.sweep and result.status == "ok":
-        sweep = sweep_concentric(vol, box, args.sweep_start, args.sweep_step, min_lag=max(8, args.sweep_start), spacing=spacing)
+    if args.sweep:
+        sweep = sweep_concentric(
+            vol, centre, box, args.sweep_start, args.sweep_step, args.sweep_count, spacing=spacing, mask=mask
+        )
+    edge = args.size if args.size else _sweep_edge(sweep) or min(limits)
+    size = tuple(min(int(edge), int(limit)) for limit in limits)  # clipped per axis, as the window does
+    try:
+        result = analyse_cube(vol, cube_box(centre, size), spacing, mask)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    rec = recommend_parameters(result) if result.status == "ok" else None
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     write_profiles_csv(result, out / "texture_profiles.csv")
@@ -252,7 +279,11 @@ def cmd_texture(args: argparse.Namespace) -> int:
     fig.tight_layout()
     fig.savefig(out / "texture_profiles.png", dpi=150)
     plt.close(fig)
-    print(f"status: {result.status}  ({time.perf_counter() - t0:.1f} s, {result.acf.n_voxels:,} voxels)")
+    size = " x ".join(str(v) for v in result.settings["size"])
+    print(
+        f"status: {result.status}  ({time.perf_counter() - t0:.1f} s, {size} voxel about "
+        f"{centre}, {result.acf.n_voxels:,} voxels)"
+    )
     for axis, table in result.lengths.items():
         cells = [
             f"{THRESHOLD_LABELS.get(t, t)}: {c.value:.2f}" if c.found else f"{THRESHOLD_LABELS.get(t, t)}: {c.status}"
@@ -387,21 +418,25 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("paths", nargs="+")
     i.set_defaults(func=cmd_info)
 
+    from .texture.concentric import DEFAULT_COUNT, DEFAULT_START, DEFAULT_STEP
+
     t = sub.add_parser("texture", help="correlation lengths of a volume and a subset suggestion")
     t.add_argument("volume", help="volume file (any supported format)")
-    t.add_argument("--roi", help="region of interest volume: its bounding box becomes the analysis range")
+    t.add_argument("--roi", help="region of interest volume: the cubes stay inside it")
     t.add_argument(
-        "--range",
+        "--region",
         type=int,
         nargs=6,
         metavar=("X0", "X1", "Y0", "Y1", "Z0", "Z1"),
-        help="analysis range (half-open voxel indices)",
+        help="analysis region (half-open voxel indices); the cubes stay inside it",
     )
+    t.add_argument("--centre", type=int, nargs=3, metavar=("X", "Y", "Z"), help="centre of the cubes (default: the region's)")
     t.add_argument("--spacing", type=float, nargs=3, metavar=("DX", "DY", "DZ"), help="voxel size")
-    t.add_argument("--window", type=int, default=64, help="edge of the window that slides inside the range")
-    t.add_argument("--sweep", action="store_true", help="also run the window size analysis (concentric windows)")
-    t.add_argument("--sweep-start", type=int, default=16, help="edge of the smallest window of the sweep")
-    t.add_argument("--sweep-step", type=int, default=16, help="growth of the window edge per size")
+    t.add_argument("--size", type=int, help="edge of the analysed cube (default: the RVE size, else the largest that fits)")
+    t.add_argument("--sweep", action="store_true", help="also run the RVE analysis (concentric cubes)")
+    t.add_argument("--sweep-start", type=int, default=DEFAULT_START, help="edge of the smallest cube of the sweep")
+    t.add_argument("--sweep-step", type=int, default=DEFAULT_STEP, help="growth of the cube edge per size")
+    t.add_argument("--sweep-count", type=int, default=DEFAULT_COUNT, help="number of cube sizes")
     t.add_argument("-o", "--out", default="texture", help="output directory")
     t.set_defaults(func=cmd_texture)
 

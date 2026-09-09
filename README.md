@@ -87,19 +87,21 @@ Micro-CT scan of the MATLAB example, 1024 x 1024 x 306 voxels, 79 200 nodes:
 A subset too small drifts, a subset too large blurs the field. pyALDVC measures the texture of
 your scan and tells you what to use. The same guide is built into the application, under Help.
 
-**1. Compare a window with a shifted copy of itself.** Inside a region you draw, the window slides
-and the similarity of the two is traced. The shift at which it has fallen to 1/e is the correlation
-length: the size of your features.
+**1. Compare a box with a shifted copy of itself, and divide out the overlap.** The shift at which
+the similarity has fallen to 1/e is the correlation length: the size of your features. Shifting makes
+the two overlap less, which would pull the curve down on its own, so every lag is divided by the
+number of voxel pairs that still contribute.
 
 <p align="center">
-  <img src="src/al_dvc/gui/assets/guide/region_window.gif" alt="A window and its shifted copy inside the analysis region, tracing the autocorrelation curve" width="90%"/>
+  <img src="src/al_dvc/gui/assets/guide/overlap_correction.gif" alt="A box and its shifted copy; the overlap shrinks with the shift, and the raw curve falls below the corrected one" width="90%"/>
 </p>
 
-**2. Grow the window until that length stops changing.** Below the representative volume element the
-measurement is noise; above it, every window agrees.
+**2. Grow the box until that length stops changing.** Pick a centre, analyse concentric cubes around
+it, each on its own voxels alone. Below the representative volume element the measurement is noise;
+above it, every size agrees.
 
 <p align="center">
-  <img src="src/al_dvc/gui/assets/guide/rve_sweep.gif" alt="Windows of growing size in the same region; the correlation length settles once the window is large enough" width="90%"/>
+  <img src="src/al_dvc/gui/assets/guide/rve_sweep.gif" alt="Concentric boxes of growing size about one centre; the correlation length settles once the box is large enough" width="90%"/>
 </p>
 
 **3. The subset follows.** Four correlation lengths per axis, stepped by half a subset: a recommended

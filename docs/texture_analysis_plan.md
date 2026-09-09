@@ -131,3 +131,41 @@ not a material RVE; the ACF describes the image, not the structure).
    defects listed in section 1.
 
 Estimated effort: about a day for each of steps 1 to 3.
+
+## 6. Revision, 2026-09-08: one region, one centre, concentric cubes
+
+The window that slides inside a larger range (`texture/sliding.py`, shipped 0.6.0) is no longer the
+analysis the application runs. What replaced it, and why.
+
+**What the original scripts actually did.** They took one region and correlated it with a zero-padded
+copy of itself, normalised by the zero lag alone (`acf_analysis.py:437`). That is the `window`
+estimator of `acf.py`: unbiased nowhere, its expectation is `R(h)/R(0)` times `prod_j (1 - |h_j|/N_j)`.
+`rve_analysis.py` repeated it on concentric regions, so part of the "correlation length grows with the
+region" it reported was that factor and nothing else.
+
+**Three ways out, and the one taken.**
+
+| | pairs at lag h | reads outside the region | fit for a size sweep |
+|---|---|---|---|
+| raw (the scripts) | `M(h)`, and the estimate is scaled by `M(h)/M(0)` | no | no: the size effect is mostly geometry |
+| corrected `B` vs `B'` (**shipped**) | `M(h)` | no | yes: every size rests on its own voxels only |
+| sliding window in a larger range | the window's, at every lag | yes | no: a small window borrows data it was not given |
+
+The sliding estimator has the lowest variance at a fixed size -- it keeps every pair at every lag --
+and it is kept in the package and in the report as the reference the shipped one is compared against.
+It cannot be the sweep's estimator: a 16 voxel window that reads grey values 20 voxels away is not
+measuring what 16 voxels of data can tell you, which is the whole question the RVE asks. The
+correction is exact (the ratio of the two curves is `M(h)/M(0)`, tested), needs nothing from outside
+the region, and leaves the size sweep meaning what it says.
+
+**Constants.** Lags are reported to a quarter of the cube edge (`LAG_FRACTION`) and lags keeping less
+than 30 % of the pairs are dropped (`MIN_OVERLAP`, was 50 %). Together they make the reported lag cube
+complete: its worst corner still holds `0.75 ** 3 = 0.42` of the pairs, so the radial average is not
+biased towards the axis directions by holes in the corners.
+
+**The three steps now.** (1) The region only says where the analysis may look; it defaults to the
+whole volume and can be skipped. (2) A centre point picked on the slices, and concentric cubes around
+it, one analysis each; the size from which the lengths settle is the answer. (3) That cube, analysed
+in full. The region bounds every cube: a cube never leaves it, and an edge that would stick out is
+clipped per axis, so the schedule ends where the region does. Where the region is not a box, the
+voxels it excludes take no part and `settings["fill"]` reports how much of the cube survived.

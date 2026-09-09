@@ -110,6 +110,45 @@ def _secondary_peak(profile: Profile) -> tuple[float, float] | None:
     return None
 
 
+def result_from_acf(
+    ac: Autocorrelation,
+    thresholds=THRESHOLDS,
+    radial_bin: float | None = None,
+    window: tuple[slice, slice, slice] | None = None,
+    settings: dict | None = None,
+) -> TextureResult:
+    """Profiles, correlation lengths, noise floor and periodicity of an autocorrelation.
+
+    Shared by every entry point (:func:`analyse_texture`, the concentric analysis and the sliding
+    estimator) so that they cannot drift apart in what they report or in how they report nothing.
+    """
+    window = window if window is not None else tuple(slice(0, int(n)) for n in ac.shape)
+    settings = dict(settings or {})
+    if not ac.ok:
+        empty = {
+            axis: {float(t): Crossing(float(t), None, "invalid", None, "no texture") for t in thresholds}
+            for axis in (*AXES, "radial")
+        }
+        nan = np.array([np.nan])
+        profiles = {axis: Profile(axis, nan, nan, nan, nan, np.array([0]), nan) for axis in (*AXES, "radial")}
+        return TextureResult(ac, profiles, empty, empty, float("nan"), None, window, settings)
+    profiles = directional_profiles(ac)
+    profiles["radial"] = radial_profile(ac, radial_bin)
+    voxel = {axis: lengths(p, thresholds, physical=False) for axis, p in profiles.items()}
+    physical = {axis: lengths(p, thresholds, physical=True) for axis, p in profiles.items()}
+    one_over_e = voxel["radial"][float(thresholds[0])].value
+    return TextureResult(
+        acf=ac,
+        profiles=profiles,
+        lengths=voxel,
+        physical_lengths=physical,
+        noise_floor=_noise_floor(profiles["radial"], one_over_e),
+        periodicity=_periodicity(profiles),
+        window=window,
+        settings=settings,
+    )
+
+
 def _periodicity(profiles: dict[str, Profile]) -> tuple[str, float, float] | None:
     """``(axis, distance, height)`` of the strongest secondary peak over the axis and radial profiles.
 
@@ -153,28 +192,4 @@ def analyse_texture(
         "window": tuple((s.start, s.stop) for s in window),
         "n_voxels": ac.n_voxels,
     }
-    if not ac.ok:
-        empty = {
-            axis: {float(t): Crossing(float(t), None, "invalid", None, "no texture") for t in thresholds}
-            for axis in (*AXES, "radial")
-        }
-        nan = np.array([np.nan])
-        empty_profile = Profile("radial", nan, nan, nan, nan, np.array([0]), nan)
-        profiles = {axis: Profile(axis, nan, nan, nan, nan, np.array([0]), nan) for axis in AXES}
-        profiles["radial"] = empty_profile
-        return TextureResult(ac, profiles, empty, empty, float("nan"), None, window, settings)
-    profiles = directional_profiles(ac)
-    profiles["radial"] = radial_profile(ac, radial_bin)
-    voxel = {axis: lengths(p, thresholds, physical=False) for axis, p in profiles.items()}
-    physical = {axis: lengths(p, thresholds, physical=True) for axis, p in profiles.items()}
-    one_over_e = voxel["radial"][float(thresholds[0])].value
-    return TextureResult(
-        acf=ac,
-        profiles=profiles,
-        lengths=voxel,
-        physical_lengths=physical,
-        noise_floor=_noise_floor(profiles["radial"], one_over_e),
-        periodicity=_periodicity(profiles),
-        window=window,
-        settings=settings,
-    )
+    return result_from_acf(ac, thresholds, radial_bin, window, settings)

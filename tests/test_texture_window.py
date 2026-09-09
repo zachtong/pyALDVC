@@ -56,16 +56,25 @@ def test_window_analyses_applies_and_exports(qapp, aniso, tmp_path):
     assert tw.range_box() == ((10, 31), (12, 21), (4, 21))  # a drawn rectangle: x, y from the shape, z from its depth
     tw.region.undo()
     assert tw.range_box() == ((8, 56), (6, 50), (4, 44))
+    # the centre follows the region only when it would fall outside it: the drawn rectangle moved it,
+    # and undoing back to the larger region leaves it where it was
+    assert tw.centre() == (20, 16, 12)
+    tw.region.set_centre((30, 26, 22))  # as a click on a slice would: the other two panes follow
+    assert tw.region.slice_indices() == (22, 26, 30) and tw.centre_spin["x"].value() == 30
+    tw.centre_on_region()
+    assert tw.centre() == (32, 28, 24)
     tw.go_to_step(tw.TAB_ACF)
     assert tw.tabs.currentIndex() == tw.TAB_ACF and tw.pages.currentIndex() == tw.TAB_ACF  # tab, page and strip follow
-    tw.window_size.setValue(16)
+    tw.cube_size.setValue(32)
     tw.analyse()
     assert tw.wait(120_000)
     _pump()
     res = tw.result
     assert res is not None and res.status == "ok"
-    assert res.settings["range"] == ((8, 56), (6, 50), (4, 44)) and res.settings["max_lag"] == (16, 14, 12)
-    assert all(s.stop - s.start == 16 for s in res.window)  # the 16-voxel window centred in the range
+    assert res.settings["box"] == ((16, 48), (12, 44), (8, 40)) and res.settings["centre"] == (32, 28, 24)
+    assert res.settings["size"] == (32, 32, 32) and res.settings["max_lag"] == (8, 8, 8)  # a quarter of the edge
+    assert res.settings["estimator"] == "overlap" and res.settings["fill"] == 1.0
+    assert all(sl.stop - sl.start == 32 for sl in res.window)
     assert res.length("z") > 2 * res.length("x")
     assert tw.table.item(2, 0).text() != "-" and tw.table.item(3, 0).text() != "-"
     assert tw.recommendation is not None and tw._btn_apply.isEnabled()
@@ -86,19 +95,32 @@ def test_window_analyses_applies_and_exports(qapp, aniso, tmp_path):
     assert summary["lengths_voxel"]["z"]["1/e"]["value"] == pytest.approx(res.length("z"))
     tw._on_save_png()  # headless: writes the default path
     assert (tmp_path / "texture_profiles.png").is_file()
-    # the window size analysis runs on its own, next to the autocorrelation analysis
-    tw.sweep_start.setValue(8)
+    # the RVE analysis runs on its own, next to the autocorrelation analysis
+    tw.go_to_step(tw.TAB_SWEEP)
+    tw.sweep_start.setValue(16)
     tw.sweep_step.setValue(8)
+    tw.sweep_count.setValue(4)
+    assert len(tw.cube_sizes()) == 4 and tw.cube_sizes()[0] == (16, 16, 16)
+    assert len(tw.region._cubes) == 5  # the four sizes plus the cube step 3 would analyse
+    # the slice viewer follows the step: step 2 picks the centre on it, so it moves into that tab
+    assert tw.region.isAncestorOf(tw.region.canvas) and tw.tabs.widget(tw.TAB_SWEEP).isAncestorOf(tw.region)
+    tw.go_to_step(tw.TAB_REGION)
+    assert tw.tabs.widget(tw.TAB_REGION).isAncestorOf(tw.region) and not tw.region._cubes
+    tw.go_to_step(tw.TAB_SWEEP)
+    assert len(tw.region._cubes) == 5
     tw.run_sweep_analysis()
     assert tw.wait(300_000)
     _pump()
     assert tw.sweep is not None and len(tw.sweep.levels) >= 3 and tw.tabs.currentIndex() == tw.TAB_SWEEP
     assert all(lvl.radial is not None for lvl in tw.sweep.levels)  # every size keeps its radial curve for the plot
-    assert all(len(lvl.samples) == 1 for lvl in tw.sweep.levels)  # concentric windows, one per size
-    assert tw.result is not None and tw._btn_apply.isEnabled()  # the autocorrelation result is untouched
-    if tw.sweep_size() is not None:
+    assert all(len(lvl.samples) == 1 for lvl in tw.sweep.levels)  # concentric cubes, one per size
+    assert tw.sweep.settings["centre"] == (32, 28, 24)
+    assert tw.result is not None  # the autocorrelation result is untouched
+    stable = tw.sweep_size()
+    if stable is not None:
+        assert tw.cube_size.value() >= stable  # step 3 already carries what step 2 found
         tw.use_sweep_size()
-        assert tw.window_size.value() >= tw.sweep_size()
+        assert tw.cube_size.value() >= stable and tw.tabs.currentIndex() == tw.TAB_ACF
     # plot controls: curves off, log scale, background, reset view
     tw.curve_checks["x"].setChecked(False)
     tw.plot_scale.setCurrentIndex(1)
@@ -123,7 +145,7 @@ def test_window_analyses_applies_and_exports(qapp, aniso, tmp_path):
 def test_window_reports_no_texture(qapp):
     window = MainWindow()
     tw = window.open_texture_window()
-    flat = np.full((24, 24, 24), 3.0, dtype=np.float32)
+    flat = np.full((32, 32, 32), 3.0, dtype=np.float32)
     window.state.set_volume_arrays([flat], ["flat"])
     _pump()
     tw.analyse()
@@ -141,9 +163,8 @@ def test_cli_texture_writes_the_files(aniso, tmp_path, capsys):
     path = tmp_path / "vol.h5"
     save_volume(path, aniso)
     out = tmp_path / "tex"
-    assert (
-        main(["texture", str(path), "--window", "16", "--sweep", "--sweep-start", "8", "--sweep-step", "8", "-o", str(out)]) == 0
-    )
+    args = ["texture", str(path), "--size", "32", "--sweep", "--sweep-start", "16", "--sweep-step", "8", "--sweep-count", "4"]
+    assert main([*args, "-o", str(out)]) == 0
     assert (out / "texture_profiles.csv").is_file() and (out / "texture_profiles.png").is_file()
     summary = json.loads((out / "texture_summary.json").read_text(encoding="utf-8"))
     assert summary["status"] == "ok" and "recommendation" in summary and "sweep" in summary
@@ -152,6 +173,11 @@ def test_cli_texture_writes_the_files(aniso, tmp_path, capsys):
     roi = np.zeros(SHAPE, dtype=np.uint8)
     roi[8:-8, 8:-8, 8:-8] = 1
     save_volume(tmp_path / "roi.h5", roi)
-    assert main(["texture", str(path), "--roi", str(tmp_path / "roi.h5"), "--window", "16", "-o", str(out / "roi")]) == 0
+    assert main(["texture", str(path), "--roi", str(tmp_path / "roi.h5"), "--size", "16", "-o", str(out / "roi")]) == 0
     summary = json.loads((out / "roi" / "texture_summary.json").read_text(encoding="utf-8"))
-    assert summary["settings"]["range"] == [[8, 56], [8, 48], [8, 40]]  # the region's bounding box (x, y, z)
+    assert summary["settings"]["centre"] == [32, 28, 24]  # the centre of the region's bounding box (x, y, z)
+    assert summary["settings"]["size"] == [16, 16, 16] and summary["settings"]["estimator"] == "overlap"
+    # an explicit centre near the -x face: the cube is capped there, per axis, by twice the distance to it
+    assert main(["texture", str(path), "--centre", "12", "28", "24", "--size", "64", "-o", str(out / "edge")]) == 0
+    summary = json.loads((out / "edge" / "texture_summary.json").read_text(encoding="utf-8"))
+    assert summary["settings"]["size"] == [24, 56, 48] and summary["settings"]["centre"] == [12, 28, 24]

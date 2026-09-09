@@ -6,6 +6,30 @@ All notable changes to pyALDVC are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Texture analysis: one region, one centre, concentric cubes.** The window that slid inside a
+  larger range is no longer the analysis the application runs. A cube is now compared with a copy
+  of itself shifted by each lag, and every lag is divided by the number of voxel pairs that still
+  overlap -- the correction the original DVC Challenge scripts lacked, and which is exactly the
+  factor `prod_j (1 - |h_j| / N_j)` that made a small region read a shorter correlation length.
+  Nothing outside the analysed cube is read, so each size of the RVE sweep rests on its own voxels
+  alone and the sweep can be read as a convergence study. Lags are reported to a quarter of the
+  cube edge, and lags keeping less than 30 % of the pairs are dropped (`min_overlap`, was 50 %),
+  which leaves the reported lag cube complete in every direction.
+- The three steps changed with it: step 1 (the region) is now optional -- it says where the
+  analysis may look, defaults to the whole volume and bounds every cube; step 2 takes a centre
+  point picked on the slices and sweeps concentric cubes around it, drawing them on the three
+  slices; step 3 analyses the cube step 2 settled on, and no longer has a window of its own. The
+  window-size input and "use this size" button are gone. New API: `analyse_cube`,
+  `sweep_concentric(vol, centre, bounds, start, step, count)`, `concentric_sizes`,
+  `concentric_boxes`, `cube_box`, `cube_limits`, `max_lag_for`, `box_centre`. `analyse_range` and
+  `sliding_autocorrelation` stay in the library as the reference the report compares against.
+- CLI: `al-dvc texture` takes `--centre X Y Z`, `--size`, `--region` (was `--range`) and
+  `--sweep-count`; `--window` is gone. The exported JSON reports `centre`, `size`, `box`,
+  `max_lag`, `min_overlap` and `fill` instead of `range`/`window`.
+- The synthetic case generator stretches the grey values of the material over the whole range
+  (one window for every frame), so the speckle has about three times the contrast it had.
+
 ### Fixed
 - The node grid drawn on the slices and the deformed lattice in the 3-D view joined nodes that
   the mask separates, so a crack or a hole looked bridged even though the solver had cut the
@@ -14,10 +38,6 @@ All notable changes to pyALDVC are documented here. The format follows
   chosen), and the 3-D lattice draws only the elements the mesh kept. Whether a node column
   happened to land inside the crack decided how it looked before, which is why it seemed to
   depend on the subset size and the step.
-
-### Changed
-- The synthetic case generator stretches the grey values of the material over the whole range
-  (one window for every frame), so the speckle has about three times the contrast it had.
 
 ## [0.7.0] - 2026-09-07
 

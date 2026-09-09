@@ -3,19 +3,20 @@ subset size that suggests.
 
 Three steps, one tab and one parameter page each; the strip at the top shows what every step produced:
 
-1. **Region** -- the part of the volume whose texture is measured, drawn on its own slice viewer
-   (rectangle, ellipse, polygon, brush) or copied from the DVC region of interest. It is *not* the
-   DVC region of interest. The analysis uses the bounding box of the region: a window slides inside
-   it, so the box fixes the largest shift that can be analysed, ``(box - window) / 2`` per axis.
-2. **Representative volume element (RVE)** -- windows of growing size, all centred in the region, are
-   analysed with the same shifts; the size from which the correlation lengths stop changing is the
-   window of step 3.
-3. **Autocorrelation** -- one window: the correlation curves along x, y, z and over spherical shells,
-   the lengths at 1/e, 0.1 and 0.01, the noise floor, the periodicity, and the subset suggestion.
+1. **Region** (optional) -- where the analysis may look, drawn on its own slice viewer (rectangle,
+   ellipse, polygon, brush) or copied from the DVC region of interest. It is *not* the DVC region of
+   interest. It defaults to the whole volume, and its only job is to bound the cubes of steps 2 and 3
+   and to keep them out of the air around the specimen, so a user with a full volume can skip it.
+2. **Representative volume element (RVE)** -- a centre point, picked on the slices, and concentric
+   cubes around it; every cube is analysed on its own voxels alone, so the size from which the
+   correlation lengths stop changing is the size the texture really needs. That size becomes step 3.
+3. **Autocorrelation** -- one cube, the one the RVE settled on: the correlation curves along x, y, z
+   and over spherical shells, the lengths at 1/e, 0.1 and 0.01, the noise floor, the periodicity,
+   and the subset suggestion.
 
 The autocorrelation lengths and the subset suggestion stay on screen whatever the step. Both analyses
 run on worker threads; results are tagged with the input they describe, so a suggestion from a
-previous volume, region, calibration or window cannot be applied by mistake.
+previous volume, region, centre, size or calibration cannot be applied by mistake.
 """
 
 from __future__ import annotations
@@ -47,6 +48,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSplitter,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -56,20 +58,23 @@ from PySide6.QtWidgets import (
 )
 
 from al_dvc.texture import (
-    MAX_RANGE_VOXELS,
+    MAX_ANALYSIS_VOXELS,
     THRESHOLD_LABELS,
     THRESHOLDS,
     SizeSweep,
     TextureResult,
-    analyse_range,
+    analyse_cube,
+    box_centre,
     box_size,
-    centred_window,
-    lag_reach,
+    concentric_sizes,
+    cube_box,
+    cube_limits,
+    max_lag_for,
     normalise_box,
     recommend_parameters,
     sweep_concentric,
-    sweep_sizes_concentric,
 )
+from al_dvc.texture.concentric import DEFAULT_COUNT, DEFAULT_START, DEFAULT_STEP
 from al_dvc.texture.recommend import DEFAULT_FACTOR
 
 from .app_state import AppState
@@ -88,11 +93,11 @@ PLOT_THEMES = {  # figure and axes face, text, grid, threshold lines
     "grey": {"face": "#e5e7eb", "text": "#111827", "grid": "#9ca3af", "threshold": "#b45309"},
 }
 FONT = {"label": 11, "tick": 10, "legend": 10, "note": 9}
-WINDOW_STEP = 8  # the window edge box moves in steps of this many voxels
+SIZE_STEP = 8  # the cube edge box moves in steps of this many voxels
 STEPS = ("region", "sweep", "acf")
 TAB_REGION, TAB_SWEEP, TAB_ACF = 0, 1, 2
 MIN_FILL = 0.5  # below this share of its bounding box, a region gets a warning
-SWEEP_CMAP = "viridis"  # one colour per window size in the RVE curves plot
+SWEEP_CMAP = "viridis"  # one colour per cube size in the RVE curves plot
 
 __all__ = ["TextureWindow"]
 
@@ -102,7 +107,7 @@ class _Cancelled(Exception):
 
 
 class _TextureWorker(QThread):
-    """One analysis off the UI thread: ``kind`` is ``acf`` (one window) or ``sweep`` (window sizes)."""
+    """One analysis off the UI thread: ``kind`` is ``acf`` (one cube) or ``sweep`` (concentric cubes)."""
 
     progress = Signal(float, str)
     finished_analysis = Signal(object)  # TextureResult
@@ -110,32 +115,32 @@ class _TextureWorker(QThread):
     failed = Signal(str, str)
     cancelled = Signal()
 
-    def __init__(self, kind: str, vol, box, spacing, window: int, sweep: dict | None = None, parent=None) -> None:
+    def __init__(self, kind: str, vol, job: dict, parent=None) -> None:
         super().__init__(parent)
         self.kind = kind
         self._vol = vol
-        self._box = box
-        self._spacing = spacing
-        self._window = window
-        self._sweep = sweep
+        self._job = job
         self._stop = False
 
     def cancel(self) -> None:
         self._stop = True
 
     def run(self) -> None:  # noqa: D401 - QThread entry point
+        job = self._job
         try:
             if self.kind == "acf":
                 self.progress.emit(0.0, "autocorrelation")
-                out = analyse_range(self._vol, self._box, self._window, self._spacing)
+                out = analyse_cube(self._vol, job["box"], job["spacing"], job["mask"])
             else:
                 out = sweep_concentric(
                     self._vol,
-                    self._box,
-                    spacing=self._spacing,
+                    job["centre"],
+                    job["bounds"],
+                    spacing=job["spacing"],
+                    mask=job["mask"],
                     progress=self.progress.emit,
                     stop=lambda: self._stop,
-                    **self._sweep,
+                    **job["sweep"],
                 )
             if self._stop:  # a cancel during the computation is honoured, not published
                 raise _Cancelled()
@@ -240,7 +245,7 @@ class TextureWindow(QMainWindow):
         self._previous_note = ""  # why the previous result is still on screen (failed / cancelled rerun)
         self._shape: tuple[int, int, int] | None = None  # (nz, ny, nx) the region viewer holds
         self._volume_uid = None
-        self._window_from_rve: int | None = None  # the window the RVE step wrote, None when set by hand
+        self._size_from_rve: int | None = None  # the edge the RVE step wrote, None when set by hand
         self._updating = False
         self.setWindowFlag(Qt.WindowType.Window, True)
         self.resize(1360, 880)
@@ -296,13 +301,15 @@ class TextureWindow(QMainWindow):
         tools.addWidget(self._btn_reset_view)
 
         self.tabs = QTabWidget()
+        # the slice viewer is shown by step 1 (drawing the region) and by step 2 (picking the centre and
+        # seeing the cubes); one widget cannot sit in two tabs, so it moves to the host of the current step
         self.region = RegionViewer()
         region_page = QWidget()
         rlay = QVBoxLayout(region_page)
         rlay.setContentsMargins(0, 6, 0, 0)
         rlay.setSpacing(6)
         self._region_banner = _notice(rlay, size=13)
-        rlay.addWidget(self.region, 1)
+        self._region_hosts: dict[int, QVBoxLayout] = {TAB_REGION: rlay}
         self.tabs.addTab(region_page, "")
         self.fig_sweep = Figure(figsize=(7, 6))
         self.canvas_sweep = FigureCanvas(self.fig_sweep)
@@ -312,7 +319,23 @@ class TextureWindow(QMainWindow):
         self.toolbar_profiles = NavigationToolbar2QT(self.canvas_profiles, self)
         for tb in (self.toolbar_profiles, self.toolbar_sweep):
             tb.setIconSize(tb.iconSize() * 0.8)
-        self.tabs.addTab(self._plot_page(self.canvas_sweep, self.toolbar_sweep), "")
+        sweep_page = QWidget()
+        slay = QVBoxLayout(sweep_page)
+        slay.setContentsMargins(0, 0, 0, 0)
+        slay.setSpacing(0)
+        split = QSplitter(Qt.Orientation.Vertical)
+        slice_host = QWidget()
+        host_layout = QVBoxLayout(slice_host)
+        host_layout.setContentsMargins(0, 0, 0, 0)
+        self._region_hosts[TAB_SWEEP] = host_layout
+        split.addWidget(slice_host)
+        split.addWidget(self._plot_page(self.canvas_sweep, self.toolbar_sweep))
+        split.setStretchFactor(0, 3)
+        split.setStretchFactor(1, 5)
+        split.setCollapsible(0, False)  # the slices are where the centre is picked: they stay visible
+        split.setSizes([320, 520])
+        slay.addWidget(split)
+        self.tabs.addTab(sweep_page, "")
         self.tabs.addTab(self._plot_page(self.canvas_profiles, self.toolbar_profiles), "")
         left = QVBoxLayout()
         left.setSpacing(6)
@@ -383,16 +406,43 @@ class TextureWindow(QMainWindow):
         self._headings["sweep"] = _heading(lay)
         self._hints["sweep"] = _hint(lay)
         self._sweep_region = _hint(lay)
+        self.labels["centre"] = form_label()
+        lay.addWidget(self.labels["centre"])
+        cgrid = QGridLayout()
+        cgrid.setHorizontalSpacing(6)
+        cgrid.setVerticalSpacing(4)
+        self.centre_spin: dict[str, object] = {}
+        self._centre_axis_labels: dict[str, QLabel] = {}
+        for col, axis in enumerate(("x", "y", "z")):
+            lab = QLabel(axis)
+            lab.setFixedWidth(12)
+            sp = spin(0, 1, 1, width=66)
+            cgrid.addWidget(lab, 0, 2 * col)
+            cgrid.addWidget(sp, 0, 2 * col + 1)
+            self.centre_spin[axis] = sp
+            self._centre_axis_labels[axis] = lab
+        cgrid.setColumnStretch(6, 1)
+        lay.addLayout(cgrid)
+        crow = QHBoxLayout()
+        self._btn_pick_centre = QPushButton()
+        self._btn_pick_centre.setCheckable(True)
+        self._btn_centre_region = QPushButton()
+        crow.addWidget(self._btn_pick_centre)
+        crow.addWidget(self._btn_centre_region)
+        lay.addLayout(crow)
         sform = make_form()
-        self.sweep_start = spin(8, 512, WINDOW_STEP)
-        self.sweep_start.setValue(16)
+        self.sweep_start = spin(8, 1024, SIZE_STEP)
+        self.sweep_start.setValue(DEFAULT_START)
         self.sweep_step = spin(4, 256, 4)
-        self.sweep_step.setValue(16)
-        for key, w in [("sweep_start", self.sweep_start), ("sweep_step", self.sweep_step)]:
+        self.sweep_step.setValue(DEFAULT_STEP)
+        self.sweep_count = spin(2, 32, 1)
+        self.sweep_count.setValue(DEFAULT_COUNT)
+        for key, w in [("sweep_start", self.sweep_start), ("sweep_step", self.sweep_step), ("sweep_count", self.sweep_count)]:
             lab = form_label()
             self.labels[key] = lab
             sform.addRow(lab, w)
         lay.addLayout(sform)
+        self._sweep_plan = _hint(lay)
         self._btn_sweep = QPushButton()
         self._btn_sweep.setProperty("class", "btn-primary")
         self._btn_sweep.setMinimumHeight(32)
@@ -449,11 +499,11 @@ class TextureWindow(QMainWindow):
         self._hints["acf"] = _hint(lay)
         self._acf_region = _hint(lay)
         form = make_form()
-        self.window_size = spin(WINDOW_STEP, 1024, WINDOW_STEP)
-        self.window_size.setValue(64)
+        self.cube_size = spin(SIZE_STEP, 2048, SIZE_STEP)
+        self.cube_size.setValue(64)
         lab = form_label()
-        self.labels["window_size"] = lab
-        form.addRow(lab, self.window_size)
+        self.labels["cube_size"] = lab
+        form.addRow(lab, self.cube_size)
         self.factor = dspin(1.5, 8.0, 1)
         self.factor.setSingleStep(0.5)
         self.factor.setValue(DEFAULT_FACTOR)
@@ -461,7 +511,7 @@ class TextureWindow(QMainWindow):
         self.labels["factor"] = lab
         form.addRow(lab, self.factor)
         lay.addLayout(form)
-        self._window_source = _hint(lay)
+        self._size_source = _hint(lay)
         self._btn_analyse = QPushButton()
         self._btn_analyse.setProperty("class", "btn-primary")
         self._btn_analyse.setMinimumHeight(32)
@@ -552,12 +602,17 @@ class TextureWindow(QMainWindow):
         self._btn_region_all.clicked.connect(self.set_range_whole)
         self._btn_region_roi.clicked.connect(self.use_dvc_roi)
         self.region.region_changed.connect(self._on_region_changed)
+        self.region.centre_changed.connect(self._on_viewer_centre)
+        self._btn_pick_centre.toggled.connect(self.region.set_pick_centre)
+        self._btn_centre_region.clicked.connect(self.centre_on_region)
         for w in (*self.range_lo.values(), *self.range_hi.values()):
             w.valueChanged.connect(lambda _v: self._on_box_spins())
-        self.window_size.valueChanged.connect(lambda _v: self._on_window_changed())
+        for w in self.centre_spin.values():
+            w.valueChanged.connect(lambda _v: self._on_centre_spins())
+        self.cube_size.valueChanged.connect(lambda _v: self._on_size_changed())
         self.factor.valueChanged.connect(lambda _v: self._on_factor_changed())
-        for w in (self.sweep_start, self.sweep_step):
-            w.valueChanged.connect(lambda _v: self._refresh_validity())
+        for w in (self.sweep_start, self.sweep_step, self.sweep_count):
+            w.valueChanged.connect(lambda _v: self._on_sweep_settings())
         self.plot_background.currentIndexChanged.connect(lambda _i: self._redraw())
         self.plot_scale.currentIndexChanged.connect(lambda _i: self._draw_profiles())
         for cb in (*self.curve_checks.values(), self.show_band):
@@ -589,21 +644,33 @@ class TextureWindow(QMainWindow):
             return  # currentChanged brings us back here
         self.pages.setCurrentIndex(i)
         self.steps.set_current(i)
+        if i != TAB_SWEEP and self._btn_pick_centre.isChecked():
+            self._btn_pick_centre.setChecked(False)  # picking belongs to step 2 only
+        self._place_region_viewer(i)
+        self._update_overlay()
         self._update_plot_tools()
+
+    def _place_region_viewer(self, step: int) -> None:
+        """Move the slice viewer into the tab that needs it (step 1 draws the region, step 2 the cubes)."""
+        host = self._region_hosts[TAB_SWEEP if step == TAB_SWEEP else TAB_REGION]
+        if self.region.parent() is not host.parentWidget():
+            host.addWidget(self.region, 1)
 
     def _update_steps(self) -> None:
         """What every step produced, in the strip at the top."""
         box = self.range_box()
         size = " x ".join(str(v) for v in box_size(box)) if box is not None else "—"
-        self.steps.set_text(0, self.tr("1  Region") + f"   ·   {size}", self.tr("The texture analysis region (bounding box)"))
+        self.steps.set_text(
+            0, self.tr("1  Region") + f"   ·   {size}", self.tr("Where the analysis may look (optional: the whole volume)")
+        )
         if self.sweep is None:
             rve = "—"
         else:
             n = self.sweep_size()
-            rve = self.tr("window {n}").format(n=n) if n is not None else self.tr("not stable")
+            rve = self.tr("size {n}").format(n=n) if n is not None else self.tr("not stable")
             rve += "  ⚠" if self.is_sweep_stale else "  ✓"
         self.steps.set_text(
-            1, self.tr("2  Representative volume element (RVE)") + f"   ·   {rve}", self.tr("The window size to use")
+            1, self.tr("2  Representative volume element (RVE)") + f"   ·   {rve}", self.tr("The cube size to analyse")
         )
         if self.result is None:
             acf = "—"
@@ -642,9 +709,11 @@ class TextureWindow(QMainWindow):
                 self.range_hi[axis].setRange(2, max(2, n))
             for w in (*self.range_lo.values(), *self.range_hi.values(), self._btn_region_all):
                 w.setEnabled(shape is not None)
-            if shape is not None:  # a window that leaves room to shift: at most half the smallest edge
-                fit = max(WINDOW_STEP, (min(shape) // 2) // WINDOW_STEP * WINDOW_STEP)
-                self.window_size.setValue(min(int(self.window_size.value()), fit))
+            for axis, n in (("x", nx), ("y", ny), ("z", nz)):
+                self.centre_spin[axis].setRange(0, max(0, n - 1))
+            if shape is not None:  # the largest cube the volume could hold, whatever the centre turns out to be
+                fit = max(SIZE_STEP, min(shape) // SIZE_STEP * SIZE_STEP)
+                self.cube_size.setValue(min(int(self.cube_size.value()), fit))
         finally:
             self._updating = False
         self.region.set_volume(self._reference())  # emits region_changed
@@ -676,7 +745,9 @@ class TextureWindow(QMainWindow):
 
     def _on_region_changed(self) -> None:
         self._sync_box_spins()
+        self._ensure_centre()
         self._update_range_info()
+        self._update_overlay()
         self._refresh_validity()
 
     def _sync_box_spins(self) -> None:
@@ -725,71 +796,158 @@ class TextureWindow(QMainWindow):
                 size=" x ".join(str(v) for v in size), mv=f"{np.prod(size) / 1e6:.1f}", pct=f"{100 * fill:.0f}"
             )
         ]
-        if np.prod(size) > MAX_RANGE_VOXELS:
-            parts.append(
-                self.tr("Too large: reduce the region to {edge} voxel cubed at most.").format(
-                    edge=int(round(MAX_RANGE_VOXELS ** (1 / 3)))
-                )
-            )
-        elif fill < MIN_FILL:
+        if fill < MIN_FILL:
             parts.append(
                 self.tr(
-                    "The analysis uses the whole bounding box: voxels inside the box but outside the shape take part too. "
-                    "A box-like region avoids that."
+                    "A cube may reach outside the drawn shape; the voxels it excludes then take no part and the "
+                    "correction counts the pairs that remain. A box-like region avoids that."
                 )
             )
         self._range_info.setText(" ".join(parts))
         self._sweep_region.setText(self._region_text())
-        self._update_acf_region()
+        self._update_cube_info()
 
-    def _update_acf_region(self) -> None:
+    # ------------------------------------------------------------------ centre point (step 2)
+    def centre(self):
+        """``(x, y, z)`` of the concentric cubes, ``None`` before there is one."""
+        return self.region.centre
+
+    def centre_on_region(self) -> None:
+        """Put the centre back in the middle of the region."""
+        box = self.range_box()
+        if box is not None:
+            self.region.set_centre(box_centre(box))
+
+    def _ensure_centre(self) -> None:
+        """Keep a centre that is inside the region; put it in the middle when it is not (or missing)."""
         box = self.range_box()
         if box is None:
-            self._acf_region.setText(self._region_text())
             return
-        window = centred_window(box, int(self.window_size.value()))
-        reach = lag_reach(box, window)
-        text = (
-            self._region_text()
-            + "; "
-            + self.tr("window {w}: shifts up to {reach} voxel").format(
-                w=" x ".join(str(b - a) for a, b in window), reach=" x ".join(str(v) for v in reach)
-            )
-        )
-        if min(reach) < 1:
-            text += " " + self.tr("The window fills the region on one axis: enlarge the region or reduce the window.")
-        self._acf_region.setText(text)
+        c = self.region.centre
+        if c is None or any(not (lo <= v < hi) for v, (lo, hi) in zip(c, box)):
+            self.region.set_centre(box_centre(box), move_slices=c is None)
 
-    def _on_window_changed(self) -> None:
-        if self._updating:
-            return
-        self._update_acf_region()
-        self._update_window_source()
+    def _on_viewer_centre(self) -> None:
+        self._sync_centre_spins()
+        self._update_cube_info()
+        self._update_overlay()
         self._refresh_validity()
 
-    def _update_window_source(self) -> None:
-        w = int(self.window_size.value())
-        rve = self._window_from_rve
+    def _sync_centre_spins(self) -> None:
+        c = self.region.centre
+        if c is None:
+            return
+        self._updating = True
+        try:
+            for axis, v in zip(("x", "y", "z"), c):
+                self.centre_spin[axis].setValue(int(v))
+        finally:
+            self._updating = False
+
+    def _on_centre_spins(self) -> None:
+        if self._updating or self._shape is None:
+            return
+        self.region.set_centre(tuple(int(self.centre_spin[a].value()) for a in ("x", "y", "z")))
+
+    def _on_sweep_settings(self) -> None:
+        if self._updating:
+            return
+        self._update_overlay()
+        self._refresh_validity()
+
+    def cube_sizes(self) -> list:
+        """The sizes of the sweep, ``[]`` when no cube fits about the centre."""
+        box, centre = self.range_box(), self.region.centre
+        if box is None or centre is None:
+            return []
+        try:
+            return concentric_sizes(centre, box, **self.sweep_settings())
+        except ValueError:
+            return []
+
+    def analysis_box(self):
+        """The cube step 3 analyses: the edge asked for, capped per axis by what fits about the centre."""
+        box, centre = self.range_box(), self.region.centre
+        if box is None or centre is None:
+            return None
+        try:
+            limits = cube_limits(centre, box)
+        except ValueError:
+            return None
+        size = tuple(min(int(self.cube_size.value()), int(limit)) for limit in limits)
+        return cube_box(centre, size) if min(size) >= 2 else None
+
+    def _update_overlay(self) -> None:
+        """What the slice viewer draws: nothing while drawing, the schedule on step 2, the cube on step 3."""
+        step = self.tabs.currentIndex()
+        if step == TAB_REGION:
+            self.region.set_cubes([])
+            return
+        centre = self.region.centre
+        cube = self.analysis_box()
+        if step == TAB_ACF:
+            self.region.set_cubes([cube] if cube is not None else [], 0 if cube is not None else None)
+            return
+        boxes = [cube_box(centre, size) for size in self.cube_sizes()]
+        active = None
+        if cube is not None:
+            boxes.append(cube)
+            active = len(boxes) - 1
+        self.region.set_cubes(boxes, active)
+
+    def _update_cube_info(self) -> None:
+        """What step 3 will analyse, in words: the cube, where it sits and how far the lags reach."""
+        cube = self.analysis_box()
+        if cube is None:
+            self._acf_region.setText(self.tr("No cube fits: pick a centre inside the region in step 2."))
+            return
+        size = box_size(cube)
+        centre = self.region.centre
+        text = self.tr("Cube {size} voxel about ({x}, {y}, {z}), lags up to {lag} voxel").format(
+            size=" x ".join(str(v) for v in size),
+            x=centre[0],
+            y=centre[1],
+            z=centre[2],
+            lag=" x ".join(str(v) for v in max_lag_for(size)),
+        )
+        asked = int(self.cube_size.value())
+        if max(size) < asked:
+            text += " " + self.tr("(reduced from {asked}: the region ends there)").format(asked=asked)
+        self._acf_region.setText(text)
+
+    def _on_size_changed(self) -> None:
+        if self._updating:
+            return
+        self._update_cube_info()
+        self._update_size_source()
+        self._update_overlay()
+        self._refresh_validity()
+
+    def _update_size_source(self) -> None:
+        w = int(self.cube_size.value())
+        rve = self._size_from_rve
         if rve is None:
-            text = self.tr("Set by hand. Step 2 suggests the window from the texture itself.")
+            text = self.tr("Set by hand. Step 2 finds the size the texture needs.")
         elif rve == w:
             text = self.tr("From the RVE analysis ({n} voxel).").format(n=rve)
         else:
-            text = self.tr("Set by hand; the RVE analysis suggested {n} voxel.").format(n=rve)
-        self._window_source.setText(text)
-        self._window_source.setStyleSheet(f"color: {REGION_COLOR};" if rve is not None and rve != w else "")
+            text = self.tr("Set by hand; the RVE analysis found {n} voxel.").format(n=rve)
+        self._size_source.setText(text)
+        self._size_source.setStyleSheet(f"color: {REGION_COLOR};" if rve is not None and rve != w else "")
 
     # ------------------------------------------------------------------ inputs
     def current_source(self) -> dict | None:
-        """What an analysis started now would describe: reference identity, region, window, calibration."""
+        """What an analysis started now would describe: reference, region, centre, cube, calibration."""
         st = self._state
         box = self.range_box()
         if not st.volumes or box is None:
             return None
         return {
             "uid": st.volumes[0].uid,
-            "range": box,
-            "window": int(self.window_size.value()),
+            "region": box,
+            "revision": self.region.revision,
+            "centre": self.region.centre,
+            "box": self.analysis_box(),
             "spacing": tuple(float(v) for v in st.para.voxel_size),
             "units": str(getattr(st.para, "units", "voxel") or "voxel"),
         }
@@ -798,11 +956,11 @@ class TextureWindow(QMainWindow):
         src = self.current_source()
         if src is None:
             return None
-        return {k: v for k, v in src.items() if k != "window"} | {"sweep": self.sweep_settings()}
+        return {k: v for k, v in src.items() if k != "box"} | {"sweep": self.sweep_settings()}
 
     @property
     def is_stale(self) -> bool:
-        """True when a result is shown but the reference, the region, the window or the calibration changed."""
+        """True when a result is shown but the reference, region, centre, cube or calibration changed."""
         return self.result is not None and self._result_source != self.current_source()
 
     @property
@@ -810,8 +968,11 @@ class TextureWindow(QMainWindow):
         return self.sweep is not None and self._sweep_source != self._sweep_input()
 
     def sweep_settings(self) -> dict:
-        start = int(self.sweep_start.value())
-        return {"start": start, "step": int(self.sweep_step.value()), "min_lag": max(8, start)}
+        return {
+            "start": int(self.sweep_start.value()),
+            "step": int(self.sweep_step.value()),
+            "count": int(self.sweep_count.value()),
+        }
 
     # ------------------------------------------------------------------ analyses
     def _start(self, kind: str) -> None:
@@ -826,27 +987,40 @@ class TextureWindow(QMainWindow):
         if box is None:
             status.setText(self.tr("The region is empty: draw a shape or press Whole volume."))
             return
-        if np.prod(box_size(box)) > MAX_RANGE_VOXELS:
-            status.setText(self.tr("The region is too large for one analysis: reduce it."))
+        centre = self.region.centre
+        if centre is None:
+            status.setText(self.tr("Pick a centre point in step 2 first."))
             return
         spacing = tuple(float(v) for v in self._state.para.voxel_size)
-        window = int(self.window_size.value())
-        sweep = None
+        mask = self.region.mask if self.region.fill_fraction() < 1.0 else None
+        job = {"bounds": box, "centre": centre, "spacing": spacing, "mask": mask}
         if kind == "acf":
-            if min(lag_reach(box, centred_window(box, window))) < 1:
-                status.setText(self.tr("The window fills the region: enlarge the region or reduce the window."))
+            cube = self.analysis_box()
+            if cube is None:
+                status.setText(self.tr("No cube fits: move the centre away from the edge of the region."))
                 return
+            if np.prod(box_size(cube)) > MAX_ANALYSIS_VOXELS:
+                status.setText(
+                    self.tr("The cube is too large for one analysis: reduce it to {edge} voxel at most.").format(
+                        edge=int(round(MAX_ANALYSIS_VOXELS ** (1 / 3)))
+                    )
+                )
+                return
+            job["box"] = cube
         else:
-            sweep = self.sweep_settings()
+            job["sweep"] = self.sweep_settings()
             try:
-                sizes = sweep_sizes_concentric(box, **sweep)
+                sizes = concentric_sizes(centre, box, **job["sweep"])
             except ValueError as exc:
                 status.setText(str(exc))
                 return
             if len(sizes) < 2:
-                status.setText(self.tr("The region allows only one window size: enlarge it or reduce the first size."))
+                status.setText(self.tr("Only one cube size fits: move the centre, enlarge the region or reduce the first size."))
                 return
-        self._worker = _TextureWorker(kind, vol, box, spacing, window, sweep, parent=self)
+            if np.prod(sizes[-1]) > MAX_ANALYSIS_VOXELS:
+                status.setText(self.tr("The largest cube is too big for one analysis: reduce the count or the first size."))
+                return
+        self._worker = _TextureWorker(kind, vol, job, parent=self)
         self._job_source = self.current_source() if kind == "acf" else self._sweep_input()
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_analysis.connect(self._on_finished)
@@ -863,10 +1037,13 @@ class TextureWindow(QMainWindow):
             self._status.setText(self.tr("Analysing the texture..."))
         else:
             self._sweep_progress.setValue(0)
-            self._sweep_status.setText(self.tr("Sweeping the window sizes..."))
+            self._sweep_status.setText(self.tr("Sweeping the cube sizes..."))
         self._state.log(
-            self.tr("{what} started: region {size} voxel").format(
+            self.tr("{what} started: centre ({x}, {y}, {z}), region {size} voxel").format(
                 what=self.tr("Autocorrelation analysis") if kind == "acf" else self.tr("RVE analysis"),
+                x=centre[0],
+                y=centre[1],
+                z=centre[2],
                 size=" x ".join(str(v) for v in box_size(box)),
             )
         )
@@ -877,7 +1054,7 @@ class TextureWindow(QMainWindow):
         self._start("acf")
 
     def run_sweep_analysis(self) -> None:
-        """The RVE analysis: correlation length against the size of the window."""
+        """The RVE analysis: correlation length against the edge of the concentric cubes."""
         self._start("sweep")
 
     def cancel(self) -> None:
@@ -935,10 +1112,25 @@ class TextureWindow(QMainWindow):
             b.setToolTip(note)
         self._btn_use_size.setEnabled(self.sweep_size() is not None and not self.is_sweep_stale)
         self._btn_region_roi.setEnabled(self._shape is not None and self._state.reference_mask() is not None)
+        self._update_sweep_plan()
         self._fill_suggestion()
         self._update_status()
         self._update_sweep_status()
         self._update_steps()
+
+    def _update_sweep_plan(self) -> None:
+        """The sizes the sweep would analyse, and where the region stops them."""
+        sizes = self.cube_sizes()
+        if not sizes:
+            self._sweep_plan.setText(self.tr("No cube fits: move the centre away from the edge of the region."))
+            return
+        edges = [max(s) for s in sizes]
+        listed = ", ".join(str(e) for e in edges[:6]) + (" ..." if len(edges) > 6 else "")
+        text = self.tr("{n} sizes: {sizes} voxel.").format(n=len(sizes), sizes=listed)
+        asked = int(self.sweep_count.value())
+        if len(sizes) < asked:
+            text += " " + self.tr("The region stops the growth at {edge}.").format(edge=edges[-1])
+        self._sweep_plan.setText(text)
 
     def _on_progress(self, fraction: float, message: str) -> None:
         if self._worker is not None and self._worker.kind == "sweep":
@@ -960,9 +1152,9 @@ class TextureWindow(QMainWindow):
         self.go_to_step(TAB_ACF)
         one = result.length("radial")
         self._state.log(
-            self.tr("Texture analysed: 1/e length {L} voxel (radial), window {w} voxel").format(
+            self.tr("Texture analysed: 1/e length {L} voxel (radial), cube {w} voxel").format(
                 L=f"{one:.2f}" if one is not None else "-",
-                w=" x ".join(str(b - a) for a, b in result.settings["window_xyz"]),
+                w=" x ".join(str(v) for v in result.settings["size"]),
             ),
             "success",
         )
@@ -971,10 +1163,12 @@ class TextureWindow(QMainWindow):
         self.sweep = sweep
         self._sweep_source = self._job_source
         self._sweep_progress.setValue(1000)
+        size = self.sweep_size()
+        if size is not None:
+            self._write_size(size)  # step 3 analyses what step 2 found, without another click
         self._settle()
         self._draw_sweep()
         self.go_to_step(TAB_SWEEP)
-        size = self.sweep_size()
         self._state.log(
             self.tr("RVE analysis done: {verdict}").format(
                 verdict=self.tr("stable from {size} voxel").format(size=size)
@@ -1023,17 +1217,28 @@ class TextureWindow(QMainWindow):
                 return int(max(sweep.levels[d.start_index].size))
         return None
 
+    def _write_size(self, size: int) -> int:
+        """Put ``size`` (rounded up to the spin box's step) into the cube of step 3; returns what was written."""
+        edge = int(np.ceil(size / SIZE_STEP) * SIZE_STEP)
+        edge = max(self.cube_size.minimum(), min(self.cube_size.maximum(), edge))
+        self._size_from_rve = edge
+        self._updating = True
+        try:
+            self.cube_size.setValue(edge)
+        finally:
+            self._updating = False
+        self._update_cube_info()
+        self._update_size_source()
+        return edge
+
     def use_sweep_size(self) -> None:
-        """Write the stable size into the window of step 3 (rounded up to its step) and go there."""
+        """Write the stable size into the cube of step 3 and go there."""
         size = self.sweep_size()
         if size is None or self.is_sweep_stale:
             return
-        edge = int(np.ceil(size / WINDOW_STEP) * WINDOW_STEP)
-        edge = max(self.window_size.minimum(), min(self.window_size.maximum(), edge))
-        self._window_from_rve = edge
-        self.window_size.setValue(edge)
-        self._update_window_source()
-        self._state.log(self.tr("Window set to {edge} voxel from the RVE analysis").format(edge=edge))
+        edge = self._write_size(size)
+        self._update_overlay()
+        self._state.log(self.tr("Cube set to {edge} voxel from the RVE analysis").format(edge=edge))
         self.go_to_step(TAB_ACF)
 
     def _recommend(self, result):
@@ -1113,7 +1318,7 @@ class TextureWindow(QMainWindow):
         ]
         notes += list(rec.notes)
         if self.is_stale:
-            notes.append(self.tr("From a previous input: the reference, region, window or calibration changed."))
+            notes.append(self.tr("From a previous input: the reference, region, centre, cube or calibration changed."))
         self._suggestion_notes.setText("\n".join(notes))
 
     def _update_status(self) -> None:
@@ -1130,10 +1335,13 @@ class TextureWindow(QMainWindow):
         else:
             reach = " x ".join(str(v) for v in res.acf.max_lag)
             parts = [
-                self.tr("window {w} voxel, shifts up to {reach}").format(
-                    w=" x ".join(str(b - a) for a, b in res.settings["window_xyz"]), reach=reach
+                self.tr("cube {w} voxel, lags up to {reach}").format(
+                    w=" x ".join(str(v) for v in res.settings["size"]), reach=reach
                 )
             ]
+            fill = float(res.settings.get("fill", 1.0))
+            if fill < 1.0:
+                parts.append(self.tr("{pct} % of the cube inside the region").format(pct=f"{100 * fill:.0f}"))
             if np.isfinite(res.noise_floor):
                 parts.append(self.tr("noise floor {v}").format(v=f"{res.noise_floor:.3f}"))
             if res.periodicity is not None:
@@ -1154,11 +1362,11 @@ class TextureWindow(QMainWindow):
             for value in self._sweep_values.values():
                 value.setText("-")
             self._sweep_status.setText("")
-            self._btn_use_size.setText(self.tr("Use the stable size as the window"))
+            self._btn_use_size.setText(self.tr("Use the stable size for step 3"))
             return
         size = self.sweep_size()
         self._sweep_headline.setText(
-            self.tr("Window: {size} voxel").format(size=size) if size is not None else self.tr("No stable size")
+            self.tr("Cube: {size} voxel").format(size=size) if size is not None else self.tr("No stable size")
         )
         for t, value in self._sweep_values.items():
             d = sweep.decisions.get(t)
@@ -1166,14 +1374,16 @@ class TextureWindow(QMainWindow):
                 value.setText(f"{d.reference:.2f} ± {d.tolerance:.2f}")
             else:
                 value.setText(self.tr("not stable"))
-        note = "" if size is not None else self.tr("Enlarge the region or reduce the first size.")
+        note = "" if size is not None else self.tr("The lengths never settled: enlarge the region, add sizes or move the centre.")
+        if size is not None and size >= max(max(lvl.size) for lvl in sweep.levels):
+            note = self.tr("Only the largest cube is stable: the region may be too small to be representative.")
         if self.is_sweep_stale:
             note = (note + " " if note else "") + self.tr("From a previous input: run again.")
         self._sweep_status.setText(note)
         self._btn_use_size.setText(
-            self.tr("Use {size} voxel as the window → step 3").format(size=size)
+            self.tr("Use {size} voxel for step 3").format(size=size)
             if size is not None
-            else self.tr("Use the stable size as the window")
+            else self.tr("Use the stable size for step 3")
         )
 
     # ------------------------------------------------------------------ figures
@@ -1264,19 +1474,18 @@ class TextureWindow(QMainWindow):
                 ax.set_ylim(max(1e-4, float(positive.min()) * 0.7), 1.3)
             if handles:
                 ax.legend(handles=handles, fontsize=FONT["legend"], loc="upper right", frameon=False, labelcolor=th["text"])
-            src = self._result_source or {}
-            box = src.get("range")
-            title = self.tr("window {w} voxel").format(w=" x ".join(str(b - a) for a, b in res.settings["window_xyz"]))
-            if box is not None:
-                title = self.tr("Region {size} voxel").format(size=" x ".join(str(v) for v in box_size(box))) + ", " + title
+            centre = res.settings.get("centre")
+            title = self.tr("Cube {w} voxel").format(w=" x ".join(str(v) for v in res.settings["size"]))
+            if centre is not None:
+                title += self.tr(" about ({x}, {y}, {z})").format(x=centre[0], y=centre[1], z=centre[2])
             ax.set_title(title, fontsize=FONT["note"], color=th["text"])
         ax.set_ylabel(self.tr("autocorrelation") + (self.tr(" (log)") if log else ""))
-        ax.set_xlabel(self.tr("shift [voxel]"))
+        ax.set_xlabel(self.tr("lag [voxel]"))
         fig.tight_layout()
         self.canvas_profiles.draw_idle()
 
     def _draw_sweep(self) -> None:
-        """Top: the radial curve of every window size. Bottom: the correlation lengths against the size."""
+        """Top: the radial curve of every cube size. Bottom: the correlation lengths against the size."""
         fig = self.fig_sweep
         th = self._theme()
         fig.clear()
@@ -1314,15 +1523,14 @@ class TextureWindow(QMainWindow):
                 loc="upper left",
                 bbox_to_anchor=(1.01, 1.0),
                 ncol=2 if n > 8 else 1,
-                title=self.tr("window [voxel]"),
+                title=self.tr("cube [voxel]"),
                 title_fontsize=FONT["note"],
             )
             ax_curves.get_legend().get_title().set_color(th["text"])
-            src = self._sweep_source or {}
-            box = src.get("range")
-            if box is not None:
+            centre = (self._sweep_source or {}).get("centre")
+            if centre is not None:
                 ax_curves.set_title(
-                    self.tr("Region {size} voxel").format(size=" x ".join(str(v) for v in box_size(box))),
+                    self.tr("Concentric cubes about ({x}, {y}, {z})").format(x=centre[0], y=centre[1], z=centre[2]),
                     fontsize=FONT["note"],
                     color=th["text"],
                 )
@@ -1337,9 +1545,9 @@ class TextureWindow(QMainWindow):
             ax_len.legend(
                 fontsize=FONT["legend"], frameon=False, labelcolor=th["text"], loc="upper left", bbox_to_anchor=(1.01, 1.0)
             )
-        ax_curves.set_xlabel(self.tr("shift [voxel]"))
+        ax_curves.set_xlabel(self.tr("lag [voxel]"))
         ax_curves.set_ylabel(self.tr("radial autocorrelation"))
-        ax_len.set_xlabel(self.tr("window edge [voxel]"))
+        ax_len.set_xlabel(self.tr("cube edge [voxel]"))
         ax_len.set_ylabel(self.tr("correlation length [voxel]"))
         self.canvas_sweep.draw_idle()
 
@@ -1399,7 +1607,7 @@ class TextureWindow(QMainWindow):
         self.tabs.setTabText(TAB_REGION, self.tr("1. Region"))
         self.tabs.setTabText(TAB_SWEEP, self.tr("2. RVE"))
         self.tabs.setTabText(TAB_ACF, self.tr("3. Autocorrelation"))
-        self.tabs.setTabToolTip(TAB_SWEEP, self.tr("Representative volume element: the window size to use"))
+        self.tabs.setTabToolTip(TAB_SWEEP, self.tr("Representative volume element: the cube size the texture needs"))
         self.export_section.set_title(self.tr("Export"))
         self._lengths_box.setTitle(self.tr("Autocorrelation lengths [voxel]"))
         self._suggestion_box.setTitle(self.tr("Subset suggestion"))
@@ -1410,42 +1618,50 @@ class TextureWindow(QMainWindow):
                 "This is not the DVC region of interest; the two never affect each other."
             )
         )
-        self._headings["region"].setText(self.tr("1. Texture analysis region"))
+        self._headings["region"].setText(self.tr("1. Texture analysis region (optional)"))
         self._hints["region"].setText(
             self.tr(
-                "Draw the region on the slices (rectangle, ellipse, polygon, brush) or copy the DVC region of interest. "
-                "The analysis uses its bounding box, which is drawn dashed."
+                "Where the analysis may look. It starts as the whole volume, so you can go straight to step 2; draw it "
+                "(rectangle, ellipse, polygon, brush) or copy the DVC region of interest to keep the cubes out of the "
+                "air around the specimen. Its bounding box, drawn dashed, bounds every cube."
             )
         )
         self._headings["sweep"].setText(self.tr("2. Representative volume element (RVE) analysis"))
         self._hints["sweep"].setText(
             self.tr(
-                "Windows of growing size, all centred in the region, are analysed with the same shifts. "
-                "The size from which the correlation length stops changing is the RVE: the window for step 3."
+                "Pick a centre point, then analyse concentric cubes around it. Every cube is measured on its own voxels "
+                "alone, so the size from which the correlation length stops changing is the size the texture needs. "
+                "That size becomes the cube of step 3."
             )
         )
         self._headings["acf"].setText(self.tr("3. Autocorrelation analysis"))
         self._hints["acf"].setText(
             self.tr(
-                "One window is compared with its shifted copies inside the region: the curves along x, y, z and over "
+                "One cube -- the one the RVE settled on -- is compared with a copy of itself shifted by every lag, and "
+                "each lag is divided by the number of voxel pairs that still overlap. The curves along x, y, z and over "
                 "spherical shells give the correlation lengths and the subset suggestion."
             )
         )
         texts = {
-            "window_size": self.tr("Window [voxel]"),
+            "cube_size": self.tr("Cube edge [voxel]"),
+            "centre": self.tr("Centre of the cubes [voxel]"),
             "sweep_start": self.tr("First size [voxel]"),
             "sweep_step": self.tr("Size step [voxel]"),
+            "sweep_count": self.tr("Number of sizes"),
             "box": self.tr("Bounding box [voxel]"),
             "stable_length": self.tr("Stable length [voxel]"),
             "factor": self.tr("Subset / L(1/e)"),
         }
         for key, lab in self.labels.items():
             lab.setText(texts[key])
-        self.labels["window_size"].setToolTip(
+        self.labels["cube_size"].setToolTip(
             self.tr(
-                "Edge of the cubic window compared with its shifted copies. The shifts reach (region - window) / 2 "
-                "on every axis, so a larger window inside the same region sees shorter shifts."
+                "Edge of the analysed cube. Step 2 fills it in; a larger cube gives a steadier curve, and lags are "
+                "reported up to a quarter of the edge."
             )
+        )
+        self.labels["centre"].setToolTip(
+            self.tr("The cubes of steps 2 and 3 are built around this voxel; it must lie inside the region")
         )
         self.labels["factor"].setToolTip(
             self.tr(
@@ -1453,9 +1669,15 @@ class TextureWindow(QMainWindow):
                 "guarantee: a noisy scan may need more, a finely varying displacement field less."
             )
         )
-        self.labels["sweep_start"].setToolTip(self.tr("Edge of the smallest window analysed"))
-        self.labels["sweep_step"].setToolTip(self.tr("Growth of the window edge from one size to the next"))
+        self.labels["sweep_start"].setToolTip(self.tr("Edge of the smallest cube analysed"))
+        self.labels["sweep_step"].setToolTip(self.tr("Growth of the cube edge from one size to the next"))
+        self.labels["sweep_count"].setToolTip(self.tr("How many cubes to analyse; fewer when the region stops the growth"))
         self.labels["box"].setToolTip(self.tr("Typing a box replaces the drawn region by that box"))
+        self._btn_pick_centre.setText(self.tr("Pick on the slices"))
+        self._btn_pick_centre.setToolTip(self.tr("Click a slice to move the centre; the other two slices follow"))
+        self._btn_centre_region.setText(self.tr("Centre of the region"))
+        for axis, lab in self._centre_axis_labels.items():
+            lab.setToolTip(self.tr("Centre along {axis} [voxel]").format(axis=axis))
         self._btn_region_all.setText(self.tr("Whole volume"))
         self._btn_region_roi.setText(self.tr("Same as DVC ROI"))
         self._btn_region_roi.setToolTip(
@@ -1464,6 +1686,7 @@ class TextureWindow(QMainWindow):
         for axis, lab in self._range_axis_labels.items():
             lab.setToolTip(self.tr("First and last voxel (exclusive) of the box along {axis}").format(axis=axis))
         self._next["region"].setText(self.tr("Next: RVE analysis →"))
+        self._next["region"].setToolTip(self.tr("The whole volume is a valid region: this step can be skipped"))
         self._next["sweep"].setText(self.tr("Next: autocorrelation →"))
         self._btn_analyse.setText(self.tr("Run autocorrelation analysis"))
         self._btn_cancel.setText(self.tr("Cancel"))
@@ -1475,7 +1698,7 @@ class TextureWindow(QMainWindow):
         self._btn_png.setText(self.tr("Save image as PNG..."))
         self._btn_reset_view.setText(self.tr("Reset view"))
         self._btn_guide.setText(self.tr("How it works"))
-        self._btn_guide.setToolTip(self.tr("The guide: why a region, what the autocorrelation measures, why the RVE"))
+        self._btn_guide.setToolTip(self.tr("The guide: what the autocorrelation measures, why the cubes, why the RVE"))
         self._btn_reset_view.setToolTip(
             self.tr("Undo zooming and panning (drag with the toolbar's magnifier or hand to zoom or pan)")
         )
@@ -1495,7 +1718,7 @@ class TextureWindow(QMainWindow):
         self._table_hint.setText(
             self.tr(
                 'Distance at which the correlation drops to 1/e, 0.1 and 0.01. "not reached": still above the threshold '
-                'within the shifts the region allows; "no profile": no valid curve; '
+                'within the lags the cube allows (a quarter of its edge); "no profile": no valid curve; '
                 '"plateau": the curve flattens at the threshold.'
             )
         )
@@ -1504,7 +1727,7 @@ class TextureWindow(QMainWindow):
         self._fill_suggestion()
         self._redraw()
         self._update_range_info()
-        self._update_window_source()
+        self._update_size_source()
         self._update_status()
         self._update_sweep_status()
         self._update_steps()

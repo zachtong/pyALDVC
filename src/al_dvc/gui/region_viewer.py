@@ -1,10 +1,15 @@
-"""Region viewer of the texture window: three slices of the reference volume and the drawing tools that
-select the *texture analysis region*.
+"""Region viewer of the texture window: three slices of the reference volume, the drawing tools that
+select the *texture analysis region*, and the concentric cubes of the RVE analysis.
 
 The region is a boolean volume of its own (a :class:`~al_dvc.gui.mask_editor.MaskEditor` that starts
 as the whole volume); it has nothing to do with the DVC region of interest of the main window, and
-the two never touch. Voxels outside the region are tinted orange (the DVC mask is red) and the
-bounding box of the region, which is what the analysis uses, is drawn dashed.
+the two never touch. Voxels outside the region are tinted orange (the DVC mask is red) and its
+bounding box, which bounds every cube, is drawn dashed.
+
+On top of that the viewer shows where the analysis actually looks: a centre point (picked by clicking
+when :meth:`RegionViewer.set_pick_centre` is on) and the concentric cubes around it, in blue so that
+neither can be taken for the region or for the DVC mask. A cube is drawn on a slice only where that
+slice cuts it.
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ MODES = ("replace", "add", "cut")
 DEPTHS = ("all", "current", "range")
 EDIT_BUTTONS = ("undo", "redo", "fill", "clear")
 REGION_COLOR = "#f97316"  # orange: the texture region, never to be confused with the red DVC mask
+CUBE_COLOR = "#38bdf8"  # blue: the concentric cubes and the centre point of the analysis
 REGION_TINT = ListedColormap([[0.976, 0.451, 0.086, 1.0]])
 OUTSIDE_ALPHA = 0.42
 PREVIEW_COLOR = "#ffd166"
@@ -41,6 +47,7 @@ BRUSH_MIN_MOVE = 0.5  # voxels between recorded stroke points
 LEFT, RIGHT = 1, 3
 POINT_DECIMALS = 2
 DISPLAY_SAMPLE = 2_000_000  # voxels looked at for the grey-level limits
+MIN_CANVAS = 40  # pixels: below this the axes transform is singular and matplotlib cannot place anything
 
 __all__ = ["RegionSettings", "RegionTools", "RegionViewer"]
 
@@ -220,18 +227,26 @@ class RegionViewer(QWidget):
     """XY, XZ and YZ slices of one volume with a drawable region (orange outside, dashed bounding box)."""
 
     region_changed = Signal()
+    centre_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._vol: np.ndarray | None = None
         self._editor: MaskEditor | None = None
         self._gesture: dict | None = None
+        self._centre: tuple[int, int, int] | None = None  # (x, y, z) of the concentric cubes
+        self._cubes: list = []  # boxes ((x0, x1), (y0, y1), (z0, z1)) drawn around the centre
+        self._active_cube: int | None = None  # the one the analysis uses, drawn solid
+        self._pick_centre = False
+        self._revision = 0  # bumped on every change of the region, so a stale result can be spotted
+        self._pending_redraw = False  # a redraw asked for while the widget had no room to draw in
         self._vmin, self._vmax = 0.0, 1.0
         self.tools = RegionTools()  # placed by the owner, next to the other controls of the region step
         self.figure = Figure(figsize=(9, 3.6))
         self.figure.set_facecolor(COLORS.BG_CANVAS)
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.canvas.setMinimumSize(320, 140)  # a collapsed canvas has no usable coordinate system
         gs = self.figure.add_gridspec(1, 3, left=0.045, right=0.99, bottom=0.13, top=0.90, wspace=0.28)
         self.axes = [self.figure.add_subplot(gs[0, i]) for i in range(3)]
         self.sliders: dict[str, QSlider] = {}
@@ -276,6 +291,8 @@ class RegionViewer(QWidget):
         """Show ``vol`` (``(nz, ny, nx)``) with the whole volume as the region; ``None`` empties the viewer."""
         self._cancel_gesture()
         self._vol = None if vol is None else np.asarray(vol)
+        self._centre, self._cubes, self._active_cube = None, [], None  # they belong to the volume that just went
+        self._revision += 1
         if self._vol is None:
             self._editor = None
             for s in self.sliders.values():
@@ -305,6 +322,11 @@ class RegionViewer(QWidget):
         return None if self._vol is None else tuple(int(s) for s in self._vol.shape)
 
     @property
+    def revision(self) -> int:
+        """Counts the edits of the region: two regions with the same bounding box are still two regions."""
+        return self._revision
+
+    @property
     def mask(self) -> np.ndarray | None:
         """The region as a boolean ``(nz, ny, nx)`` volume, ``None`` without a volume."""
         return None if self._editor is None else self._editor.mask
@@ -323,6 +345,51 @@ class RegionViewer(QWidget):
         if m is None or box is None:
             return 0.0
         return float(m.sum()) / float(np.prod([b - a for a, b in box]))
+
+    # ------------------------------------------------------------------ centre point and cubes
+    @property
+    def centre(self) -> tuple[int, int, int] | None:
+        """``(x, y, z)`` of the concentric cubes, ``None`` before one is set."""
+        return self._centre
+
+    def set_centre(self, centre, move_slices: bool = True) -> None:
+        """Put the centre at ``(x, y, z)`` (clamped to the volume) and, unless told not to, show it."""
+        if self._vol is None or centre is None:
+            self._centre = None
+            self.redraw()
+            self.centre_changed.emit()
+            return
+        nz, ny, nx = self._vol.shape
+        cx, cy, cz = (int(round(float(v))) for v in centre)
+        new = (min(max(cx, 0), nx - 1), min(max(cy, 0), ny - 1), min(max(cz, 0), nz - 1))
+        changed = new != self._centre
+        self._centre = new
+        if move_slices:
+            self.set_slices(new[2], new[1], new[0])  # the three panes cut through the centre
+        self.redraw()
+        if changed:
+            self.centre_changed.emit()
+
+    def set_cubes(self, boxes, active: int | None = None) -> None:
+        """Draw ``boxes`` (``((x0, x1), (y0, y1), (z0, z1))`` each); ``active`` is the one the analysis uses."""
+        self._cubes = [tuple(tuple(int(v) for v in pair) for pair in b) for b in (boxes or [])]
+        self._active_cube = active if (active is not None and 0 <= active < len(self._cubes)) else None
+        self.redraw()
+
+    def set_pick_centre(self, on: bool) -> None:
+        """While on, a left click on a slice moves the centre instead of drawing."""
+        on = bool(on)
+        if on == self._pick_centre:
+            return
+        self._pick_centre = on
+        if on:
+            self._cancel_gesture()
+        self.canvas.setCursor(Qt.CursorShape.CrossCursor if on else Qt.CursorShape.ArrowCursor)
+        self.canvas.draw_idle()
+
+    @property
+    def picking_centre(self) -> bool:
+        return self._pick_centre
 
     def set_region(self, mask: np.ndarray | None) -> None:
         """Replace the region by ``mask`` (``None``: the whole volume); the drawing history is dropped."""
@@ -357,6 +424,7 @@ class RegionViewer(QWidget):
             self._after_edit()
 
     def _after_edit(self) -> None:
+        self._revision += 1
         self._refresh_edit_buttons()
         self.redraw()
         self.region_changed.emit()
@@ -378,7 +446,17 @@ class RegionViewer(QWidget):
         self._cancel_gesture()
         self.redraw()
 
+    def showEvent(self, event) -> None:  # noqa: N802
+        """The viewer moves between the tabs; whatever it missed while it had no size is drawn now."""
+        super().showEvent(event)
+        if self._pending_redraw:
+            self.redraw()
+
     def redraw(self) -> None:
+        if self.canvas.width() < MIN_CANVAS or self.canvas.height() < MIN_CANVAS:
+            self._pending_redraw = True  # no room to draw in yet: try again when the widget is shown
+            return
+        self._pending_redraw = False
         vol = self._vol
         for ax in self.axes:
             ax.clear()
@@ -430,10 +508,44 @@ class RegionViewer(QWidget):
                 )
             ax.axvline(ch, color=CROSSHAIR_COLOR, lw=0.6, alpha=0.6)
             ax.axhline(cv, color=CROSSHAIR_COLOR, lw=0.6, alpha=0.6)
+            self._draw_cubes(ax, plane, (iz, iy, ix))
             ax.set_title(title, color=COLORS.TEXT_SECONDARY, fontsize=8)
             ax.set_xlabel(xl, color=COLORS.TEXT_SECONDARY, fontsize=7)
             ax.set_ylabel(yl, color=COLORS.TEXT_SECONDARY, fontsize=7)
         self.canvas.draw_idle()
+
+    def _draw_cubes(self, ax, plane: str, slices: tuple[int, int, int]) -> None:
+        """The concentric cubes and the centre point, on the slices that cut them."""
+        order = {"xy": (0, 1, 2), "xz": (0, 2, 1), "yz": (1, 2, 0)}[plane]  # (horizontal, vertical, normal) axis
+        here = {"xy": slices[0], "xz": slices[1], "yz": slices[2]}[plane]
+        for i, box in enumerate(self._cubes):
+            (n0, n1) = box[order[2]]
+            if not n0 <= here < n1:
+                continue  # this slice misses the cube: drawing its outline here would be a lie
+            (h0, h1), (v0, v1) = box[order[0]], box[order[1]]
+            active = i == self._active_cube
+            ax.add_patch(
+                Rectangle(
+                    (h0 - 0.5, v0 - 0.5),
+                    h1 - h0,
+                    v1 - v0,
+                    fill=False,
+                    ec=CUBE_COLOR,
+                    lw=2.0 if active else 0.9,
+                    ls="-" if active else (0, (4, 3)),
+                    alpha=1.0 if active else 0.65,
+                )
+            )
+        if self._centre is not None:
+            ax.plot(
+                [self._centre[order[0]]],
+                [self._centre[order[1]]],
+                marker="+",
+                color=CUBE_COLOR,
+                ms=11,
+                mew=1.8,
+                ls="none",
+            )
 
     # ------------------------------------------------------------------ gestures
     def _plane_at(self, event) -> str | None:
@@ -470,6 +582,10 @@ class RegionViewer(QWidget):
         plane = self._plane_at(event)
         if plane is None:
             return
+        if self._pick_centre:
+            if event.button == LEFT:
+                self._centre_from_click(plane, float(event.xdata), float(event.ydata))
+            return
         tool = self.tools.settings().tool
         p = _voxel_point(event)
         if tool == "polygon":
@@ -496,6 +612,13 @@ class RegionViewer(QWidget):
         self._cancel_gesture()
         self._gesture = {"plane": plane, "shape": tool, "points": [p], "artists": [], "context": self._context(plane)}
         self._update_preview()
+
+    def _centre_from_click(self, plane: str, h: float, v: float) -> None:
+        """The clicked point on ``plane`` plus the current slice along its normal become the centre."""
+        iz, iy, ix = self.slice_indices()
+        h, v = int(round(h)), int(round(v))
+        centre = {"xy": (h, v, iz), "xz": (h, iy, v), "yz": (ix, h, v)}[plane]
+        self.set_centre(centre)  # the other two panes follow, so all three cut through the centre
 
     def _on_motion(self, event) -> None:
         g = self._gesture

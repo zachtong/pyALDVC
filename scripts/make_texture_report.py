@@ -40,14 +40,21 @@ from al_dvc.core.pipeline import run_aldvc  # noqa: E402
 from al_dvc.synthetic import affine_displacement, evaluate_at_nodes, warp_volume_lagrangian  # noqa: E402
 from al_dvc.texture import (  # noqa: E402
     THRESHOLDS,
+    analyse_range,
     analyse_texture,
     analytic_length,
     boolean_correlation,
     boolean_spheres,
+    box_centre,
+    concentric_sizes,
+    cube_box,
     recommend_parameters,
     size_schedule,
+    sweep_concentric,
     sweep_sizes,
+    whole_box,
 )
+from al_dvc.texture.concentric import LAG_FRACTION, MIN_OVERLAP  # noqa: E402
 
 ONE_OVER_E = THRESHOLDS[0]
 
@@ -153,31 +160,119 @@ def page_crop_bug(pdf):
 
 
 def page_estimators(pdf):
+    """The three estimators against the analytic length, at one lag range so only the estimator differs.
+
+    ``sliding`` reads grey values from outside the sub-volume, which is why it is the steadiest here
+    and why it is still not what the size sweep may use: at edge 20 it has 160^3 voxels of context.
+    """
     radius, phi = 6.0, 0.3
     vol, _ = boolean_spheres((160, 160, 160), radius, phi, seed=5)
     sizes = (20, 24, 32, 48, 64, 96, 160)
-    fig, ax = plt.subplots(figsize=(11, 4.4))
+    whole = whole_box(vol.shape)
+    centre = box_centre(whole)
+    fig, ax = plt.subplots(figsize=(11, 4.6))
     for t, marker in ((ONE_OVER_E, "o"), (0.1, "s")):
         truth = analytic_length(radius, phi, t)
-        for est, color in (("overlap", "C0"), ("window", "C3")):
+        for est, color, label in (
+            ("overlap", "C0", "B vs B', corrected (shipped)"),
+            ("window", "C3", "B vs B', raw (the old scripts)"),
+            ("sliding", "C2", "window sliding in the whole volume"),
+        ):
             vals = []
             for n in sizes:
-                r = analyse_texture(vol[:n, :n, :n], max_lag=11, estimator=est, min_overlap=0.2)
+                if est == "sliding":
+                    reach = (min(vol.shape) - n) // 2
+                    if reach < 11:
+                        vals.append(np.nan)  # no room left to shift: this estimator has nothing to say
+                        continue
+                    r = analyse_range(vol, whole, n)
+                else:
+                    box = cube_box(centre, n)
+                    (x0, x1), (y0, y1), (z0, z1) = box
+                    r = analyse_texture(vol[z0:z1, y0:y1, x0:x1], max_lag=11, estimator=est, min_overlap=0.2, max_voxels=n**3)
                 v = r.length("radial", t)
                 vals.append(np.nan if v is None else v - truth)
-            ax.plot(sizes, vals, marker=marker, color=color, ls="-" if t > 0.2 else "--", label=f"{est}, threshold {t:.2f}")
+            ax.plot(
+                sizes,
+                vals,
+                marker=marker,
+                color=color,
+                ls="-" if t > 0.2 else "--",
+                label=f"{label}, threshold {t:.2f}",
+            )
     ax.axhline(0, color="k", lw=0.8)
     ax.set_xscale("log")
     ax.set_xticks(sizes)
     ax.set_xticklabels([str(s) for s in sizes])
+    ax.minorticks_off()  # the log scale would print its own labels over the size ticks
     ax.set_xlabel("sub-volume edge [voxel]")
     ax.set_ylabel("measured - analytic length [voxel]")
-    ax.set_title("Finite-window estimator against overlap-corrected estimator, Boolean spheres R = 6, fraction 0.3")
+    ax.set_title("Three estimators at the same lag range (11 voxel), Boolean spheres R = 6, fraction 0.3")
     ax.grid(alpha=0.3)
-    ax.legend(fontsize=8)
-    fig.tight_layout()
+    ax.legend(fontsize=7, ncol=2, loc="lower right")
+    fig.text(
+        0.06,
+        0.015,
+        "raw: scaled by prod_j (1 - |h_j| / N_j), so it reads short at every size and worst at the smallest.\n"
+        "corrected: that factor divided out. What is left at 20 and 24 voxel is sampling error -- too few spheres\n"
+        "in the box -- which is what the RVE sweep is there to find, and which no estimator can remove.\n"
+        "sliding: the steadiest here because at edge 20 it still reads grey values from a 160^3 volume around\n"
+        "the window. That is why the sweep may not use it: it answers with data the size in question was not given.",
+        fontsize=8,
+    )
+    fig.tight_layout(rect=(0, 0.19, 1, 1))
     pdf.savefig(fig)
     plt.close(fig)
+
+
+def page_concentric(pdf):
+    """The analysis the application runs: concentric cubes about one centre, each on its own voxels."""
+    radius, phi = 6.0, 0.3
+    vol, _ = boolean_spheres((128, 128, 128), radius, phi, seed=11)
+    bounds = whole_box(vol.shape)
+    centre = box_centre(bounds)
+    t0 = time.perf_counter()
+    sweep = sweep_concentric(vol, centre, bounds, start=16, step=16, count=8)
+    dt = time.perf_counter() - t0
+    sizes = [max(lvl.size) for lvl in sweep.levels]
+    fig, (ax_curves, ax_len) = plt.subplots(1, 2, figsize=(11, 4.6))
+    cmap = plt.get_cmap("viridis")
+    for i, lvl in enumerate(sweep.levels):
+        pr = lvl.radial
+        if pr is None:
+            continue
+        ax_curves.plot(pr.lag, pr.mean, color=cmap(0.1 + 0.85 * i / max(1, len(sweep.levels) - 1)), lw=1.4, label=str(sizes[i]))
+    ax_curves.axhline(ONE_OVER_E, color="gray", lw=0.6)
+    ax_curves.axhline(0.0, color="k", lw=0.6)
+    ax_curves.set_xlabel("lag [voxel]")
+    ax_curves.set_ylabel("radial autocorrelation")
+    ax_curves.set_title(f"One curve per cube, lags to edge / {LAG_FRACTION}", fontsize=10)
+    ax_curves.legend(fontsize=7, title="cube [voxel]", title_fontsize=7, ncol=2)
+    ax_curves.grid(alpha=0.3)
+    for t, color in ((ONE_OVER_E, "C0"), (0.1, "C1")):
+        d = sweep.decisions[t]
+        ax_len.plot(sizes, sweep.means(t), marker="o", color=color, label=f"threshold {t:.2f}")
+        ax_len.axhline(analytic_length(radius, phi, t), color=color, lw=0.8, ls=":")
+        if d.converged:
+            ax_len.axvline(sizes[d.start_index], color=color, ls="--", lw=1)
+            ax_len.axhspan(d.reference - d.tolerance, d.reference + d.tolerance, color=color, alpha=0.08)
+    ax_len.set_xlabel("cube edge [voxel]")
+    ax_len.set_ylabel("correlation length [voxel]")
+    ax_len.set_title("dotted: the analytic length of the Boolean model", fontsize=10)
+    ax_len.grid(alpha=0.3)
+    ax_len.legend(fontsize=8)
+    lines = [f"centre {centre}, sizes {concentric_sizes(centre, bounds, 16, 16, 8)[0][0]} .. {sizes[-1]} voxel ({dt:.1f} s)"]
+    for t in (ONE_OVER_E, 0.1):
+        d = sweep.decisions[t]
+        where = f"stable from edge {sizes[d.start_index]}" if d.converged else f"not converged: {d.reason}"
+        lines.append(f"threshold {t:.2f}: reference {d.reference:.2f} +/- {d.tolerance:.2f} voxel, {where}")
+    lines.append(f"lags to edge / {LAG_FRACTION}, lags below {MIN_OVERLAP:.0%} of the pairs dropped")
+    fig.suptitle("The shipped analysis: concentric cubes about one centre, each measured on its own voxels", fontsize=11)
+    fig.text(0.08, 0.01, "\n".join(lines), fontsize=8, family="monospace")
+    fig.tight_layout(rect=(0, 0.13, 1, 0.94))
+    pdf.savefig(fig)
+    plt.close(fig)
+    return sweep
 
 
 def page_directional(pdf):
@@ -329,6 +424,7 @@ def main(argv=None) -> int:
         rows_valid = page_validation(pdf)
         crop = page_crop_bug(pdf)
         page_estimators(pdf)
+        page_concentric(pdf)
         page_directional(pdf)
         page_sweep(pdf)
         heuristic = page_heuristic(pdf)

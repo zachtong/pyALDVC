@@ -17,7 +17,7 @@ from .theme import COLORS
 from .widgets import guard_wheel
 
 ASSETS = Path(__file__).resolve().parent / "assets" / "guide"
-MEDIA = {"region": "region_window.gif", "rve": "rve_sweep.gif", "subset": "subset.png"}
+MEDIA = {"acf": "overlap_correction.gif", "rve": "rve_sweep.gif", "subset": "subset.png"}
 PAGE_WIDTH = 760
 REGION_COLOR = "#f97316"
 
@@ -25,7 +25,7 @@ __all__ = ["GuideWindow"]
 
 
 class GuideWindow(QMainWindow):
-    """Why a region, what the autocorrelation measures, why the RVE, how the subset follows."""
+    """What the autocorrelation measures, why the overlap correction, why the RVE, how the subset follows."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -42,8 +42,8 @@ class GuideWindow(QMainWindow):
         layout.setSpacing(10)
         self._text["title"] = self._label(layout, size=20, bold=True)
         self._text["intro"] = self._label(layout)
-        self._add_section(layout, "acf", media=None, formula=True)
-        self._add_section(layout, "region", media="region")
+        self._add_section(layout, "acf", media="acf", formula=True)
+        self._add_section(layout, "region", media=None)
         self._add_section(layout, "rve", media="rve")
         self._add_section(layout, "subset", media="subset", formula=True)
         layout.addStretch(1)
@@ -138,44 +138,52 @@ class GuideWindow(QMainWindow):
                 "how far the grey values stay correlated and turns that distance into a subset size."
             )
         )
-        t["acf_head"].setText(self.tr("Autocorrelation"))
+        t["acf_head"].setText(self.tr("Autocorrelation, and the correction it needs"))
         t["acf_body"].setText(
             self.tr(
-                "Take a window of the volume and a copy of it moved by a shift h. The autocorrelation ρ(h) is the "
-                "similarity of the two: 1 when h = 0, falling towards 0 once the shift exceeds the size of the speckles. "
-                "The correlation length L is the shift at which ρ has dropped to 1/e; the 0.1 and 0.01 lengths mark where "
-                "the texture has become independent."
+                "Take a cube of the volume and a copy of it moved by a lag h. The autocorrelation ρ(h) is the similarity "
+                "of the two: 1 when h = 0, falling towards 0 once the lag exceeds the size of the speckles. The "
+                "correlation length L is the lag at which ρ has dropped to 1/e; the 0.1 and 0.01 lengths mark where the "
+                "texture has become independent.\n\n"
+                "Moving the copy makes the two overlap less and less, so the sum has fewer and fewer voxel pairs in it. "
+                "Left alone, that alone would pull the curve down -- a small cube would look as if its speckles were "
+                "smaller. Dividing every lag by the number of pairs that actually overlap, M(h), removes it exactly, and "
+                "the length no longer depends on the size of the cube it was measured in."
             )
         )
         t["acf_formula"].setText(
             "g(<b>x</b>) = f(<b>x</b>) − mean(f)"
-            "<br>ρ(<b>h</b>) = mean[ g(<b>x</b>) · g(<b>x</b> + <b>h</b>) ] / mean[ g(<b>x</b>)<sup>2</sup> ]"
-            "<br><span style='color:#94a3b8; font-size:12px;'>f: grey value, mean over the region; ρ(L) = 1/e ≈ 0.37</span>"
+            "<br>ρ(<b>h</b>) = [ Σ g(<b>x</b>) · g(<b>x</b> + <b>h</b>) / M(<b>h</b>) ]"
+            " / [ Σ g(<b>x</b>)<sup>2</sup> / M(<b>0</b>) ]"
+            "<br><span style='color:#94a3b8; font-size:12px;'>M(<b>h</b>): voxel pairs at lag <b>h</b>, "
+            "Π<sub>j</sub>(N<sub>j</sub> − |h<sub>j</sub>|) in a cube of N<sub>j</sub> voxels; ρ(L) = 1/e ≈ 0.37</span>"
         )
-        t["region_head"].setText(self.tr("Step 1: the region"))
-        t["region_body"].setText(
+        t["acf_caption"].setText(
             self.tr(
-                "The window only moves inside the region, so the region fixes the largest shift that can be measured: "
-                "(region − window) / 2 on each axis. Choose a region filled with the texture you will track. It is not "
-                "the DVC region of interest: the two never affect each other."
+                "The cube and its shifted copy: only the overlap (blue) contributes, and dividing by it lifts the curve "
+                "back onto the true one."
             )
         )
-        t["region_caption"].setText(
+        t["region_head"].setText(self.tr("Step 1: the region (optional)"))
+        t["region_body"].setText(
             self.tr(
-                "One analysis: the copy (cyan) of the window (white) slides inside the region (orange) while ρ(h) is "
-                "traced; the region edge stops it."
+                "The region says where the analysis may look. It starts as the whole volume, so you can go straight to "
+                "step 2; draw it, or copy the DVC region of interest, to keep the cubes out of the air around the "
+                "specimen. It is not the DVC region of interest: the two never affect each other."
             )
         )
         t["rve_head"].setText(self.tr("Step 2: the representative volume element (RVE)"))
         t["rve_body"].setText(
             self.tr(
-                "A small window gives a noisy length: it sees only a few speckles. The representative volume element is "
-                "the window size from which the length no longer changes. Windows of growing size, all centred in the "
-                "region, are analysed with the same shifts; the first size of the stable run becomes the window of step 3."
+                "A small cube gives a noisy length: it sees only a few speckles. The representative volume element is "
+                "the size from which the length no longer changes. Pick a centre point; cubes of growing size around it "
+                "are analysed, each on its own voxels alone, and the first size of the stable run becomes step 3. Reading "
+                "the curve as a convergence study is only fair because of the correction above: without it the sizes "
+                "would differ for a reason that has nothing to do with the texture."
             )
         )
         t["rve_caption"].setText(
-            self.tr("Windows of growing size in the same region; the 1/e length settles once the window is large enough.")
+            self.tr("Cubes of growing size about one centre; the 1/e length settles once the cube is large enough.")
         )
         t["subset_head"].setText(self.tr("Step 3: from the length to the subset"))
         t["subset_body"].setText(
