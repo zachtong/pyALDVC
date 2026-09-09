@@ -7,6 +7,42 @@ All notable changes to pyALDVC are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Large volumes: the application stops doing whole-volume work for local changes.** Measured on a
+  384^3 volume (a 3 GB scan is about fifteen times that): drawing a region rectangle in the texture
+  window 320 -> 97 ms, moving a slice slider 262 -> 32 ms, a brush stroke on one slice 156 -> 60 ms,
+  undo 144 -> 29 ms. A masked run's peak volume memory falls from 53 to 14 GB at 1024^3 and from 422
+  to 112 GB at 2048^3. `scripts/bench_large_volume.py` measures it and
+  `scripts/make_large_volume_report.py` draws `reports/large_volume.pdf`.
+  - `subset_valid_fraction` counted each node's valid voxels through a full `(nz+1, ny+1, nx+1)`
+    int64 summed-area table -- a measured 24.1 bytes per voxel, 26 GB at 1024^3, and it runs twice
+    per reference since subset splitting became the default. A z-slab sweep over 2-D integral images
+    gives the same integers with `O(ny * nx)` memory: 1753 -> 60 ms and 24.06 -> 0.06 bytes/voxel.
+  - A mask operation is written through the slices it spans instead of building a full boolean
+    volume and combining it: a one-slice rectangle 12.00 -> 0.01 ms, a brush stroke 12.91 -> 0.73 ms.
+    The bounding box and the voxel count are cached on the editor instead of being recomputed by
+    each of the twelve callers per edit, and an all-True base is symbolic, so an editor over the
+    whole volume holds one boolean volume instead of two.
+  - Both slice viewers keep their matplotlib artists and update the data, and draw slices at the
+    pane's own resolution: one canvas draw of three 2048^2 slices with the mask tint and outline is
+    2.69 s at full resolution and 0.14 s decimated. The region reduction is conservative -- a sample
+    counts as inside only when every voxel it covers is -- so thin exclusions survive.
+  - `effective_voi` and the lattice preview are cached on `mask_revision` instead of running four
+    and one whole-volume passes per slider tick, and the preview stopped copying the boolean mask to
+    uint8 (57 -> 29 ms before caching). The grey window samples evenly spaced indices, which a fixed
+    stride could alias onto a single voxel column, and the strain window samples it once per volume.
+  - The window no longer pins every frame it has shown: a run over files streams them through
+    `FileVolumeProvider` (with `masks=` for the ones drawn in the application), browsing keeps a
+    bounded number of frames (`PYALDVC_CACHE_FRAMES` overrides it), and the finished worker releases
+    its inputs instead of holding them for the life of the window.
+  - A run without a mask carries a 1x1x1 mask placeholder instead of an all-ones volume, in RAM and
+    in VRAM; the frame loop releases the previous reference before building the next; the masked
+    deformed volume is copied once instead of twice; and the pyramid's reference standard deviation
+    is accumulated per slice instead of materialising `f - mean`.
+- **`gradient_mode` defaults to `"auto"`**: the three gradient volumes (12 bytes per voxel, 12.9 GB
+  at 1024^3) are kept until they would need more than 8 GB -- about 880^3 -- and dropped for the
+  in-kernel stencil above that. Below the threshold nothing changes. It is resolved once, where the
+  volume shape is known, so bundles, the memory model and checkpoint metadata never see `"auto"`.
+  `memory_model` also stops charging a byte per voxel for a mask that does not exist.
 - **Texture analysis: one region, one centre, concentric cubes.** The window that slid inside a
   larger range is no longer the analysis the application runs. A cube is now compared with a copy
   of itself shifted by each lag, and every lag is divided by the number of voxel pairs that still
