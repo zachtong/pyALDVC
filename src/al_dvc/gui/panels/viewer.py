@@ -13,7 +13,17 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
 from al_dvc.export.export_utils import field_array
-from al_dvc.export.slice_plots import DISPLACEMENT_LIKE, apply_equal_scale, build_axes, ordered_limits, restore_cells
+from al_dvc.export.slice_plots import (
+    DISPLACEMENT_LIKE,
+    apply_equal_scale,
+    build_axes,
+    decimate_image,
+    decimate_region,
+    display_stride,
+    grey_limits,
+    ordered_limits,
+    restore_cells,
+)
 
 from ..app_state import AppState
 from ..lattice_preview import describe, layer_segments, nearest_node, plan_from_result, plan_lattice, subset_rect
@@ -79,6 +89,7 @@ class SliceViewer(QWidget):
         self._lattice_label = QLabel()
         self._lattice_label.setObjectName("hint")
         self._plan = None  # LatticePlan drawn on the slices, None when hidden or not computable
+        self._plan_cache: tuple | None = None  # (key, LatticePlan): the preview costs a pass over the mask
         self._hover_key: tuple | None = None
         self._hover_artist = None
         self.sliders: dict[str, QSlider] = {}
@@ -223,11 +234,7 @@ class SliceViewer(QWidget):
             return
         self._volume = np.asarray(vol)
         self._volume_index = idx
-        finite = self._volume[np.isfinite(self._volume)] if self._volume.dtype.kind == "f" else self._volume
-        sample = finite.ravel()[:: max(1, finite.size // 200000)] if finite.size else np.zeros(1)
-        self._vmin, self._vmax = (
-            (float(np.percentile(sample, 0.5)), float(np.percentile(sample, 99.5))) if sample.size else (0.0, 1.0)
-        )
+        self._vmin, self._vmax = grey_limits(self._volume)
         nz, ny, nx = self._volume.shape
         for axis, n in (("z", nz), ("y", ny), ("x", nx)):
             s = self.sliders[axis]
@@ -280,6 +287,7 @@ class SliceViewer(QWidget):
         self._hover_key = None
         self._hover_artist = None  # gone with the cleared axes
         if self._volume is None:
+            self._plan_cache = None
             self._empty.setVisible(True)
             self.canvas.draw_idle()
             return
@@ -298,7 +306,16 @@ class SliceViewer(QWidget):
         overlay = self._field_grid()
         res = self._state.results
         for ax, img, (w, h), xl, yl, title in panes:
-            ax.imshow(img, cmap="gray", origin="lower", vmin=self._vmin, vmax=self._vmax, extent=[-0.5, w - 0.5, -0.5, h - 0.5])
+            # a pane is a few hundred pixels wide; sending a 2048^2 slice to it costs matplotlib
+            # seconds per frame and nothing that survives the resampling (see region_viewer)
+            ax.imshow(
+                decimate_image(img, display_stride((h, w))),
+                cmap="gray",
+                origin="lower",
+                vmin=self._vmin,
+                vmax=self._vmax,
+                extent=[-0.5, w - 0.5, -0.5, h - 0.5],
+            )
             ax.set_title(title, color=COLORS.TEXT_SECONDARY, fontsize=8)
             ax.set_xlabel(xl, color=COLORS.TEXT_SECONDARY, fontsize=7)
             ax.set_ylabel(yl, color=COLORS.TEXT_SECONDARY, fontsize=7)
@@ -379,14 +396,25 @@ class SliceViewer(QWidget):
             grid_ready = True
         else:
             para = self._state.para
-            try:
-                plan = plan_lattice(
-                    self._volume.shape, para.winsize, para.winstepsize, self._state.effective_voi(), self._state.current_mask()
-                )
-            except ValueError as exc:
-                self._lattice_label.setText(str(exc))
-                self._lattice_label.setToolTip(str(exc))
-                return
+            voi = self._state.effective_voi()
+            key = (
+                self._state.mask_revision,
+                tuple(self._volume.shape),
+                tuple(para.winsize),
+                tuple(para.winstepsize),
+                None if voi is None else (voi.x, voi.y, voi.z),
+            )
+            if self._plan_cache is not None and self._plan_cache[0] == key:
+                plan = self._plan_cache[1]
+            else:
+                try:
+                    plan = plan_lattice(self._volume.shape, para.winsize, para.winstepsize, voi, self._state.current_mask())
+                except ValueError as exc:
+                    self._plan_cache = None
+                    self._lattice_label.setText(str(exc))
+                    self._lattice_label.setToolTip(str(exc))
+                    return
+                self._plan_cache = (key, plan)  # a slider tick changes neither the mask nor the parameters
             grid_ready = plan.centre_valid is not None  # no region of interest yet: nothing to judge the grid against
         text = describe(plan)
         self._lattice_label.setText(text)
@@ -461,7 +489,9 @@ class SliceViewer(QWidget):
         alpha = float(self._state.mask_alpha)
         for ax, m2d in ((self.axes[0], mask[iz]), (self.axes[1], mask[:, iy, :]), (self.axes[2], mask[:, :, ix])):
             h, w = m2d.shape
-            excluded = np.ma.masked_where(m2d, np.ones_like(m2d, dtype=np.float32))
+            stride = display_stride((h, w))
+            small = decimate_region(m2d, stride)  # conservative: an excluded voxel keeps its block excluded
+            excluded = np.ma.masked_where(small, np.ones(small.shape, dtype=np.float32))
             ax.imshow(
                 excluded,
                 cmap=MASK_TINT,
@@ -470,8 +500,16 @@ class SliceViewer(QWidget):
                 extent=[-0.5, w - 0.5, -0.5, h - 0.5],
                 interpolation="nearest",
             )
-            if m2d.any() and not m2d.all():
-                ax.contour(m2d.astype(np.float32), levels=[0.5], colors=[MASK_EDGE], linewidths=0.6)
+            if small.any() and not small.all():
+                sv, sh = stride
+                ax.contour(
+                    np.arange(small.shape[1]) * sh,
+                    np.arange(small.shape[0]) * sv,
+                    small.astype(np.float32),
+                    levels=[0.5],
+                    colors=[MASK_EDGE],
+                    linewidths=0.6,
+                )
 
     # ------------------------------------------------------------------ mouse gestures
     def _plane_at(self, event) -> str | None:

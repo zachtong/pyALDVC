@@ -25,6 +25,8 @@ from matplotlib.patches import Ellipse, Rectangle
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QButtonGroup, QComboBox, QHBoxLayout, QLabel, QSlider, QSpinBox, QVBoxLayout, QWidget
 
+from al_dvc.export.slice_plots import decimate_image, decimate_region, display_stride
+
 from .icons import tool_button
 from .mask_editor import FULL_BASE, MaskEditor, MaskOp
 from .theme import COLORS
@@ -47,7 +49,6 @@ LEFT, RIGHT = 1, 3
 POINT_DECIMALS = 2
 DISPLAY_SAMPLE = 2_000_000  # voxels looked at for the grey-level limits
 MIN_CANVAS = 40  # pixels: below this the axes transform is singular and matplotlib cannot place anything
-DISPLAY_PIXELS = 640  # a slice is decimated to about this many samples per axis before it is drawn
 MAX_CUBE_PATCHES = 24  # rectangles kept per pane for the concentric-cube overlay
 
 __all__ = ["RegionSettings", "RegionTools", "RegionViewer"]
@@ -60,44 +61,6 @@ class RegionSettings:
     depth: str
     depth_range: tuple[int, int]
     radius: int
-
-
-def display_stride(shape: tuple[int, int]) -> tuple[int, int]:
-    """``(sv, sh)``: how many voxels one drawn sample covers, so a slice is not sent at full resolution.
-
-    A pane is a few hundred pixels wide; drawing a 2048 x 2048 slice into it costs matplotlib 2.7 s
-    per frame (measured, image + tint + outline) against 0.14 s for the decimated one, and the extra
-    samples are resampled away before anything reaches the screen.
-    """
-    return tuple(max(1, -(-n // DISPLAY_PIXELS)) for n in shape)  # type: ignore[return-value]
-
-
-def _decimate(img: np.ndarray, stride: tuple[int, int]) -> np.ndarray:
-    """Point-sample the grey values: they are a background, and the eye cannot use what is dropped."""
-    sv, sh = stride
-    return img if sv == 1 and sh == 1 else img[::sv, ::sh]
-
-
-def _decimate_region(m2d: np.ndarray, stride: tuple[int, int]) -> np.ndarray:
-    """Reduce a region slice conservatively: a sample is inside only when every voxel it covers is.
-
-    Point-sampling would drop a thin excluded sliver and show excluded material as part of the
-    region, which is the one error this display must not make. Blocks that hang over the edge keep
-    the plain sample, so the reduction never invents material either.
-    """
-    sv, sh = stride
-    if sv == 1 and sh == 1:
-        return m2d
-    h, w = m2d.shape
-    hh, ww = h // sv, w // sh
-    if hh == 0 or ww == 0:
-        return m2d[::sv, ::sh]
-    whole = m2d[: hh * sv, : ww * sh].reshape(hh, sv, ww, sh).all(axis=(1, 3))
-    if hh * sv == h and ww * sh == w:
-        return whole
-    out = m2d[::sv, ::sh].copy()  # the ragged last row / column keeps the point sample
-    out[:hh, :ww] = whole
-    return out
 
 
 def _voxel_point(event) -> tuple[float, float]:
@@ -616,8 +579,8 @@ class RegionViewer(QWidget):
         rebuild_contours = contour_key != self._contour_key
         for plane, art, (img, m2d, (w, h), xl, yl, title, (ch, cv)) in zip(PLANE_OF_AXIS, self._artists, self._pane_geometry()):
             stride = display_stride((h, w))
-            small = _decimate_region(m2d, stride)
-            art["image"].set_data(_decimate(img, stride))
+            small = decimate_region(m2d, stride)
+            art["image"].set_data(decimate_image(img, stride))
             art["tint"].set_data(np.ma.masked_where(small, np.ones(small.shape, dtype=np.float32)))
             if rebuild_contours:
                 self._set_contour(art, small, stride, (w, h))

@@ -20,6 +20,19 @@ from numpy.typing import NDArray
 from .._numba_compat import JIT_CACHE, njit, prange
 from ..utils.flood_fill import flood_fill_from
 
+
+def as_uint8(mask) -> NDArray[np.uint8]:
+    """``mask`` seen as uint8 without copying it when it already is one byte per voxel.
+
+    ``np.ascontiguousarray(mask, dtype=np.uint8)`` copies the whole volume for a boolean mask, which
+    is what the preview did on every redraw. Booleans are stored as 0/1 bytes, so a view is exact.
+    """
+    m = np.asarray(mask)
+    if m.dtype == np.bool_ and m.flags.c_contiguous:
+        return m.view(np.uint8)
+    return np.ascontiguousarray(m, dtype=np.uint8)
+
+
 # hex8 corner order of ``mesh_setup``: 0 (0,0,0) 1 (1,0,0) 2 (1,1,0) 3 (0,1,0) 4 (0,0,1) 5 (1,0,1) 6 (1,1,1) 7 (0,1,1)
 EDGES = {  # axis (x, y, z) -> (lower corner, upper corner) of the four element edges along it
     0: ((0, 1), (3, 2), (4, 5), (7, 6)),
@@ -89,7 +102,7 @@ def bridging_elements(mask, coordinates: NDArray[np.float64], elements: NDArray[
     if elements.shape[0] == 0:
         return out
     corners = np.round(np.asarray(coordinates, dtype=np.float64)[elements]).astype(np.int64)  # (E, 8, 3)
-    _bridging_jit(np.ascontiguousarray(mask, dtype=np.uint8), np.ascontiguousarray(corners), out)
+    _bridging_jit(as_uint8(mask), np.ascontiguousarray(corners), out)
     return out
 
 

@@ -118,6 +118,68 @@ def auto_range(values: NDArray, low: float = 1.0, high: float = 99.0) -> tuple[f
     return ordered_limits(float(np.percentile(finite, low)), float(np.percentile(finite, high)))
 
 
+GREY_SAMPLE = 200_000  # voxels looked at for the display grey window
+DISPLAY_PIXELS = 640  # a slice is decimated to about this many samples per axis before it is drawn
+
+
+def display_stride(shape: tuple[int, int]) -> tuple[int, int]:
+    """``(sv, sh)``: how many voxels one drawn sample covers, so a slice is not sent at full resolution.
+
+    A pane is a few hundred pixels wide; drawing a 2048 x 2048 slice into it costs matplotlib 2.7 s
+    per frame (measured, image + tint + outline) against 0.14 s for the decimated one, and the extra
+    samples are resampled away before anything reaches the screen.
+    """
+    return tuple(max(1, -(-n // DISPLAY_PIXELS)) for n in shape)  # type: ignore[return-value]
+
+
+def decimate_image(img: np.ndarray, stride: tuple[int, int]) -> np.ndarray:
+    """Point-sample the grey values: they are a background, and the eye cannot use what is dropped."""
+    sv, sh = stride
+    return img if sv == 1 and sh == 1 else img[::sv, ::sh]
+
+
+def decimate_region(m2d: np.ndarray, stride: tuple[int, int]) -> np.ndarray:
+    """Reduce a region slice conservatively: a sample is inside only when every voxel it covers is.
+
+    Point-sampling would drop a thin excluded sliver and show excluded material as part of the
+    region, which is the one error this display must not make. Blocks that hang over the edge keep
+    the plain sample, so the reduction never invents material either.
+    """
+    sv, sh = stride
+    if sv == 1 and sh == 1:
+        return m2d
+    h, w = m2d.shape
+    hh, ww = h // sv, w // sh
+    if hh == 0 or ww == 0:
+        return m2d[::sv, ::sh]
+    whole = m2d[: hh * sv, : ww * sh].reshape(hh, sv, ww, sh).all(axis=(1, 3))
+    if hh * sv == h and ww * sh == w:
+        return whole
+    out = m2d[::sv, ::sh].copy()  # the ragged last row / column keeps the point sample
+    out[:hh, :ww] = whole
+    return out
+
+
+def grey_limits(volume: NDArray, low: float = 0.5, high: float = 99.5) -> tuple[float, float]:
+    """``(vmin, vmax)`` for displaying ``volume``, from a bounded sample of it.
+
+    The sample is drawn with :func:`numpy.linspace` rather than a fixed stride: a stride that happens
+    to be a multiple of a row or plane length would sample one voxel column of the volume and report
+    its grey range as the whole scan's. Non-finite values are dropped from the sample, not from the
+    volume -- filtering first would build two full-volume temporaries.
+    """
+    a = np.asarray(volume)
+    if a.size == 0:
+        return 0.0, 1.0
+    idx = np.linspace(0, a.size - 1, min(a.size, GREY_SAMPLE)).astype(np.intp)
+    sample = a.reshape(-1)[idx]
+    if sample.dtype.kind == "f":
+        sample = sample[np.isfinite(sample)]
+    if sample.size == 0:
+        return 0.0, 1.0
+    return float(np.percentile(sample, low)), float(np.percentile(sample, high))
+
+
 def slice_indices(shape: tuple[int, int, int], indices: dict[str, int | None] | None) -> tuple[int, int, int]:
     """``(iz, iy, ix)`` clipped to ``shape``; ``None`` entries fall back to the middle."""
     nz, ny, nx = shape
@@ -182,12 +244,15 @@ def draw_field_planes(
     volume_shape: tuple[int, int, int] | None = None,
     label_units: str | None = None,
     equal_scale: bool = False,
+    bg_clim: tuple[float, float] | None = None,
 ) -> dict:
     """Draw ``field`` of ``frame`` on the XY / XZ / YZ planes through ``indices`` (voxel positions).
 
     ``background`` is an optional volume drawn in grey under the field. Without one the panes
     still span the full volume (``volume_shape``, else the result's) so the field sits where it
-    belongs in the scan. Returns ``{"clim", "indices", "mappable"}``.
+    belongs in the scan. ``bg_clim`` skips the grey-window sample when the caller already has it --
+    the strain window redraws on every slider tick and the volume does not change between them.
+    Returns ``{"clim", "indices", "mappable"}``.
     """
     mesh = result.dvc_mesh
     shape = tuple(int(s) for s in (volume_shape or result.volume_shape))
@@ -235,9 +300,7 @@ def draw_field_planes(
     bg_slices = None
     if background is not None:
         bg = np.asarray(background)
-        finite = bg[np.isfinite(bg)] if bg.dtype.kind == "f" else bg.ravel()
-        sample = finite.ravel()[:: max(1, finite.size // 200_000)] if finite.size else np.zeros(1)
-        vmin, vmax = float(np.percentile(sample, 0.5)), float(np.percentile(sample, 99.5))
+        vmin, vmax = bg_clim if bg_clim is not None else grey_limits(bg)
         bg_slices = [(bg[iz], vmin, vmax), (bg[:, iy, :], vmin, vmax), (bg[:, :, ix], vmin, vmax)]
     mappable = None
     for k, (ax, img, extent, (w, h), xl, yl, title) in enumerate(panes):

@@ -107,7 +107,10 @@ class AppState(QObject):
         self.result_uids: list[str] = []  # ``uid`` of the volumes the results describe (frame k <-> result k-1)
         self.results_path: str | None = None  # the last exported results archive (session pointer)
         self.session_generation: int = 0  # bumped whenever the session context is replaced or the sequence changes
-        self.mask_revision: int = 0  # bumped whenever any mask changes (analyses tag their input with it)
+        # bumped whenever the *effective* mask may have changed: a drawing, a different current frame,
+        # a different target, a different sequence. Caches of anything derived from the mask key on it.
+        self.mask_revision: int = 0
+        self._voi_cache: tuple | None = None
         self.dirty: bool = False  # unsaved edits (volumes, masks, parameters, output folder)
         self.output_dir: Path = Path("aldvc_results")
         self.session_path: Path | None = None
@@ -146,6 +149,7 @@ class AppState(QObject):
     def _sequence_changed(self) -> None:
         """The sequence is different: a run started before this must not publish into it."""
         self.session_generation += 1
+        self.mask_revision += 1  # which frame is the reference may have changed with the list
         self.dirty = True
 
     def mark_clean(self) -> None:
@@ -277,13 +281,20 @@ class AppState(QObject):
 
     def effective_voi(self) -> VOIRange | None:
         """The analysed box: ``para.voi`` when set, else the region of interest's bounding box grown by the
-        subset half-width and the search range (``None`` = whole volume)."""
+        subset half-width and the search range (``None`` = whole volume).
+
+        Cached on ``mask_revision``: the slice viewer asks for it on every slider tick and the answer
+        costs four passes over the mask volume.
+        """
         if self.para.voi is not None and not self.para.voi.is_whole:
             return self.para.voi
+        key = (self.mask_revision, tuple(self.para.winsize), tuple(np.atleast_1d(self.para.search_radius).tolist()))
+        if self._voi_cache is not None and self._voi_cache[0] == key:
+            return self._voi_cache[1]
         mask = self.reference_mask()
-        if mask is None:
-            return None
-        return voi_from_mask(mask, self.para.winsize, self.para.search_radius)
+        voi = None if mask is None else voi_from_mask(mask, self.para.winsize, self.para.search_radius)
+        self._voi_cache = (key, voi)
+        return voi
 
     def ensure_mask_editor(self, base: str = "current") -> MaskEditor:
         """The editor for the current frame, created on first use.
@@ -430,6 +441,7 @@ class AppState(QObject):
             if target not in ("current", "all"):
                 raise ValueError(f"mask target must be 'current' or 'all', got {target!r}")
             self.mask_target = target  # where the next drawing operations go; copying now is an explicit action
+            self.mask_revision += 1  # the target decides whether the live editor is the reference's mask
         self.mask_changed.emit()
 
     def volume_array(self, index: int) -> NDArray:
@@ -488,6 +500,7 @@ class AppState(QObject):
         if self.volumes and 0 <= index < len(self.volumes) and index != self.current_frame:
             self.current_frame = index
             self.mask_editor = None
+            self._mask_changed()  # a different frame can mean a different effective mask
             self.current_frame_changed.emit(index)
             self.mask_changed.emit()
 

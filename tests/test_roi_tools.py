@@ -144,7 +144,7 @@ def test_display_decimation_never_shows_excluded_voxels_as_part_of_the_region():
     """A pane is a few hundred pixels wide, so slices are reduced -- but not by dropping exclusions."""
     import numpy as np
 
-    from al_dvc.gui.region_viewer import _decimate_region, display_stride
+    from al_dvc.export.slice_plots import decimate_region, display_stride
 
     assert display_stride((512, 512)) == (1, 1)  # already small enough: no reduction at all
     assert display_stride((1024, 2048)) == (2, 4)
@@ -152,12 +152,12 @@ def test_display_decimation_never_shows_excluded_voxels_as_part_of_the_region():
 
     m = np.ones((64, 64), dtype=bool)
     m[:, 30] = False  # a one-voxel excluded sliver, the thing point sampling would lose
-    small = _decimate_region(m, (4, 4))
+    small = decimate_region(m, (4, 4))
     assert small.shape == (16, 16)
     assert not small[:, 7].any() and small[:, :7].all() and small[:, 8:].all()
-    assert _decimate_region(m, (1, 1)) is m  # no copy when nothing is reduced
+    assert decimate_region(m, (1, 1)) is m  # no copy when nothing is reduced
 
     ragged = np.ones((10, 10), dtype=bool)
     ragged[9, 9] = False
-    out = _decimate_region(ragged, (4, 4))  # 10 = 2 whole blocks plus a ragged remainder
+    out = decimate_region(ragged, (4, 4))  # 10 = 2 whole blocks plus a ragged remainder
     assert out.shape == (3, 3) and out[:2, :2].all()

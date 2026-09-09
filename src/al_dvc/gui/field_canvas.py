@@ -15,7 +15,7 @@ from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
-from al_dvc.export.slice_plots import LAYOUTS, PlaneStyle, build_axes, draw_field_planes, ordered_limits
+from al_dvc.export.slice_plots import LAYOUTS, PlaneStyle, build_axes, draw_field_planes, grey_limits, ordered_limits
 
 from .theme import COLORS
 
@@ -31,6 +31,7 @@ class FieldSliceCanvas(QWidget):
         super().__init__(parent)
         self._result = None
         self._background: np.ndarray | None = None
+        self._bg_clim: tuple[float, float] | None = None  # the grey window of the background, sampled once
         self._shape: tuple[int, int, int] = (1, 1, 1)
         self._frame = 0
         self._field = "disp_magnitude"
@@ -78,6 +79,7 @@ class FieldSliceCanvas(QWidget):
         """The result to draw and an optional volume shown under the field."""
         self._result = result
         self._background = None if background is None else np.asarray(background)
+        self._bg_clim = None if self._background is None else grey_limits(self._background)
         if result is not None:
             self._shape = tuple(int(s) for s in result.volume_shape)
         nz, ny, nx = self._shape
@@ -200,6 +202,7 @@ class FieldSliceCanvas(QWidget):
             style=self._style,
             volume_shape=self._shape,
             equal_scale=self._equal_scale,
+            bg_clim=self._bg_clim,
         )
         self.last_clim = info["clim"]
         self.canvas.draw_idle()
