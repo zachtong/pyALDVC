@@ -312,6 +312,12 @@ def _split_args(n_nodes, split_index, split_keep):
 
 
 @njit(cache=JIT_CACHE, inline="always")
+def _no_mask(mask, f):
+    """True when ``mask`` is the 1x1x1 placeholder of a run without one, so every voxel counts."""
+    return mask.shape[0] != f.shape[0]
+
+
+@njit(cache=JIT_CACHE, inline="always")
 def _kept(keep, idx):
     """Bit ``idx`` of a packed keep row."""
     return ((keep[idx >> 3] >> (idx & 7)) & 1) != 0
@@ -325,6 +331,7 @@ def _precompute_one(x0, y0, z0, hx, hy, hz, stride, f, gx, gy, gz, mask, min_val
     splitting); they are inside the volume and the mask by construction, so the window may
     leave the volume. Returns ``(meanf, bottomf, n_valid, ok)``.
     """
+    unmasked = _no_mask(mask, f)
     nz = f.shape[0]
     ny = f.shape[1]
     nx = f.shape[2]
@@ -351,7 +358,7 @@ def _precompute_one(x0, y0, z0, hx, hy, hz, stride, f, gx, gy, gz, mask, min_val
                 if use_keep:
                     kept = _kept(keep, idx)
                 else:
-                    kept = mask[zz, yy, xx] != 0
+                    kept = unmasked or mask[zz, yy, xx] != 0
                 idx += 1
                 if not kept:
                     continue
@@ -522,6 +529,7 @@ def _warp_and_sample(P, x0, y0, z0, hx, hy, hz, stride, mask, f, g, mode, gbuf, 
     nz = g.shape[0]
     ny = g.shape[1]
     nx = g.shape[2]
+    unmasked = _no_mask(mask, f)
     a00 = 1.0 + P[0]
     a01 = P[1]
     a02 = P[2]
@@ -552,7 +560,7 @@ def _warp_and_sample(P, x0, y0, z0, hx, hy, hz, stride, mask, f, g, mode, gbuf, 
                 if use_keep:
                     skip = not _kept(keep, idx)
                 else:
-                    skip = mask[zz, yy, x0 + dx] == 0
+                    skip = not unmasked and mask[zz, yy, x0 + dx] == 0
                 if skip:
                     gbuf[idx] = np.nan
                     idx += 1

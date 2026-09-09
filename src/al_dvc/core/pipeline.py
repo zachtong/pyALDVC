@@ -55,7 +55,7 @@ from .data_structures import (
 
 logger = logging.getLogger(__name__)
 
-_REF_CACHE_SIZE = 2
+_REF_CACHE_SIZE = 2  # a custom reference tree can alternate between two references; room is made before allocating
 
 
 class RunCancelled(RuntimeError):
@@ -178,6 +178,8 @@ def run_aldvc(
         if ref_idx in ref_cache:
             ref_cache.move_to_end(ref_idx)
             return ref_cache[ref_idx]
+        while len(ref_cache) >= _REF_CACHE_SIZE:
+            ref_cache.popitem(last=False)  # make room BEFORE allocating: a bundle is 17 bytes per voxel
         t0 = time.perf_counter()
         f = presmooth_volume(provider.get_normalized(ref_idx), para.prefilter_sigma)
         mask = provider.get_mask(ref_idx)
@@ -199,8 +201,6 @@ def run_aldvc(
                 logger.warning("Global step disabled for reference %d: %s", ref_idx, exc)
         entry = {"bundle": bundle, "mesh": mesh, "ctx": ctx, "ops": ops, "time": time.perf_counter() - t0}
         ref_cache[ref_idx] = entry
-        while len(ref_cache) > _REF_CACHE_SIZE:
-            ref_cache.popitem(last=False)
         timings["reference_precompute"] = timings.get("reference_precompute", 0.0) + entry["time"]
         return entry
 
@@ -230,13 +230,19 @@ def run_aldvc(
                 progress(base + span, f"Frame {k}: loaded from checkpoint")
                 continue
 
+            # drop the previous frame's volumes before the next reference is built: a bundle is
+            # 17 bytes per voxel, and holding the outgoing one across the incoming allocation was
+            # the peak of the whole run
+            ref = bundle = mesh = ctx = ops = None
+            g_norm = g_prep = g_mask = None
             ref = get_reference(ref_idx)
             bundle, mesh, ctx, ops = ref["bundle"], ref["mesh"], ref["ctx"], ref["ops"]
             g_norm = presmooth_volume(provider.get_normalized(k), para.prefilter_sigma)
             g_mask = provider.get_mask(k)
             g_prep = prepare_deformed(g_norm, para.interp_method, mask=g_mask)
             if g_mask is not None:  # the NCC search sees the masked voxels as featureless (0 = mean after normalisation)
-                g_norm = np.where(g_mask, g_norm, np.float32(0.0)).astype(np.float32)
+                # np.where already returns float32; a second astype would copy the whole volume again
+                g_norm = np.where(g_mask, g_norm, np.float32(0.0))
 
             # --- Section 3: initial guess ---
             t0 = time.perf_counter()

@@ -132,8 +132,8 @@ def split_rows(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara, coords_int, h
     Candidates are the valid nodes whose full subset window contains a masked voxel (or leaves the
     volume); each gets the 6-connected in-mask component around its centre as a packed keep row.
     """
-    if not bool(getattr(para, "subset_split", False)) or ref.mask is None:
-        return None
+    if not bool(getattr(para, "subset_split", False)) or not ref.has_mask:
+        return None  # nothing to split against: no mask means no boundary inside the volume
     from .numba_kernels import build_split_rows
 
     frac = subset_valid_fraction(ref.mask, mesh.coordinates, para.winsize)

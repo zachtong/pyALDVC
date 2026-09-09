@@ -184,7 +184,7 @@ def _subset_voxels(coord, half, f, gx, gy, gz, mask, stride, keep):
     X, Y, Z = subset_offsets(half, stride)
     if keep is None:
         sl = (slice(z0 - hz, z0 + hz + 1, stride), slice(y0 - hy, y0 + hy + 1, stride), slice(x0 - hx, x0 + hx + 1, stride))
-        m = np.asarray(mask[sl]).ravel() > 0
+        m = np.ones(X.size, dtype=bool) if mask.shape != f.shape else np.asarray(mask[sl]).ravel() > 0
         vals = [np.asarray(a[sl], dtype=np.float64).ravel() for a in (f, gx, gy, gz)]
         return (m, X, Y, Z, *vals)
     m = np.asarray(keep, dtype=bool)

@@ -308,8 +308,11 @@ class ReferenceBundle:
 
     Attributes:
         f: normalised reference volume ``(nz, ny, nx)`` float32.
-        gx, gy, gz: gradients of ``f`` (same shape/dtype).
-        mask: ``(nz, ny, nx)`` uint8, 1 = valid.
+        gx, gy, gz: gradients of ``f`` (same shape/dtype), or 1x1x1 placeholders with
+            ``gradient_mode="on_the_fly"``.
+        mask: ``(nz, ny, nx)`` uint8, 1 = valid -- or a 1x1x1 placeholder when the run has no mask,
+            in which case :attr:`has_mask` is False and every voxel counts. An all-ones volume would
+            cost one byte per voxel in RAM and the same again in VRAM for no information at all.
     """
 
     f: NDArray[np.float32]
@@ -321,6 +324,15 @@ class ReferenceBundle:
     @property
     def shape(self) -> tuple[int, int, int]:
         return tuple(int(s) for s in self.f.shape)  # type: ignore[return-value]
+
+    @property
+    def has_mask(self) -> bool:
+        """False when ``mask`` is the placeholder; the kernels test the same shapes themselves."""
+        return self.mask.shape == self.f.shape
+
+    @property
+    def stored_gradients(self) -> bool:
+        return self.gx.shape == self.f.shape
 
 
 # ---------------------------------------------------------------------------

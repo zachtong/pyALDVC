@@ -185,11 +185,30 @@ def clear_device_cache() -> None:
     _cache.clear()
 
 
+_NO_SPLIT: dict[int, np.ndarray] = {}  # "nothing is split" index arrays, kept so the device cache can hit
+_NO_SPLIT_ROWS = np.zeros((1, 1), dtype=np.uint8)
+_NO_SPLIT_SLOTS = 4  # the node count alternates between the coarse lattice and the full grid
+
+
+def _no_split_index(n_nodes: int) -> np.ndarray:
+    """The all ``-1`` index array for ``n_nodes``, reused so :class:`DeviceCache` (keyed on identity) hits.
+
+    Rebuilding it per call guaranteed a miss and evicted a volume-sized entry from an eight-slot LRU
+    that already held six of them, so the next solver call re-uploaded gigabytes.
+    """
+    arr = _NO_SPLIT.get(int(n_nodes))
+    if arr is None:
+        if len(_NO_SPLIT) >= _NO_SPLIT_SLOTS:
+            _NO_SPLIT.pop(next(iter(_NO_SPLIT)))
+        arr = np.full(int(n_nodes), -1, dtype=np.int64)
+        _NO_SPLIT[int(n_nodes)] = arr
+    return arr
+
+
 def _split_device(n_nodes: int, split_index, split_keep):
     """Device arrays of the subset-splitting rows; placeholders (nothing split) when they are ``None``."""
     if split_index is None or split_keep is None:
-        idx = np.full(int(n_nodes), -1, dtype=np.int64)
-        rows = np.zeros((1, 1), dtype=np.uint8)
+        idx, rows = _no_split_index(n_nodes), _NO_SPLIT_ROWS
     else:
         idx = np.ascontiguousarray(split_index, dtype=np.int64)
         rows = np.ascontiguousarray(split_keep, dtype=np.uint8)
@@ -542,6 +561,7 @@ def _build_kernels() -> dict[str, Any]:
                 warp[11] = F32(z0 + P[11])
                 ctrl[1] = 0
             cuda.syncthreads()
+            unmasked = mask.shape[0] != f.shape[0]  # 1x1x1 placeholder: every voxel counts
             s1 = F32(0.0)
             s2 = F32(0.0)
             s1f = F32(0.0)
@@ -565,7 +585,7 @@ def _build_kernels() -> dict[str, Any]:
                     if (split_keep[keep_row, v >> 3] >> (v & 7)) & 1 == 0:
                         gbuf[blk, v] = math.nan
                         continue
-                elif mask[zz, yy, xx] == 0:
+                elif not unmasked and mask[zz, yy, xx] == 0:
                     gbuf[blk, v] = math.nan
                     continue
                 nref += F32(1.0)
@@ -937,6 +957,7 @@ def _build_kernels() -> dict[str, Any]:
                 warp[10] = F32(y0 + P[10])
                 warp[11] = F32(z0 + P[11])
             cuda.syncthreads()
+            unmasked = mask.shape[0] != f.shape[0]  # 1x1x1 placeholder: every voxel counts
             s1 = F32(0.0)
             s2 = F32(0.0)
             s1f = F32(0.0)
@@ -960,7 +981,7 @@ def _build_kernels() -> dict[str, Any]:
                     if (split_keep[keep_row, v >> 3] >> (v & 7)) & 1 == 0:
                         gbuf[blk, v] = math.nan
                         continue
-                elif mask[zz, yy, xx] == 0:
+                elif not unmasked and mask[zz, yy, xx] == 0:
                     gbuf[blk, v] = math.nan
                     continue
                 nref += F32(1.0)
@@ -1168,6 +1189,7 @@ def _build_kernels() -> dict[str, Any]:
                 sums_out[n, 2] = 0.0
                 sums_out[n, 3] = 1.0  # out of bounds
             return
+        unmasked = mask.shape[0] != f.shape[0]  # 1x1x1 placeholder: every voxel counts
         for q in range(81):
             acc[q] = F32(0.0)
         sx = (2 * hx) // stride + 1
@@ -1190,7 +1212,7 @@ def _build_kernels() -> dict[str, Any]:
                 # subset splitting: the packed keep row also excludes voxels outside the volume
                 if (split_keep[keep_row, v >> 3] >> (v & 7)) & 1 == 0:
                     continue
-            elif mask[zz, yy, xx] == 0:
+            elif not unmasked and mask[zz, yy, xx] == 0:
                 continue
             fv = f[zz, yy, xx]
             gxv, gyv, gzv = grad_at(f, gx, gy, gz, stored, zz, yy, xx)

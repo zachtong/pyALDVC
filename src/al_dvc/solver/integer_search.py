@@ -589,7 +589,13 @@ def auto_pyramid_levels(
     full-resolution standard deviation.
     """
     levels = 0
-    std0 = float(np.std(f)) if f is not None else None
+    # np.std would materialise ``f - mean`` as a second full-volume float32 array (4.3 GB at 1024^3);
+    # voi_mean_std accumulates per slice in float64 and allocates nothing volume-sized
+    std0 = None
+    if f is not None:
+        from ..io.volume_ops import voi_mean_std
+
+        std0 = float(voi_mean_std(f)[1])
     for lv in range(1, max_levels + 1):
         fac = 2**lv
         fits = True

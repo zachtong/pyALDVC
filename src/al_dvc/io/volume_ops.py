@@ -253,7 +253,9 @@ def build_reference_bundle(
 
     ``gradient_mode="on_the_fly"`` skips the three gradient volumes (12 bytes
     per voxel); the kernels then evaluate the 7-point stencil on ``f`` at the
-    subset voxels and receive 1x1x1 placeholders instead.
+    subset voxels and receive 1x1x1 placeholders instead. ``mask=None`` gets the
+    same treatment (1 byte per voxel, and the same again on the GPU): the kernels
+    recognise the placeholder by its shape and count every voxel.
     """
     f = np.ascontiguousarray(f, dtype=np.float32)
     if gradient_mode == "on_the_fly":
@@ -263,7 +265,7 @@ def build_reference_bundle(
     else:
         raise ValueError(f"gradient_mode must be 'stored' or 'on_the_fly' (got {gradient_mode!r})")
     if mask is None:
-        m = np.ones(f.shape, dtype=np.uint8)
+        m = np.ones((1, 1, 1), dtype=np.uint8)
     else:
         if mask.shape != f.shape:
             raise ValueError(f"mask shape {mask.shape} != volume shape {f.shape}")
