@@ -112,12 +112,20 @@ class RunPanel(QWidget):
                 self._state.log(self.tr("Cannot load the volumes: {error}").format(error=exc), "error")
                 return
             masks_now.append(None if m is None else np.array(m, dtype=bool, copy=True))
+        streamable = all(e.path for e in entries)
+        if streamable:
+            self._state.log(self.tr("Streaming {n} volumes from disk; the window keeps none of them.").format(n=len(entries)))
 
-        def loader(entries=entries, masks_now=masks_now):
+        def loader(entries=entries, masks_now=masks_now, streamable=streamable, voi=para.voi):
+            if streamable:
+                from al_dvc.io.volume_io import FileVolumeProvider
+
+                # the provider reads a frame when the solver asks for it and keeps two normalised
+                # ones; nothing here holds the raw volumes, so a ten-frame sequence is bounded
+                return FileVolumeProvider([e.path for e in entries], voi, masks=masks_now), None
             volumes = [e.load() for e in entries]
-            masks = None
-            if any(m is not None for m in masks_now):
-                masks = [m if m is not None else np.ones(v.shape, dtype=bool) for m, v in zip(masks_now, volumes)]
+            # a frame with no mask passes None: the solver recognises it and allocates nothing
+            masks = masks_now if any(m is not None for m in masks_now) else None
             return volumes, masks
 
         checkpoint = Path(self._state.output_dir) / CHECKPOINT_SUBDIR if self._state.write_checkpoints else None
@@ -154,8 +162,25 @@ class RunPanel(QWidget):
         return self._worker.wait(timeout_ms) if self._worker is not None else True
 
     # ------------------------------------------------------------------ slots
+    def _release_worker(self) -> None:
+        """Let the finished worker and everything it read go.
+
+        The worker is a child QObject of this panel, so rebinding ``self._worker`` at the next run
+        would drop only the Python reference: the volumes and masks it holds would stay alive for
+        the life of the window.
+        """
+        worker = self._worker
+        if worker is None:
+            return
+        self._worker = None
+        worker._volumes = None
+        worker._masks = None
+        worker._loader = None
+        worker.deleteLater()
+
     def _on_finished(self, result) -> None:
         self._timer.stop()
+        self._release_worker()
         elapsed = time.perf_counter() - self._started
         job = self._job or {}
         if job.get("generation") != self._state.session_generation:
@@ -174,9 +199,11 @@ class RunPanel(QWidget):
             self._state.log(self.tr("Stopped early: {n} frame(s) kept").format(n=result.n_frames), "warning")
         else:
             self._state.log(self.tr("Finished {n} frame(s) in {s:.1f} s").format(n=result.n_frames, s=elapsed), "success")
+        self._state.release_frames()  # last: the panels above have re-taken the frames they show
 
     def _on_failed(self, message: str, detail: str) -> None:
         self._timer.stop()
+        self._release_worker()
         self._state.set_run_state(RunState.FAILED)
         self._state.set_progress(0.0, message)
         self._state.log(message, "error")

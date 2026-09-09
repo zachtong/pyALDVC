@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import os
 import re
 import uuid
 from dataclasses import dataclass, field, replace
@@ -48,9 +49,21 @@ class RunState(enum.Enum):
     FAILED = "failed"
 
 
-@dataclass
+# How much of the sequence the window keeps in memory while the user browses it. A frame is only
+# dropped when it came from a file; PYALDVC_CACHE_FRAMES overrides the count.
+GUI_CACHE_BYTES = 8 * 1024**3
+CACHE_MIN_FRAMES = 2  # the reference and the frame on screen
+CACHE_MAX_FRAMES = 4
+
+
+@dataclass(eq=False)  # identity equality: a field-wise one would compare the volumes themselves
 class VolumeEntry:
-    """One frame of the sequence: a file (loaded on demand) or an in-memory array."""
+    """One frame of the sequence: a file (loaded on demand) or an in-memory array.
+
+    A file-backed entry caches what it read, and :meth:`AppState.release_frames` drops that cache
+    when too many frames are resident. An array-backed entry is the only copy there is and is never
+    released.
+    """
 
     path: str | None = None
     array: NDArray | None = None
@@ -66,8 +79,27 @@ class VolumeEntry:
                 raise ValueError("volume entry has neither a file nor an array")
             from al_dvc.io.volume_io import load_volume
 
-            self.array = load_volume(self.path)
+            arr = load_volume(self.path)  # bind locally first: a release must not blank a live read
+            self.array = arr
+            return arr
         return self.array
+
+    @property
+    def resident(self) -> bool:
+        """True when the frame's voxels are in memory."""
+        return self.array is not None
+
+    @property
+    def releasable(self) -> bool:
+        """A file-backed frame can be read again; an array-backed one cannot."""
+        return bool(self.path)
+
+    def release(self) -> bool:
+        """Drop the cached volume. Whoever is still using it keeps it alive; returns True if dropped."""
+        if not self.releasable or self.array is None:
+            return False
+        self.array = None
+        return True
 
     def load_mask(self) -> NDArray[np.bool_] | None:
         if self.mask is None and self.mask_path:
@@ -444,14 +476,57 @@ class AppState(QObject):
             self.mask_revision += 1  # the target decides whether the live editor is the reference's mask
         self.mask_changed.emit()
 
+    def cache_limit(self) -> int:
+        """How many frames may stay resident: a byte budget, floored at the reference plus the current one."""
+        override = os.environ.get("PYALDVC_CACHE_FRAMES")
+        if override:
+            try:
+                return max(CACHE_MIN_FRAMES, int(override))
+            except ValueError:
+                self.log(f"PYALDVC_CACHE_FRAMES={override!r} is not a number; using the default", "warning")
+        resident = [v.array for v in self.volumes if v.array is not None]
+        if not resident:
+            return CACHE_MAX_FRAMES
+        nbytes = max(int(a.nbytes) for a in resident)
+        return int(min(CACHE_MAX_FRAMES, max(CACHE_MIN_FRAMES, GUI_CACHE_BYTES // max(nbytes, 1))))
+
+    def release_frames(self, keep: str | None = None) -> int:
+        """Drop cached volumes until at most :meth:`cache_limit` frames are resident; returns how many.
+
+        The reference (frame 0), the frame on screen and ``keep`` -- the one just served -- are never
+        dropped, and nothing is dropped while a run is going: the worker reads through the entries.
+        Releasing only drops this cache's reference; anything still using the array keeps it alive.
+        """
+        if self.busy:
+            return 0
+        protected = {self.volumes[0].uid if self.volumes else None, keep}
+        if 0 <= self.current_frame < len(self.volumes):
+            protected.add(self.volumes[self.current_frame].uid)
+        limit = self.cache_limit()
+        resident = [(i, v) for i, v in enumerate(self.volumes) if v.resident]
+        droppable = [(i, v) for i, v in resident if v.releasable and v.uid not in protected]
+        n_drop = len(resident) - limit
+        if n_drop <= 0 or not droppable:
+            return 0
+        droppable.sort(key=lambda iv: -abs(iv[0] - self.current_frame))  # furthest from what is on screen first
+        dropped = 0
+        for _i, entry in droppable[:n_drop]:
+            dropped += int(entry.release())
+        if dropped:
+            self.log(f"released {dropped} cached frame(s); {limit} kept in memory", "debug")
+        return dropped
+
     def volume_array(self, index: int) -> NDArray:
-        return self.volumes[index].load()
+        entry = self.volumes[index]
+        arr = entry.load()
+        self.release_frames(keep=entry.uid)
+        return arr
 
     def volume_shape(self) -> tuple[int, int, int] | None:
         if not self.volumes:
             return None
         try:
-            return tuple(int(s) for s in self.volumes[0].load().shape)  # type: ignore[return-value]
+            return tuple(int(s) for s in self.volume_array(0).shape)  # type: ignore[return-value]
         except Exception as exc:  # unreadable file: report, do not crash
             self.log(f"cannot read {self.volumes[0].name}: {exc}", "error")
             return None

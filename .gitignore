@@ -53,3 +53,4 @@ aldvc_results/
 
 # third-party reference material kept locally, never published
 reference/
+reports/*.json

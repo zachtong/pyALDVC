@@ -403,7 +403,13 @@ class FileVolumeProvider:
     """Streams volumes from disk, normalising on demand with a bounded cache.
 
     Only ``cache_size`` normalised frames are resident at once (2 is enough
-    for both accumulative and incremental tracking).
+    for both accumulative and incremental tracking), and the raw arrays are
+    never kept at all -- which is the whole point next to handing the pipeline a
+    list of frames that something else is holding.
+
+    ``mask_paths`` streams the masks the same way; ``masks`` passes arrays for
+    the frames whose mask was drawn rather than read from a file, and wins over
+    ``mask_paths`` where both are given.
     """
 
     def __init__(
@@ -413,6 +419,7 @@ class FileVolumeProvider:
         mask_paths: Iterable[str | os.PathLike | None] | None = None,
         cache_size: int = 2,
         load_kwargs: dict | None = None,
+        masks: list | None = None,
     ) -> None:
         self._paths = [Path(p) for p in paths]
         if not self._paths:
@@ -420,6 +427,10 @@ class FileVolumeProvider:
         self._mask_paths = [Path(p) if p is not None else None for p in mask_paths] if mask_paths else None
         if self._mask_paths is not None and len(self._mask_paths) != len(self._paths):
             raise ValueError("mask_paths must match the number of volumes")
+        # masks drawn in the application have no file; they are held as arrays and take precedence
+        self._masks = list(masks) if masks is not None else None
+        if self._masks is not None and len(self._masks) != len(self._paths):
+            raise ValueError("masks must match the number of volumes")
         self._load_kwargs = dict(load_kwargs or {})
         self._cache: OrderedDict[int, NDArray[np.float32]] = OrderedDict()
         self._mask_cache: OrderedDict[int, NDArray[np.bool_] | None] = OrderedDict()
@@ -458,6 +469,11 @@ class FileVolumeProvider:
         return vol
 
     def get_mask(self, idx: int) -> NDArray[np.bool_] | None:
+        if self._masks is not None and self._masks[idx] is not None:
+            mask = np.asarray(self._masks[idx], dtype=bool)
+            if mask.shape != self._shape:
+                raise ValueError(f"mask {idx}: shape {mask.shape} != {self._shape}")
+            return mask
         if self._mask_paths is None or self._mask_paths[idx] is None:
             return None
         if idx in self._mask_cache:
