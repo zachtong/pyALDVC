@@ -9,14 +9,15 @@ All notable changes to pyALDVC are documented here. The format follows
 ### Changed
 - **Large volumes: the application stops doing whole-volume work for local changes.** Measured on a
   384^3 volume (a 3 GB scan is about fifteen times that): drawing a region rectangle in the texture
-  window 320 -> 97 ms, moving a slice slider 262 -> 32 ms, a brush stroke on one slice 156 -> 60 ms,
-  undo 144 -> 29 ms. A masked run's peak volume memory falls from 53 to 14 GB at 1024^3 and from 422
-  to 112 GB at 2048^3. `scripts/bench_large_volume.py` measures it and
+  window 320 -> 131 ms, moving a slice slider 262 -> 50 ms, undo 144 -> 26 ms, and the mask operation
+  behind a one-slice brush stroke 12 -> 0.008 ms -- what is left of a drawing gesture is the redraw,
+  not the mask. A masked run's peak volume memory falls from 53 to 14 GB at 1024^3 and from 422 to
+  112 GB at 2048^3. `scripts/bench_large_volume.py` measures it and
   `scripts/make_large_volume_report.py` draws `reports/large_volume.pdf`.
   - `subset_valid_fraction` counted each node's valid voxels through a full `(nz+1, ny+1, nx+1)`
     int64 summed-area table -- a measured 24.1 bytes per voxel, 26 GB at 1024^3, and it runs twice
     per reference since subset splitting became the default. A z-slab sweep over 2-D integral images
-    gives the same integers with `O(ny * nx)` memory: 1753 -> 60 ms and 24.06 -> 0.06 bytes/voxel.
+    gives the same integers with `O(ny * nx)` memory: 1753 -> 110 ms and 24.06 -> 0.06 bytes/voxel.
   - A mask operation is written through the slices it spans instead of building a full boolean
     volume and combining it: a one-slice rectangle 12.00 -> 0.01 ms, a brush stroke 12.91 -> 0.73 ms.
     The bounding box and the voxel count are cached on the editor instead of being recomputed by
