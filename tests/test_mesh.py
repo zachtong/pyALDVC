@@ -95,3 +95,60 @@ def test_subset_valid_fraction_and_mask_trimming():
     assert act.shape[0] < mesh.elements.shape[0]
     assert m2.node_valid[act].all()
     assert m2.boundary_nodes.size > 0
+
+
+def _brute_valid_fraction(mask, coordinates, winsize):
+    """The definition, node by node: the oracle ``subset_valid_fraction`` must reproduce exactly."""
+    m = np.asarray(mask)
+    nz, ny, nx = m.shape
+    hx, hy, hz = (w // 2 for w in winsize)
+    total = float((2 * hx + 1) * (2 * hy + 1) * (2 * hz + 1))
+    out = np.empty(len(coordinates), dtype=np.float64)
+    for i, (x, y, z) in enumerate(np.round(coordinates).astype(int)):
+        sub = m[
+            max(z - hz, 0) : min(z + hz + 1, nz),
+            max(y - hy, 0) : min(y + hy + 1, ny),
+            max(x - hx, 0) : min(x + hx + 1, nx),
+        ]
+        out[i] = float(np.count_nonzero(sub)) / total
+    return out
+
+
+@pytest.mark.parametrize("shape,winsize", [((20, 24, 28), (8, 8, 8)), ((17, 13, 19), (7, 5, 9)), ((12, 12, 12), (11, 11, 11))])
+@pytest.mark.parametrize("dtype", [np.uint8, bool])
+def test_subset_valid_fraction_is_the_definition(shape, winsize, dtype):
+    """The z-slab sweep counts integers, so it must equal the per-node count bit for bit."""
+    rng = np.random.default_rng(3)
+    mask = (rng.random(shape) > 0.4).astype(dtype)
+    coords = np.column_stack(
+        [rng.integers(0, shape[2], 60), rng.integers(0, shape[1], 60), rng.integers(0, shape[0], 60)]
+    ).astype(np.float64)
+    assert np.array_equal(subset_valid_fraction(mask, coords, winsize), _brute_valid_fraction(mask, coords, winsize))
+
+
+def test_subset_valid_fraction_handles_windows_that_leave_the_volume():
+    """Repeated z levels, unsorted nodes and centres outside the volume: still the plain definition."""
+    rng = np.random.default_rng(5)
+    mask = (rng.random((16, 16, 16)) > 0.5).astype(np.uint8)
+    coords = np.array(
+        [[8, 8, 8], [8, 8, 8], [0, 0, 0], [15, 15, 15], [8, 8, 2], [8, 8, 14], [-5, 8, 8], [20, 8, 8]], dtype=np.float64
+    )
+    assert np.array_equal(subset_valid_fraction(mask, coords, (8, 8, 8)), _brute_valid_fraction(mask, coords, (8, 8, 8)))
+
+
+def test_subset_valid_fraction_allocates_nothing_volume_sized():
+    """The old summed-area table cost 24 bytes per voxel; a masked run on a large scan cannot afford it."""
+    import tracemalloc
+
+    shape = (96, 96, 96)
+    rng = np.random.default_rng(7)
+    mask = (rng.random(shape) > 0.3).astype(np.uint8)
+    x0, y0, z0 = (np.arange(16, s - 16, 16, dtype=np.float64) for s in shape[::-1])
+    mesh = mesh_setup(x0, y0, z0)
+    subset_valid_fraction(mask[:8, :8, :8], mesh.coordinates[:1], (4, 4, 4))  # warm the code path first
+    tracemalloc.start()
+    subset_valid_fraction(mask, mesh.coordinates, (32, 32, 32))
+    _current, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    # two (ny, nx) planes of int64 plus the node arrays, nowhere near one byte per voxel
+    assert peak < 0.5 * np.prod(shape), f"{peak} bytes for {np.prod(shape)} voxels"

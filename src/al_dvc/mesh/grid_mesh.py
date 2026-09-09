@@ -137,13 +137,21 @@ def subset_valid_fraction(
     coordinates: NDArray[np.float64],
     winsize: tuple[int, int, int],
 ) -> NDArray[np.float64]:
-    """Fraction of mask-valid voxels inside each node's subset (integral image)."""
+    """Fraction of mask-valid voxels inside each node's subset.
+
+    A z-slab sweep, not a 3-D summed-area table. The node grid has few distinct z levels, so the
+    counts of one level come from a single 2-D integral image of ``plane[y, x] = sum_z m[z, y, x]``
+    over the slices that level's window spans; moving to the next level adds the slices that entered
+    the window and subtracts the ones that left, so every slice of the mask is touched twice in
+    total. Memory is ``O(ny * nx)`` (a few tens of MB at 2048^2) instead of the ``(nz+1, ny+1, nx+1)``
+    int64 table plus its three ``cumsum`` temporaries this used to build -- a measured 24 bytes per
+    voxel, i.e. 26 GB on a 1024^3 scan, which made a masked run impossible on any normal machine.
+
+    Windows are clipped to the volume and the fraction is still taken over the *nominal* window
+    volume, so a node whose subset hangs over the edge reports less than 1.0 exactly as before.
+    """
     m = np.asarray(mask)
     nz, ny, nx = m.shape
-    # 3-D summed-area table with a leading zero plane along every axis
-    sat = np.zeros((nz + 1, ny + 1, nx + 1), dtype=np.int64)
-    sat[1:, 1:, 1:] = np.cumsum(np.cumsum(np.cumsum(m.astype(np.int64), axis=0), axis=1), axis=2)
-
     hx, hy, hz = (w // 2 for w in winsize)
     cx = np.round(coordinates[:, 0]).astype(np.int64)
     cy = np.round(coordinates[:, 1]).astype(np.int64)
@@ -155,19 +163,27 @@ def subset_valid_fraction(
     z_lo = np.clip(cz - hz, 0, nz)
     z_hi = np.clip(cz + hz + 1, 0, nz)
 
-    def S(z, y, x):
-        return sat[z, y, x]
-
-    count = (
-        S(z_hi, y_hi, x_hi)
-        - S(z_lo, y_hi, x_hi)
-        - S(z_hi, y_lo, x_hi)
-        - S(z_hi, y_hi, x_lo)
-        + S(z_lo, y_lo, x_hi)
-        + S(z_lo, y_hi, x_lo)
-        + S(z_hi, y_lo, x_lo)
-        - S(z_lo, y_lo, x_lo)
-    )
+    count = np.zeros(coordinates.shape[0], dtype=np.int64)
+    plane = np.zeros((ny, nx), dtype=np.int64)  # voxels of the current z window, per (y, x) column
+    sat = np.zeros((ny + 1, nx + 1), dtype=np.int64)  # its integral image, zero border kept
+    lo = hi = 0  # the slice range currently summed into ``plane``
+    for level in np.unique(cz):
+        rows = np.flatnonzero(cz == level)
+        zl, zh = int(z_lo[rows[0]]), int(z_hi[rows[0]])
+        if zh <= zl:
+            continue  # the window misses the volume entirely: the count stays zero
+        if zl < lo or zh < hi or zl >= hi:  # not a forward-moving window: start the sum again
+            plane[...] = 0
+            lo = hi = zl
+        for z in range(hi, zh):
+            plane += m[z]
+        for z in range(lo, zl):
+            plane -= m[z]
+        lo, hi = zl, zh
+        np.cumsum(plane, axis=0, out=sat[1:, 1:])
+        np.cumsum(sat[1:, 1:], axis=1, out=sat[1:, 1:])
+        yl, yh, xl, xh = y_lo[rows], y_hi[rows], x_lo[rows], x_hi[rows]
+        count[rows] = sat[yh, xh] - sat[yl, xh] - sat[yh, xl] + sat[yl, xl]
     total = float((2 * hx + 1) * (2 * hy + 1) * (2 * hz + 1))
     return count.astype(np.float64) / total
 

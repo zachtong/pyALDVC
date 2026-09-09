@@ -33,7 +33,7 @@ The kernels already gate every voxel on the reference mask; the gate is the inse
 | `solver/numba_kernels.py::_zncc_from_buffer` | 454 | same gate on the reference side |
 | `solver/cuda_kernels.py` | 1160, 549, ~936 | the same three gates, `v` is the linear sampled index |
 | `solver/reference_kernels.py` | 200, 257, 377 | `m = mask[sl].ravel() > 0` |
-| `mesh/grid_mesh.py::apply_mask_to_mesh` | 174 | node valid iff centre in mask and `frac >= min_valid_ratio` (summed-area table) |
+| `mesh/grid_mesh.py::apply_mask_to_mesh` | 174 | node valid iff centre in mask and `frac >= min_valid_ratio` (`subset_valid_fraction`) |
 | `solver/numba_kernels.py` | 271 | node rejected if `n_valid < 27` or `n_valid < min_valid_ratio * total` |
 
 All loops run `dz` (outer), `dy`, `dx` (inner) with `range(-h, h + 1, stride)`; the NumPy
@@ -60,7 +60,7 @@ crack. The result is then subsampled to the stride grid for storage.
 
 D3. **Store keep rows only for subsets that touch the mask, bit-packed.** Dense `(N, S)` booleans
 cost 3 GB at the default subset (33^3) with 82 800 nodes. Candidates are the nodes whose window
-contains at least one masked voxel (the summed-area table already gives this: `frac < 1`). Packed
+contains at least one masked voxel (`subset_valid_fraction` already gives this: `frac < 1`). Packed
 rows cost `S / 8` bytes each: 4.5 kB at 33^3. Measured: 15 MB for 3 360 straddling nodes.
 
 D4. **One gate, three backends, one test.** The bit test is inserted next to the existing mask test
@@ -114,7 +114,7 @@ per (reference, mesh, parameters) and reused by every local pass and every ADMM 
 ### 5.1 Candidates
 
 ```
-frac = subset_valid_fraction(mask, coords, winsize)      # existing summed-area table
+frac = subset_valid_fraction(mask, coords, winsize)      # the per-node valid fraction
 candidates = node_valid & (frac < 1.0)                   # window touches the mask
 ```
 
