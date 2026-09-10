@@ -20,7 +20,7 @@ from numpy.typing import NDArray
 from scipy.interpolate import RegularGridInterpolator
 
 from ..core.config import DVCPara
-from ..core.data_structures import DVCMesh, ReferenceBundle
+from ..core.data_structures import DVCMesh
 from ..mesh.grid_mesh import mesh_setup
 from .init_disp import compute_initial_guess
 from .local_icgn import local_icgn, precompute_local_context
@@ -79,7 +79,7 @@ def _fill_nan_nearest(flat: NDArray[np.float64]) -> NDArray[np.float64]:
 
 
 def coarse_initial_guess(
-    bundle: ReferenceBundle,
+    bundle,
     g_norm: NDArray[np.float32],
     g_prep: NDArray[np.float32],
     mesh: DVCMesh,

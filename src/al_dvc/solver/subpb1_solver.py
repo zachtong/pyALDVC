@@ -13,6 +13,7 @@ from ..core.config import DVCPara
 from ..core.data_structures import (
     STATUS_CONVERGED,
     STATUS_INVALID_SUBSET,
+    STATUS_OUT_OF_BOUNDS,
     STATUS_SKIPPED,
     DVCMesh,
     LocalSolveInfo,
@@ -21,8 +22,56 @@ from ..core.data_structures import (
 from ..utils.outlier_detection import universal_median_test
 from .interp_kernels import INTERP_MODE_BY_NAME
 from .local_icgn import LocalContext, resolve_backend
+from .tiling import as_source, plan_tiles, whole_box_tile
 
 logger = logging.getLogger(__name__)
+
+
+def _icgn_3dof_tile(backend, ctx, bundle, box, nodes, U_hat, F_hat, vdual, g, mode, mu, para, n_full, gain):
+    """One block of nodes against one box: ``(U, n_iter, status, zncc)`` for those nodes only."""
+    hx, hy, hz = ctx.half
+    coords_t = ctx.coords_int[nodes] if box.is_whole else box.shift(ctx.coords_int[nodes])
+    common = (
+        coords_t,
+        U_hat[nodes],
+        F_hat[nodes],
+        vdual[nodes],
+        hx,
+        hy,
+        hz,
+        bundle.f,
+        bundle.gx,
+        bundle.gy,
+        bundle.gz,
+        bundle.mask,
+        box.crop(g),
+        mode,
+        ctx.H_all[nodes],
+        ctx.meanf[nodes],
+        ctx.bottomf[nodes],
+        ctx.valid[nodes],
+        float(mu),
+        float(para.icgn_tol),
+        float(para.icgn_dp_tol),
+        int(para.icgn_max_iter),
+        int(para.icgn_patience),
+        ctx.stride,
+        n_full,
+        gain,
+        bool(para.icgn_predictive_stop),
+    )
+    split_kw = ctx.split_args(nodes)
+    if backend == "cuda":
+        from .cuda_kernels import icgn_3dof_cuda
+
+        return icgn_3dof_cuda(*common, **split_kw)
+    if backend == "numba":
+        from .numba_kernels import icgn_3dof_parallel
+
+        return icgn_3dof_parallel(*common, **split_kw)
+    from .reference_kernels import icgn_3dof_batch_np
+
+    return icgn_3dof_batch_np(*common, **split_kw)
 
 
 def subpb1_solver(
@@ -57,104 +106,30 @@ def subpb1_solver(
 
     t0 = time.perf_counter()
     backend = resolve_backend(para)
-    if backend == "cuda":
-        from .cuda_kernels import icgn_3dof_cuda
-
-        U, n_iter, status, zncc = icgn_3dof_cuda(
-            ctx.coords_int,
-            U_hat,
-            F_hat,
-            vdual,
-            hx,
-            hy,
-            hz,
-            ref.f,
-            ref.gx,
-            ref.gy,
-            ref.gz,
-            ref.mask,
-            g,
-            mode,
-            ctx.H_all,
-            ctx.meanf,
-            ctx.bottomf,
-            ctx.valid,
-            float(mu),
-            float(para.icgn_tol),
-            float(para.icgn_dp_tol),
-            int(para.icgn_max_iter),
-            int(para.icgn_patience),
-            ctx.stride,
-            n_full,
-            gain,
-            bool(para.icgn_predictive_stop),
-            **ctx.split_args(),
+    source = as_source(ref, para.gradient_mode)
+    plan = plan_tiles(mesh.grid_shape, ctx.coords_int, source.shape, para, ctx.half, disp=U_hat + vdual)
+    U = np.zeros((N, 3), dtype=np.float64)
+    n_iter = np.zeros(N, dtype=np.int32)
+    status = np.zeros(N, dtype=np.int8)
+    zncc = np.zeros(N, dtype=np.float64)
+    open_face = np.zeros(N, dtype=bool)
+    for nodes, box in plan:
+        bundle = source.bundle_for(box)
+        open_face[nodes] = box.has_open_face
+        U[nodes], n_iter[nodes], status[nodes], zncc[nodes] = _icgn_3dof_tile(
+            backend, ctx, bundle, box, nodes, U_hat, F_hat, vdual, g, mode, mu, para, n_full, gain
         )
-    elif backend == "numba":
-        from .numba_kernels import icgn_3dof_parallel
+        if backend == "cuda" and not plan.is_whole:
+            from .cuda_kernels import clear_device_cache
 
-        U, n_iter, status, zncc = icgn_3dof_parallel(
-            ctx.coords_int,
-            U_hat,
-            F_hat,
-            vdual,
-            hx,
-            hy,
-            hz,
-            ref.f,
-            ref.gx,
-            ref.gy,
-            ref.gz,
-            ref.mask,
-            g,
-            mode,
-            ctx.H_all,
-            ctx.meanf,
-            ctx.bottomf,
-            ctx.valid,
-            float(mu),
-            float(para.icgn_tol),
-            float(para.icgn_dp_tol),
-            int(para.icgn_max_iter),
-            int(para.icgn_patience),
-            ctx.stride,
-            n_full,
-            gain,
-            bool(para.icgn_predictive_stop),
-            **ctx.split_args(),
-        )
-    else:
-        from .reference_kernels import icgn_3dof_batch_np
-
-        U, n_iter, status, zncc = icgn_3dof_batch_np(
-            ctx.coords_int,
-            U_hat,
-            F_hat,
-            vdual,
-            hx,
-            hy,
-            hz,
-            ref.f,
-            ref.gx,
-            ref.gy,
-            ref.gz,
-            ref.mask,
-            g,
-            mode,
-            ctx.H_all,
-            ctx.meanf,
-            ctx.bottomf,
-            ctx.valid,
-            float(mu),
-            float(para.icgn_tol),
-            float(para.icgn_dp_tol),
-            int(para.icgn_max_iter),
-            int(para.icgn_patience),
-            ctx.stride,
-            n_full,
-            gain,
-            bool(para.icgn_predictive_stop),
-            **ctx.split_args(),
+            clear_device_cache()
+    escaped = np.flatnonzero((status == STATUS_OUT_OF_BOUNDS) & open_face)
+    if escaped.size:  # the halo was short for these, not the volume: retry them whole
+        logger.warning("%d node(s) left their tile in the ADMM step; solving them on the whole volume", int(escaped.size))
+        whole = whole_box_tile(source.shape)
+        bundle = source.bundle_for(whole)
+        U[escaped], n_iter[escaped], status[escaped], zncc[escaped] = _icgn_3dof_tile(
+            backend, ctx, bundle, whole, escaped, U_hat, F_hat, vdual, g, mode, mu, para, n_full, gain
         )
     solve_time = time.perf_counter() - t0
     U = np.asarray(U, dtype=np.float64)

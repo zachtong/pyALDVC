@@ -6,6 +6,40 @@ All notable changes to pyALDVC are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`para.tile_local`: solve the local steps over sub-boxes of the volume.** Every local kernel
+  addresses `f`, `gx`, `gy`, `gz`, `mask` and `g` relative to a node centre and none of them reduces
+  across nodes, so a block of nodes can be solved against a crop of the volumes with the crop's
+  origin subtracted from the coordinates -- no kernel signature changes, in any of the three
+  backends. `tile_local` is the target box edge in voxels; 0, the default, is a single whole-volume
+  box, which is the untiled path by construction.
+  - What it buys: the reference gradients, the reference mask and the box of the deformed frame are
+    bounded by the box instead of the scan, and on the GPU that is the whole upload. Measured on a
+    256^3 pair with subset 32 and step 16: the precompute peak falls from 12.8 to 8.0 bytes per voxel
+    at `tile_local=192` (27 boxes) and to 3.3 at 128 (343 boxes), and the GPU's resident set falls in
+    the same proportion -- 21 bytes per voxel of the box rather than of the scan, so 1024^3 needs
+    about 1.2 GB of VRAM instead of 22.5 GB.
+  - What it costs: a box holds the node span plus the halo, and small boxes are mostly halo, so their
+    voxels are loaded several times over. The same measurement: 2.1x the wall clock at 192, 10x at
+    128. It is a lever for a scan that does not fit, not a free win, which is why it is off unless
+    asked for.
+  - The halo is derived, not guessed: `winsize/2 + 3` for the reference (the gradient stencil), and
+    for the deformed side the displacement actually present in the initial guess, the subset's own
+    stretch (`tile_strain_margin`), the search radius, the interpolation margin and
+    `tile_disp_margin`. A subset that leaves its *box* rather than the volume is a short halo, not an
+    out-of-bounds node, and the two are told apart by which faces the box cut: those nodes are
+    re-solved on the whole volume and logged.
+  - The answer does not change. The precompute is bit-identical tiled and untiled -- `H`, `L`, the
+    means, the valid mask and the subset-splitting rows -- across both gradient modes, with and
+    without a mask. The solve is identical in status, iteration count and ZNCC, and the displacement
+    moves by at most 1e-14 voxels against a convergence tolerance of 1e-3, because a tile-local `x0`
+    rounds `x0 + P[9]` differently. A whole run reproduces the same field to 1e-14.
+  - The B-spline coefficients stay global and the box is cut out of the coefficients, not out of the
+    grey values, so `interp_method="bspline"` is exact under tiling rather than approximate.
+  - Not solved by this: the provider still serves whole normalised frames, so the host floor is
+    unchanged at about 13 bytes per voxel and 2048^3 is still out of reach. That needs a provider
+    that serves boxes.
+
 ### Changed
 - **Large volumes: the application stops doing whole-volume work for local changes.** Measured on a
   384^3 volume (a 3 GB scan is about fifteen times that): drawing a region rectangle in the texture

@@ -110,7 +110,19 @@ Only 3-4 ADMM iterations are needed in practice. The output is `u_hat`
    4x4 solve. Same numbers, orders of magnitude faster.
 10. **Frame schedule** (accumulative / incremental / custom reference tree)
     is taken from pyALDIC, replacing `trackingMode` + `newFFTSearch`.
-11. **IC-GN stopping rule.** MATLAB stops when the gradient norm of the ZNSSD
+11. **Local steps can run in tiles.** Every local kernel addresses `f`, `gx`,
+   `gy`, `gz`, `mask` and `g` relative to a node centre and none reduces across
+   nodes, so a block of nodes can be solved against a crop of the volumes with
+   the crop's origin subtracted from the coordinates -- no kernel signature
+   changes in any backend. `para.tile_local` (0 = off) is the target box edge;
+   the halo is derived from the subset, the gradient stencil, the measured
+   initial guess, the subset stretch, the search radius and the interpolation
+   margin, and a subset that leaves its *box* rather than the volume is re-solved
+   whole rather than reported out of bounds. The precompute is bit-identical
+   tiled; the solve moves the displacement by ~1e-14 voxels, because a
+   tile-local `x0` rounds `x0 + P[9]` differently. See `al_dvc.solver.tiling`
+   and `reports/large_volume.pdf`.
+12. **IC-GN stopping rule.** MATLAB stops when the gradient norm of the ZNSSD
    functional has dropped below `tol` times its *initial* value. From an
    integer initial guess that takes ~28 iterations and reaches ~0.04 voxel in
    the weakly textured z direction of a CT scan; from a sub-voxel initial

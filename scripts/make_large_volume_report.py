@@ -163,7 +163,139 @@ def page_memory(pdf, before: dict, after: dict) -> list[str]:
     return lines
 
 
-def page_notes(pdf, before: dict, after: dict, interaction: list[str], memory: list[str]) -> None:
+def measure_tiling(edge_voxels: int = 256, tiles=(0, 160, 192, 224, 256)) -> dict:
+    """Memory, wall clock and the displacement difference of the tiled local steps, per tile edge.
+
+    Measured rather than modelled: a synthetic pair is solved with the tile target off and at each
+    edge, and the fields are compared. Nothing here is cheap, so the report runs it once.
+    """
+    import time
+    import tracemalloc
+    from dataclasses import replace
+
+    from al_dvc.core.config import dvcpara_default
+    from al_dvc.core.data_structures import STATUS_CONVERGED, VOIRange
+    from al_dvc.io.volume_ops import normalize_volume, prepare_deformed
+    from al_dvc.mesh.grid_mesh import apply_mask_to_mesh, build_grid_axes, mesh_setup
+    from al_dvc.solver.local_icgn import local_icgn, precompute_local_context
+    from al_dvc.solver.tiling import ReferenceSource, plan_tiles
+    from al_dvc.synthetic import (
+        affine_displacement,
+        evaluate_at_nodes,
+        generate_speckle_volume,
+        warp_volume_lagrangian,
+    )
+
+    shape = (edge_voxels,) * 3
+    n_vox = float(np.prod(shape))
+    f = generate_speckle_volume(shape, sigma=2.0, seed=3)
+    disp = affine_displacement(F=np.diag([0.003, -0.002, 0.001]), t=(0.6, -0.4, 0.3), centre=tuple(s / 2 for s in shape[::-1]))
+    fn = normalize_volume(f)
+    gn = normalize_volume(warp_volume_lagrangian(f, disp))
+    para = dvcpara_default(winsize=32, winstepsize=16, verbose=False, backend="numba", gradient_mode="stored")
+    voi = VOIRange(x=(0, shape[2] - 1), y=(0, shape[1] - 1), z=(0, shape[0] - 1))
+    mesh = apply_mask_to_mesh(
+        mesh_setup(*build_grid_axes(voi, shape, para.winsize, para.winstepsize)), None, para.winsize, para.min_valid_ratio
+    )
+    g_prep = prepare_deformed(gn, para.interp_method)
+    coords = np.round(mesh.coordinates).astype(np.int64)
+    truth = evaluate_at_nodes(disp, mesh.coordinates)
+    U0 = np.round(truth)
+    rows: list[dict] = []
+    reference_U = None
+    for edge in tiles:
+        pt = replace(para, tile_local=edge)
+        plan = plan_tiles(mesh.grid_shape, coords, shape, pt, (16, 16, 16), disp=U0)
+
+        def build():
+            return precompute_local_context(mesh, ReferenceSource(f=fn, mask=None, gradient_mode="stored"), pt)
+
+        build()  # warm the kernels so the measurement is of the work, not of the compiler
+        tracemalloc.start()
+        t0 = time.perf_counter()
+        ctx = build()
+        t_pre = time.perf_counter() - t0
+        _current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        t0 = time.perf_counter()
+        U, _F, info, _bad = local_icgn(ctx, ReferenceSource(f=fn, mask=None, gradient_mode="stored"), g_prep, U0, pt, mesh)
+        t_icgn = time.perf_counter() - t0
+        if reference_U is None:
+            reference_U = U
+        good = info.status == STATUS_CONVERGED
+        rows.append(
+            {
+                "edge": edge,
+                "tiles": len(plan),
+                "box_voxels": plan.max_voxels,
+                "peak_bytes_per_voxel": peak / n_vox,
+                "vram_bytes_per_voxel": 21.0 * plan.max_voxels / n_vox,
+                "precompute_s": t_pre,
+                "icgn_s": t_icgn,
+                "max_dU": float(np.abs(U - reference_U).max()),
+                "rmse_vs_truth": float(np.sqrt((((U - truth)[good]) ** 2).mean())) if good.any() else float("nan"),
+                "converged": int(good.sum()),
+                "n_nodes": int(ctx.n_nodes),
+            }
+        )
+    return {"shape": shape, "voxels": n_vox, "rows": rows}
+
+
+def page_tiling(pdf, tiling: dict) -> list[str]:
+    """What the tile edge costs in time and buys in memory, and how far the answer moves."""
+    rows = tiling["rows"]
+    labels = ["off" if r["edge"] == 0 else str(r["edge"]) for r in rows]
+    x = np.arange(len(rows))
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4.4))
+    ax = axes[0]
+    ax.bar(x - 0.2, [r["peak_bytes_per_voxel"] for r in rows], 0.4, color=AFTER, label="host, precompute peak")
+    ax.bar(x + 0.2, [r["vram_bytes_per_voxel"] for r in rows], 0.4, color="#f59e0b", label="GPU, one box resident")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    ax.set_xlabel("tile_local [voxel]", fontsize=9)
+    ax.set_ylabel("bytes per voxel of the scan")
+    ax.set_title("Memory", fontsize=10)
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3, axis="y")
+    ax = axes[1]
+    ax.bar(x - 0.2, [r["precompute_s"] for r in rows], 0.4, color=AFTER, label="precompute")
+    ax.bar(x + 0.2, [r["icgn_s"] for r in rows], 0.4, color=BEFORE, label="12-DOF solve")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    ax.set_yscale("log")
+    ax.set_xlabel("tile_local [voxel]", fontsize=9)
+    ax.set_ylabel("wall clock [s]")
+    ax.set_title("Time: the halo is loaded once per box", fontsize=10)
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3, axis="y", which="both")
+    ax = axes[2]
+    diffs = [r["max_dU"] for r in rows[1:]]
+    ax.bar(np.arange(len(diffs)), diffs, 0.5, color="#7c3aed")
+    ax.axhline(1e-3, color="k", ls="--", lw=1)
+    ax.text(len(diffs) - 0.5, 1.3e-3, "the solver's own dp_tol", ha="right", fontsize=8)
+    ax.set_xticks(np.arange(len(diffs)))
+    ax.set_xticklabels(labels[1:])
+    ax.set_yscale("log")
+    ax.set_xlabel("tile_local [voxel]", fontsize=9)
+    ax.set_ylabel("max |U tiled - U untiled| [voxel]")
+    ax.set_title("How far the answer moves", fontsize=10)
+    ax.grid(alpha=0.3, axis="y", which="both")
+    shape = tiling["shape"]
+    fig.suptitle(f"Tiled local steps on a {shape[0]}^3 pair ({rows[0]['n_nodes']} nodes, subset 32, step 16)", fontsize=11)
+    fig.tight_layout(rect=(0, 0.02, 1, 0.93))
+    pdf.savefig(fig)
+    plt.close(fig)
+    lines = []
+    for r in rows:
+        lines.append(
+            f"tile_local={'off' if r['edge'] == 0 else r['edge']:>4}: {r['tiles']:4d} boxes, "
+            f"host {r['peak_bytes_per_voxel']:5.2f} B/voxel, GPU {r['vram_bytes_per_voxel']:5.2f} B/voxel, "
+            f"{r['precompute_s'] + r['icgn_s']:6.2f} s, max|dU| {r['max_dU']:.1e} voxel"
+        )
+    return lines
+
+
+def page_notes(pdf, before: dict, after: dict, interaction: list[str], memory: list[str], tiling: list[str]) -> None:
     """The numbers in words, and what is still not solved."""
     fig = plt.figure(figsize=(13, 8.5))
     fig.text(0.5, 0.96, "Large volumes: what changed, and what did not", ha="center", fontsize=13)
@@ -175,6 +307,14 @@ def page_notes(pdf, before: dict, after: dict, interaction: list[str], memory: l
         "",
         "MEMORY",
         *[f"  {line}" for line in memory],
+        "",
+        "TILED LOCAL STEPS (para.tile_local, off by default)",
+        *[f"  {line}" for line in tiling],
+        "  The halo is what sets the trade: a box holds the node span plus winsize/2 + 3 for the reference",
+        "    and, for the deformed side, the measured displacement, the subset's stretch, the search radius",
+        "    and the interpolation margin. Small boxes are mostly halo, so their voxels are loaded several",
+        "    times over -- that is the wall-clock column. It is a lever for a scan that does not fit, not a",
+        "    free win, and it is off unless asked for.",
         "",
         "WHAT WAS WRONG",
         "  subset_valid_fraction built a full (nz+1, ny+1, nx+1) int64 summed-area table through three",
@@ -217,6 +357,7 @@ def main(argv=None) -> int:
     ap.add_argument("--before", default=str(ROOT / "reports" / "large_volume_before.json"))
     ap.add_argument("--after", default=str(ROOT / "reports" / "large_volume_after.json"))
     ap.add_argument("--out", default=str(ROOT / "reports" / "large_volume.pdf"))
+    ap.add_argument("--tile-volume", type=int, default=256, help="edge of the synthetic pair the tiling page solves")
     args = ap.parse_args(argv)
     before = json.loads(Path(args.before).read_text(encoding="utf-8"))
     after = json.loads(Path(args.after).read_text(encoding="utf-8"))
@@ -226,7 +367,8 @@ def main(argv=None) -> int:
         interaction = page_interaction(pdf, before, after)
         page_full_volume_work(pdf, before, after)
         memory = page_memory(pdf, before, after)
-        page_notes(pdf, before, after, interaction, memory)
+        tiling = page_tiling(pdf, measure_tiling(args.tile_volume))
+        page_notes(pdf, before, after, interaction, memory, tiling)
     print("wrote", out)
     return 0
 

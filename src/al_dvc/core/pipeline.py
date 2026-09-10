@@ -24,7 +24,6 @@ from numpy.typing import NDArray
 from .._numba_compat import set_num_threads
 from ..io.volume_ops import (
     ListVolumeProvider,
-    build_reference_bundle,
     memory_model,
     prepare_deformed,
     presmooth_volume,
@@ -38,6 +37,7 @@ from ..solver.init_disp import compute_initial_guess
 from ..solver.local_icgn import describe_backend, local_icgn, precompute_local_context
 from ..solver.subpb1_solver import subpb1_solver
 from ..solver.subpb2_solver import build_global_system, solve_subpb2
+from ..solver.tiling import ReferenceSource, whole_box_tile
 from ..solver.uncertainty import displacement_uncertainty
 from ..strain.compute_strain import compute_strain as _compute_strain
 from ..utils.grid_interp import interp_grid_field
@@ -195,15 +195,19 @@ def run_aldvc(
         t0 = time.perf_counter()
         f = presmooth_volume(provider.get_normalized(ref_idx), para.prefilter_sigma)
         mask = provider.get_mask(ref_idx)
-        bundle = build_reference_bundle(f, mask, para.gradient_mode)
+        # a source, not a bundle: with para.tile_local set it builds one bundle per box, so the
+        # gradients and the mask of a box never exist at full size (see al_dvc.solver.tiling)
+        source = ReferenceSource(f=f, mask=(None if mask is None else np.asarray(mask) > 0), gradient_mode=para.gradient_mode)
+        if not int(getattr(para, "tile_local", 0) or 0):
+            source.bundle_for(whole_box_tile(source.shape))  # untiled: build it once, as before
         mesh = apply_mask_to_mesh(
             base_mesh,
-            bundle.mask if mask is not None else None,
+            mask if mask is not None else None,
             para.winsize,
             para.min_valid_ratio,
             cut_bridging=bool(getattr(para, "subset_split", False)),
         )
-        ctx = precompute_local_context(mesh, bundle, para)
+        ctx = precompute_local_context(mesh, source, para)
         mesh.node_valid = ctx.valid.copy()
         ops = None
         if para.use_global_step:
@@ -211,7 +215,7 @@ def run_aldvc(
                 ops = build_global_operators(mesh, para.subpb2_method, para.gauss_pt_order)
             except ValueError as exc:
                 logger.warning("Global step disabled for reference %d: %s", ref_idx, exc)
-        entry = {"bundle": bundle, "mesh": mesh, "ctx": ctx, "ops": ops, "time": time.perf_counter() - t0}
+        entry = {"source": source, "mesh": mesh, "ctx": ctx, "ops": ops, "time": time.perf_counter() - t0}
         ref_cache[ref_idx] = entry
         timings["reference_precompute"] = timings.get("reference_precompute", 0.0) + entry["time"]
         return entry
@@ -245,10 +249,10 @@ def run_aldvc(
             # drop the previous frame's volumes before the next reference is built: a bundle is
             # 17 bytes per voxel, and holding the outgoing one across the incoming allocation was
             # the peak of the whole run
-            ref = bundle = mesh = ctx = ops = None
+            ref = source = mesh = ctx = ops = None
             g_norm = g_prep = g_mask = None
             ref = get_reference(ref_idx)
-            bundle, mesh, ctx, ops = ref["bundle"], ref["mesh"], ref["ctx"], ref["ops"]
+            source, mesh, ctx, ops = ref["source"], ref["mesh"], ref["ctx"], ref["ops"]
             g_norm = presmooth_volume(provider.get_normalized(k), para.prefilter_sigma)
             g_mask = provider.get_mask(k)
             g_prep = prepare_deformed(g_norm, para.interp_method, mask=g_mask)
@@ -261,10 +265,10 @@ def run_aldvc(
             previous = prev_U if (prev_ref == ref_idx and prev_U is not None) else None
             F0 = None
             if int(para.init_coarse_factor) > 1 and previous is None:
-                U0, F0, init_info = coarse_initial_guess(bundle, g_norm, g_prep, mesh, para)
+                U0, F0, init_info = coarse_initial_guess(source, g_norm, g_prep, mesh, para)
             else:
                 U0, init_info = compute_initial_guess(
-                    bundle.f, g_norm, mesh, para, previous=previous, split_fraction=ctx.split_fraction
+                    source.f, g_norm, mesh, para, previous=previous, split_fraction=ctx.split_fraction
                 )
             timings["init_guess"] = timings.get("init_guess", 0.0) + time.perf_counter() - t0
             progress(base + 0.15 * span, f"Frame {k}: initial guess ({init_info.get('method')})")
@@ -272,7 +276,7 @@ def run_aldvc(
                 raise RunCancelled("Computation cancelled by user.")
 
             # --- Section 4: local 12-DOF IC-GN ---
-            U1, F1, info_local, bad_local = local_icgn(ctx, bundle, g_prep, U0, para, mesh, F0=F0)
+            U1, F1, info_local, bad_local = local_icgn(ctx, source, g_prep, U0, para, mesh, F0=F0)
             timings["local_icgn"] = timings.get("local_icgn", 0.0) + info_local.solve_time
             U_local, F_local = U1.copy(), F1.copy()
             progress(base + 0.5 * span, f"Frame {k}: local IC-GN ({info_local.solve_time:.1f}s)")
@@ -316,7 +320,7 @@ def run_aldvc(
                         raise RunCancelled("Computation cancelled by user.")
                     n_steps = step
                     U1_prev = U1
-                    U1, info_s1, _ = subpb1_solver(ctx, bundle, g_prep, U2, F2, v, mu, para, mesh)
+                    U1, info_s1, _ = subpb1_solver(ctx, source, g_prep, U2, F2, v, mu, para, mesh)
                     F1 = F2
                     local_infos.append(info_s1)
                     timings["subpb1"] = timings.get("subpb1", 0.0) + info_s1.solve_time

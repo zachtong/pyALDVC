@@ -130,6 +130,13 @@ class DVCPara:
     # "on_the_fly": no gradient volumes (-12 bytes/voxel), about 15-20 % slower local step.
     # "auto" keeps them until they are the allocation that would end the run (see resolve_gradient_mode).
     gradient_mode: Literal["auto", "stored", "on_the_fly"] = "auto"
+    # Solve the local steps in blocks of nodes against a box of the volume each: the target box edge
+    # in voxels, 0 = off (one whole-volume box, the untiled path). It bounds the reference gradients,
+    # the reference mask and the deformed frame's interpolation preparation -- and, on the GPU, the
+    # whole upload -- by the box instead of the scan. See al_dvc.solver.tiling.
+    tile_local: int = 0
+    tile_disp_margin: int = 0  # extra halo for the displacement, in voxels; 0 = max(winstepsize)
+    tile_strain_margin: float = 0.25  # halo for the subset's own stretch, as a fraction of winsize/2
     n_threads: int = 0  # 0 = all cores
     store_local_result: bool = True  # keep U_local / F_local in FrameResult
     verbose: bool = True
@@ -294,6 +301,12 @@ def validate_dvcpara(p: DVCPara) -> None:
         raise ValueError("gradient_mode='on_the_fly' needs the numba backend.")
     if p.n_threads < 0:
         raise ValueError("n_threads must be >= 0 (0 = all cores).")
+    if p.tile_local < 0:
+        raise ValueError("tile_local must be >= 0 (0 = off).")
+    if p.tile_disp_margin < 0:
+        raise ValueError("tile_disp_margin must be >= 0 (0 = max(winstepsize)).")
+    if not 0.0 <= p.tile_strain_margin <= 1.0:
+        raise ValueError("tile_strain_margin must be between 0 and 1.")
 
 
 def para_to_dict(p: DVCPara) -> dict[str, Any]:

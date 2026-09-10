@@ -18,6 +18,7 @@ from ..core.config import DVCPara
 from ..core.data_structures import (
     STATUS_CONVERGED,
     STATUS_INVALID_SUBSET,
+    STATUS_OUT_OF_BOUNDS,
     STATUS_SKIPPED,
     DVCMesh,
     LocalSolveInfo,
@@ -29,6 +30,7 @@ from ..mesh.grid_mesh import subset_valid_fraction
 from ..utils.inpaint import fill_nan_grid
 from ..utils.outlier_detection import universal_median_test
 from .interp_kernels import INTERP_MODE_BY_NAME
+from .tiling import as_source, merge_split, plan_tiles, whole_box_tile
 
 logger = logging.getLogger(__name__)
 
@@ -74,11 +76,21 @@ class LocalContext:
         """Nodes whose subset was cut to the component around its centre."""
         return 0 if self.split_index is None else int(np.count_nonzero(self.split_index >= 0))
 
-    def split_args(self) -> dict:
-        """Keyword arguments for the kernels (empty without subset splitting)."""
+    def split_args(self, nodes=None) -> dict:
+        """Keyword arguments for the kernels (empty without subset splitting).
+
+        ``nodes`` asks for one tile's rows, renumbered from zero: a tile's kernel indexes its own
+        contiguous ``split_keep``, and the plan a tile came from is not the plan the rows were built
+        with, so they are gathered rather than sliced.
+        """
         if self.split_index is None:
             return {}
-        return {"split_index": self.split_index, "split_keep": self.split_keep}
+        if nodes is None:
+            return {"split_index": self.split_index, "split_keep": self.split_keep}
+        from .tiling import local_split
+
+        index, keep = local_split(self.split_index, self.split_keep, nodes)
+        return {"split_index": index, "split_keep": keep}
 
 
 def describe_backend(para) -> str:
@@ -126,115 +138,139 @@ def _noise_pattern(hx: int, hy: int, hz: int, stride: int) -> NDArray[np.float64
     return np.ascontiguousarray(noise_hessian_pattern((hx, hy, hz), stride), dtype=np.float64)
 
 
-def split_rows(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara, coords_int, half, stride):
+def split_rows(ref: ReferenceBundle, para: DVCPara, coords_int, node_valid, half, stride, budget=None):
     """``(split_index, split_keep, n_keep, n_inmask)`` of subset splitting, or ``None`` when it is off.
 
     Candidates are the valid nodes whose full subset window contains a masked voxel (or leaves the
-    volume); each gets the 6-connected in-mask component around its centre as a packed keep row.
+    box); each gets the 6-connected in-mask component around its centre as a packed keep row. The
+    coordinates are expressed in ``ref``'s own frame, so a tile passes its cropped bundle and its
+    shifted coordinates and gets rows numbered from zero.
     """
     if not bool(getattr(para, "subset_split", False)) or not ref.has_mask:
         return None  # nothing to split against: no mask means no boundary inside the volume
     from .numba_kernels import build_split_rows
 
-    frac = subset_valid_fraction(ref.mask, mesh.coordinates, para.winsize)
-    cand = np.flatnonzero(np.asarray(mesh.node_valid, dtype=bool) & (frac < 1.0))
+    coords_int = np.asarray(coords_int, dtype=np.int64)
+    frac = subset_valid_fraction(ref.mask, coords_int.astype(np.float64), para.winsize)
+    cand = np.flatnonzero(np.asarray(node_valid, dtype=bool) & (frac < 1.0))
     N = coords_int.shape[0]
     split_index = np.full(N, -1, dtype=np.int64)
     if cand.size == 0:
         return split_index, np.zeros((1, 1), dtype=np.uint8), np.zeros(0, np.int64), np.zeros(0, np.int64)
     n_sampled = int(np.prod([(2 * h) // stride + 1 for h in half]))
     need = cand.size * ((n_sampled + 7) // 8)
-    if need > MAX_SPLIT_BYTES:
+    limit = MAX_SPLIT_BYTES if budget is None else budget
+    if need > limit:
         logger.warning(
             "Subset splitting off for this reference: %d subsets touch a boundary and their keep rows would need "
             "%.1f GB (limit %.1f GB). Use a larger step, a smaller subset or subset_stride.",
             cand.size,
             need / 1e9,
-            MAX_SPLIT_BYTES / 1e9,
+            limit / 1e9,
         )
         return None
     # on-the-fly gradients read a 3-voxel stencil around every kept voxel: keep those away from the faces
-    margin = 0 if ref.gx.shape == ref.f.shape else 3
+    margin = 0 if ref.stored_gradients else 3
     rows, n_keep, n_inmask = build_split_rows(coords_int, cand, *half, stride, ref.mask, margin)
     split_index[cand] = np.arange(cand.size)
     return split_index, rows, n_keep, n_inmask
 
 
-def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara) -> LocalContext:
-    """Hessians, normalisation and validity for every node of ``mesh``."""
+def precompute_local_context(mesh: DVCMesh, ref, para: DVCPara) -> LocalContext:
+    """Hessians, normalisation and validity for every node of ``mesh``.
+
+    ``ref`` is a :class:`~al_dvc.core.data_structures.ReferenceBundle` or a
+    :class:`~al_dvc.solver.tiling.ReferenceSource`. With ``para.tile_local`` set, the nodes are
+    solved in blocks against a box of the volume each, so the gradients of a box never exist at full
+    size; with it at 0 the plan is a single whole-volume box and this is the code it always was.
+    """
     _configure_threads(para)
     t0 = time.perf_counter()
     coords_int = np.round(mesh.coordinates).astype(np.int64)
     hx, hy, hz = (int(w) // 2 for w in para.winsize)
+    half = (hx, hy, hz)
     stride = int(getattr(para, "subset_stride", 1))
     backend = resolve_backend(para)
-    split = split_rows(mesh, ref, para, coords_int, (hx, hy, hz), stride)
-    split_kw = {} if split is None else {"split_index": split[0], "split_keep": split[1]}
-    if backend == "cuda":
-        from .cuda_kernels import precompute_nodes_cuda
-
-        H_all, L_all, meanf, bottomf, n_valid, valid = precompute_nodes_cuda(
-            coords_int,
+    source = as_source(ref, para.gradient_mode)
+    plan = plan_tiles(mesh.grid_shape, coords_int, source.shape, para, half)
+    if plan.fallback:
+        logger.warning("%s", plan.fallback)
+    N = coords_int.shape[0]
+    H_all = np.zeros((N, 12, 12), dtype=np.float64)
+    L_all = np.zeros((N, 12, 12), dtype=np.float64)
+    meanf = np.zeros(N, dtype=np.float64)
+    bottomf = np.ones(N, dtype=np.float64)
+    n_valid = np.zeros(N, dtype=np.int64)
+    valid = np.zeros(N, dtype=bool)
+    node_valid = np.asarray(mesh.node_valid, dtype=bool)
+    split_parts: list[tuple] = []
+    split_off = 0
+    budget = MAX_SPLIT_BYTES
+    split_used = True
+    for nodes, box in plan:
+        bundle = source.bundle_for(box)
+        local = coords_int[nodes] if box.is_whole else box.shift(coords_int[nodes])
+        split = split_rows(bundle, para, local, node_valid[nodes], half, stride, budget=budget)
+        if split is None:
+            split_used = False
+            split_kw: dict = {}
+        else:
+            split_kw = {"split_index": split[0], "split_keep": split[1]}
+            budget -= int(np.asarray(split[1]).nbytes)
+        args = (
+            local,
             hx,
             hy,
             hz,
-            ref.f,
-            ref.gx,
-            ref.gy,
-            ref.gz,
-            ref.mask,
+            bundle.f,
+            bundle.gx,
+            bundle.gy,
+            bundle.gz,
+            bundle.mask,
             float(para.min_valid_ratio),
             float(para.hessian_cond_max),
             stride,
-            **split_kw,
         )
-    elif backend == "numba":
-        from .numba_kernels import precompute_nodes
+        if backend == "cuda":
+            from .cuda_kernels import clear_device_cache, precompute_nodes_cuda
 
-        H_all, L_all, meanf, bottomf, n_valid, valid = precompute_nodes(
-            coords_int,
-            hx,
-            hy,
-            hz,
-            ref.f,
-            ref.gx,
-            ref.gy,
-            ref.gz,
-            ref.mask,
-            float(para.min_valid_ratio),
-            float(para.hessian_cond_max),
-            stride,
-            **split_kw,
-        )
-    else:
-        from .reference_kernels import precompute_nodes_np
+            out = precompute_nodes_cuda(*args, **split_kw)
+            if not plan.is_whole:
+                clear_device_cache()  # the next box is a different array: do not hold this one
+        elif backend == "numba":
+            from .numba_kernels import precompute_nodes
 
-        H_all, L_all, meanf, bottomf, n_valid, valid = precompute_nodes_np(
-            coords_int,
-            hx,
-            hy,
-            hz,
-            ref.f,
-            ref.gx,
-            ref.gy,
-            ref.gz,
-            ref.mask,
-            float(para.min_valid_ratio),
-            float(para.hessian_cond_max),
-            stride,
-            **split_kw,
-        )
-    valid = np.asarray(valid, dtype=bool) & np.asarray(mesh.node_valid, dtype=bool)
+            out = precompute_nodes(*args, **split_kw)
+        else:
+            from .reference_kernels import precompute_nodes_np
+
+            out = precompute_nodes_np(*args, **split_kw)
+        H_t, L_t, mf_t, bf_t, nv_t, vd_t = out
+        H_all[nodes] = H_t
+        L_all[nodes] = L_t
+        meanf[nodes] = mf_t
+        bottomf[nodes] = bf_t
+        n_valid[nodes] = nv_t
+        valid[nodes] = np.asarray(vd_t, dtype=bool)
+        if split is not None:
+            split_parts.append((nodes, split[0], split[1], split[2], split[3]))
+        split_off += 1
+    valid = np.asarray(valid, dtype=bool) & node_valid
     dt = time.perf_counter() - t0
     split_index = split_keep = split_fraction = None
-    if split is not None:
-        split_index, split_keep, n_keep, n_inmask = split
-        split_fraction = np.ones(coords_int.shape[0], dtype=np.float32)
-        rows = np.flatnonzero(split_index >= 0)
-        with np.errstate(invalid="ignore", divide="ignore"):
-            split_fraction[rows] = (n_keep / np.maximum(n_inmask, 1)).astype(np.float32)
+    if split_used and split_parts:
+        split_index, split_keep = merge_split([(n, li, keep) for n, li, keep, _k, _m in split_parts], N)
+        split_fraction = np.ones(N, dtype=np.float32)
+        for nodes, li, _keep, n_keep, n_inmask in split_parts:
+            taken = np.flatnonzero(np.asarray(li) >= 0)
+            if taken.size == 0:
+                continue
+            with np.errstate(invalid="ignore", divide="ignore"):
+                frac = (np.asarray(n_keep) / np.maximum(np.asarray(n_inmask), 1)).astype(np.float32)
+            split_fraction[np.asarray(nodes)[taken]] = frac
         split_fraction[~valid] = np.nan
-        cut = rows[np.asarray(n_keep) < np.asarray(n_inmask)]
+        rows = np.flatnonzero(split_index >= 0)
+        cut = rows[split_fraction[rows] < 1.0]
         logger.info(
             "Subset splitting: %d subsets touch a boundary, %d were cut (median %.0f%% of their voxels kept), %d rejected",
             rows.size,
@@ -243,20 +279,21 @@ def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara)
             int(np.count_nonzero(~valid[rows])),
         )
     logger.info(
-        "Local precompute: %d nodes, %d valid (%.1f%%), %.2fs",
-        coords_int.shape[0],
+        "Local precompute: %d nodes, %d valid (%.1f%%), %d tile(s), %.2fs",
+        N,
         int(valid.sum()),
         100.0 * valid.mean() if valid.size else 0.0,
+        len(plan),
         dt,
     )
     return LocalContext(
         coords_int=coords_int,
-        half=(hx, hy, hz),
+        half=half,
         H_all=H_all,
         L_all=L_all,
-        meanf=np.asarray(meanf),
-        bottomf=np.asarray(bottomf),
-        n_valid=np.asarray(n_valid),
+        meanf=meanf,
+        bottomf=bottomf,
+        n_valid=n_valid,
         valid=valid,
         precompute_time=dt,
         stride=stride,
@@ -265,6 +302,54 @@ def precompute_local_context(mesh: DVCMesh, ref: ReferenceBundle, para: DVCPara)
         split_keep=split_keep,
         split_fraction=split_fraction,
     )
+
+
+def _icgn_12dof_tile(backend, ctx, bundle, box, nodes, P0, g, mode, para, pattern, gain):
+    """One block of nodes against one box: ``(P, n_iter, status, zncc)`` for those nodes only.
+
+    The kernels address the volumes relative to a node centre, so a box needs nothing but the crop
+    and the same coordinates minus its origin -- the displacement in ``P[9:12]`` is untouched,
+    because the reference and the deformed frame are cut from the same box.
+    """
+    hx, hy, hz = ctx.half
+    coords_t = ctx.coords_int[nodes] if box.is_whole else box.shift(ctx.coords_int[nodes])
+    common = (
+        coords_t,
+        P0[nodes],
+        hx,
+        hy,
+        hz,
+        bundle.f,
+        bundle.gx,
+        bundle.gy,
+        bundle.gz,
+        bundle.mask,
+        box.crop(g),
+        mode,
+    )
+    tail = (
+        ctx.meanf[nodes],
+        ctx.bottomf[nodes],
+        ctx.valid[nodes],
+        float(para.icgn_tol),
+        float(para.icgn_dp_tol),
+        int(para.icgn_max_iter),
+        int(para.icgn_patience),
+        ctx.stride,
+    )
+    predictive = bool(para.icgn_predictive_stop)
+    split_kw = ctx.split_args(nodes)
+    if backend == "cuda":
+        from .cuda_kernels import icgn_12dof_cuda
+
+        return icgn_12dof_cuda(*common, ctx.L_all[nodes], *tail, ctx.H_all[nodes], pattern, gain, predictive, **split_kw)
+    if backend == "numba":
+        from .numba_kernels import icgn_12dof_parallel
+
+        return icgn_12dof_parallel(*common, ctx.L_all[nodes], *tail, ctx.H_all[nodes], pattern, gain, predictive, **split_kw)
+    from .reference_kernels import icgn_12dof_batch_np
+
+    return icgn_12dof_batch_np(*common, ctx.H_all[nodes], *tail, pattern, gain, predictive, **split_kw)
 
 
 def local_icgn(
@@ -298,97 +383,35 @@ def local_icgn(
 
     t0 = time.perf_counter()
     backend = resolve_backend(para)
-    if backend == "cuda":
-        from .cuda_kernels import icgn_12dof_cuda
-
-        P, n_iter, status, zncc = icgn_12dof_cuda(
-            ctx.coords_int,
-            P0,
-            hx,
-            hy,
-            hz,
-            ref.f,
-            ref.gx,
-            ref.gy,
-            ref.gz,
-            ref.mask,
-            g,
-            mode,
-            ctx.L_all,
-            ctx.meanf,
-            ctx.bottomf,
-            ctx.valid,
-            float(para.icgn_tol),
-            float(para.icgn_dp_tol),
-            int(para.icgn_max_iter),
-            int(para.icgn_patience),
-            ctx.stride,
-            ctx.H_all,
-            pattern,
-            gain,
-            bool(para.icgn_predictive_stop),
-            **ctx.split_args(),
+    source = as_source(ref, para.gradient_mode)
+    plan = plan_tiles(mesh.grid_shape, ctx.coords_int, source.shape, para, ctx.half, disp=U0)
+    P = np.zeros((N, 12), dtype=np.float64)
+    n_iter = np.zeros(N, dtype=np.int32)
+    status = np.zeros(N, dtype=np.int8)
+    zncc = np.zeros(N, dtype=np.float64)
+    open_face = np.zeros(N, dtype=bool)  # this node's box was cut by the tile, not by the volume
+    for nodes, box in plan:
+        bundle = source.bundle_for(box)
+        open_face[nodes] = box.has_open_face
+        P[nodes], n_iter[nodes], status[nodes], zncc[nodes] = _icgn_12dof_tile(
+            backend, ctx, bundle, box, nodes, P0, g, mode, para, pattern, gain
         )
-    elif backend == "numba":
-        from .numba_kernels import icgn_12dof_parallel
+        if backend == "cuda" and not plan.is_whole:
+            from .cuda_kernels import clear_device_cache
 
-        P, n_iter, status, zncc = icgn_12dof_parallel(
-            ctx.coords_int,
-            P0,
-            hx,
-            hy,
-            hz,
-            ref.f,
-            ref.gx,
-            ref.gy,
-            ref.gz,
-            ref.mask,
-            g,
-            mode,
-            ctx.L_all,
-            ctx.meanf,
-            ctx.bottomf,
-            ctx.valid,
-            float(para.icgn_tol),
-            float(para.icgn_dp_tol),
-            int(para.icgn_max_iter),
-            int(para.icgn_patience),
-            ctx.stride,
-            ctx.H_all,
-            pattern,
-            gain,
-            bool(para.icgn_predictive_stop),
-            **ctx.split_args(),
+            clear_device_cache()  # the next box is a different array; do not pin this one
+    # a subset that left its BOX rather than the volume means the halo was too small: retry it whole,
+    # so a halo that is one voxel short costs time instead of a wrong answer
+    escaped = np.flatnonzero((status == STATUS_OUT_OF_BOUNDS) & open_face)
+    if escaped.size:
+        logger.warning(
+            "%d node(s) left their tile instead of the volume (the halo was short); solving them on the whole volume",
+            int(escaped.size),
         )
-    else:
-        from .reference_kernels import icgn_12dof_batch_np
-
-        P, n_iter, status, zncc = icgn_12dof_batch_np(
-            ctx.coords_int,
-            P0,
-            hx,
-            hy,
-            hz,
-            ref.f,
-            ref.gx,
-            ref.gy,
-            ref.gz,
-            ref.mask,
-            g,
-            mode,
-            ctx.H_all,
-            ctx.meanf,
-            ctx.bottomf,
-            ctx.valid,
-            float(para.icgn_tol),
-            float(para.icgn_dp_tol),
-            int(para.icgn_max_iter),
-            int(para.icgn_patience),
-            ctx.stride,
-            pattern,
-            gain,
-            bool(para.icgn_predictive_stop),
-            **ctx.split_args(),
+        whole = whole_box_tile(source.shape)
+        bundle = source.bundle_for(whole)
+        P[escaped], n_iter[escaped], status[escaped], zncc[escaped] = _icgn_12dof_tile(
+            backend, ctx, bundle, whole, escaped, P0, g, mode, para, pattern, gain
         )
     solve_time = time.perf_counter() - t0
 
