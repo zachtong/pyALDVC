@@ -24,6 +24,26 @@ All notable changes to pyALDVC are documented here. The format follows
   rectangle extruded through z -- which is also exactly the box, verified over three hundred random
   boxes. Copying an arbitrary DVC region of interest still replaces the base and says so: a boolean
   volume cannot be carried in a `MaskOp`.
+- **An unusable typed bounding box is reported instead of ignored.** `normalise_box` rejects a width
+  below two voxels and the handler swallowed that and returned, so the spin boxes showed one range
+  while the region -- and therefore the analysis -- was still the previous one. The bounds are three
+  pairs of spin boxes that report every keystroke, so snapping them back would fight the typist:
+  instead the message says what the rule is and what is still in use, and both analyses are disabled
+  until the bounds are a box again.
+- **An RVE-only result can be exported.** The exports were enabled only when an autocorrelation
+  result existed, so completing step 2 and wanting its plot or its numbers meant running an unrelated
+  step 3 first. The PNG now follows the plot on the tab you are looking at, the JSON summary accepts a
+  sweep with no autocorrelation, and the profiles CSV stays what its name says -- the
+  autocorrelation's own export.
+- **The exported summary says what each analysis came from.** `save_json` always wrote the retained
+  autocorrelation, sweep and recommendation together with no record of their inputs, so an
+  autocorrelation of one volume beside a sweep of another -- which the window allows, and warns about
+  on screen -- was indistinguishable once saved, and two volumes of the same geometry exported
+  identically. There is now a `provenance` block per analysis: volume name and uid, region box and
+  revision, centre, spacing, the captured units, the analysis box or sweep settings, whether it still
+  describes the current input, and a `same_input` flag when both are present.
+- **The cube info names every capped axis.** The reduction notice tested the largest axis, so a cube
+  clipped on one axis only -- 64 x 64 x 24 against a scalar control reading 64 -- said nothing at all.
 - **A finished RVE sweep no longer overwrites a cube size it does not describe.** `_on_sweep_finished`
   wrote the stable size into step 3 whenever one existed, before any staleness check, and forced the
   view to the RVE tab -- so a sweep of a region the user had already replaced quietly became the

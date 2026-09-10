@@ -247,6 +247,7 @@ class TextureWindow(QMainWindow):
         self._volume_uid = None
         self._size_from_rve: int | None = None  # the edge the RVE step wrote, None when set by hand
         self._size_edited = False  # the cube of step 3 was typed since the running sweep was dispatched
+        self._box_invalid = False  # the typed bounds are not a usable box, so no analysis may start
         self._updating = False
         self.setWindowFlag(Qt.WindowType.Window, True)
         self.resize(1360, 880)
@@ -651,6 +652,7 @@ class TextureWindow(QMainWindow):
         self._place_region_viewer(i)
         self._update_overlay()
         self._update_plot_tools()
+        self._refresh_validity()  # what a PNG would capture depends on the tab on screen
 
     def _place_region_viewer(self, step: int) -> None:
         """Move the slice viewer into the tab that needs it (step 1 draws the region, step 2 the cubes)."""
@@ -766,7 +768,13 @@ class TextureWindow(QMainWindow):
             self._updating = False
 
     def _on_box_spins(self) -> None:
-        """Typing the box replaces the region by that box."""
+        """Typing the box replaces the region by that box; an unusable box is reported, not ignored.
+
+        The bounds are three pairs of spin boxes that report every keystroke, so snapping them back to
+        the last valid pair would fight the typist. Instead the error is shown and the analyses are
+        blocked until the bounds are a box again -- silently returning left the displayed range
+        disagreeing with the region the analysis would actually use.
+        """
         if self._updating or self._shape is None:
             return
         try:
@@ -774,9 +782,16 @@ class TextureWindow(QMainWindow):
                 tuple((int(self.range_lo[a].value()), int(self.range_hi[a].value())) for a in ("x", "y", "z")), self._shape
             )
         except ValueError:
+            self._box_invalid = True
+            self._update_range_info()
+            self._refresh_validity()
             return
+        had_error, self._box_invalid = self._box_invalid, False
         if box != self.range_box() or self.region.fill_fraction() < 1.0:
             self.region.set_box(box)
+        elif had_error:
+            self._update_range_info()  # the region did not move, but the message has to go
+            self._refresh_validity()
 
     def _region_text(self) -> str:
         box = self.range_box()
@@ -788,6 +803,16 @@ class TextureWindow(QMainWindow):
         box = self.range_box()
         if self._shape is None:
             self._range_info.setText(self.tr("Load a reference volume first."))
+            return
+        if self._box_invalid:  # the typed bounds are not a box: say so, and say what is still in use
+            shown = box_size(box) if box is not None else None
+            self._range_info.setText(
+                self.tr("Every axis of the box must span at least 2 voxels; the region is unchanged.")
+                if shown is None
+                else self.tr(
+                    "Every axis of the box must span at least 2 voxels; the region is still the previous one ({size} voxel)."
+                ).format(size=" x ".join(str(v) for v in shown))
+            )
             return
         if box is None:
             self._range_info.setText(self.tr("The region is empty: draw a shape or press Whole volume."))
@@ -914,8 +939,11 @@ class TextureWindow(QMainWindow):
             lag=" x ".join(str(v) for v in max_lag_for(size)),
         )
         asked = int(self.cube_size.value())
-        if max(size) < asked:
-            text += " " + self.tr("(reduced from {asked}: the region ends there)").format(asked=asked)
+        capped = [name for name, n in zip(("x", "y", "z"), size) if n < asked]
+        if capped:  # one short axis is a reduction too, and the scalar control cannot show it
+            text += " " + self.tr("(reduced from {asked} on {axes}: the region ends there)").format(
+                asked=asked, axes=", ".join(capped)
+            )
         self._acf_region.setText(text)
 
     def _on_size_changed(self) -> None:
@@ -990,6 +1018,9 @@ class TextureWindow(QMainWindow):
             return
         if box is None:
             status.setText(self.tr("The region is empty: draw a shape or press Whole volume."))
+            return
+        if self._box_invalid:
+            status.setText(self.tr("Every axis of the box must span at least 2 voxels."))
             return
         centre = self.region.centre
         if centre is None:
@@ -1116,25 +1147,35 @@ class TextureWindow(QMainWindow):
     def _settle(self) -> None:
         """Terminal UI state after success, failure or cancellation."""
         self._job_source = None
-        has_volume = bool(self._state.volumes)
-        self._btn_analyse.setEnabled(has_volume)
-        self._btn_sweep.setEnabled(has_volume)
         self._btn_cancel.setEnabled(False)
         self._btn_sweep_cancel.setEnabled(False)
-        has = self.result is not None
-        for b in (self._btn_csv, self._btn_json, self._btn_png):
-            b.setEnabled(has)
-        self._refresh_validity()
+        self._refresh_validity()  # one place decides what can be started and what can be exported
+
+    def _figure_has_content(self) -> bool:
+        """Whether the plot of the tab on screen has anything in it: what a PNG would capture."""
+        return self.sweep is not None if self.tabs.currentIndex() == TAB_SWEEP else self.result is not None
 
     def _refresh_validity(self) -> None:
         """Apply only a recommendation that describes the current input; say so when it does not."""
         if self._is_running():
             return
+        # An unusable typed box leaves the spin boxes disagreeing with the region, so nothing may be
+        # started from it: the analysis would quietly use the region the bounds no longer describe.
+        can_run = bool(self._state.volumes) and not self._box_invalid
+        self._btn_analyse.setEnabled(can_run)
+        self._btn_sweep.setEnabled(can_run)
         stale = self.is_stale
         self._btn_apply.setEnabled(self.recommendation is not None and not stale)
+        # The exports used to need an autocorrelation result, so a completed RVE analysis alone could
+        # not be saved at all -- not even the image of the plot on screen.
+        self._btn_csv.setEnabled(self.result is not None)  # the profiles are the autocorrelation's
+        self._btn_json.setEnabled(self.result is not None or self.sweep is not None)
+        self._btn_png.setEnabled(self._figure_has_content())
         note = self.tr("From a previous input: analyse again before using it") if stale else ""
-        for b in (self._btn_apply, self._btn_csv, self._btn_json, self._btn_png):
-            b.setToolTip(note)
+        self._btn_apply.setToolTip(note)
+        self._btn_csv.setToolTip(note)
+        for b in (self._btn_json, self._btn_png):
+            b.setToolTip(note if stale and self.sweep is None else "")
         self._btn_use_size.setEnabled(self.sweep_size() is not None and not self.is_sweep_stale)
         self._btn_region_roi.setEnabled(self._shape is not None and self._state.reference_mask() is not None)
         self._update_sweep_plan()
@@ -1629,8 +1670,51 @@ class TextureWindow(QMainWindow):
     def save_csv(self, path) -> None:
         write_profiles_csv(self.result, path)
 
+    def _volume_name(self, uid) -> str | None:
+        """A human-readable name for the volume an analysis was computed from, by its uid."""
+        for entry in self._state.volumes:
+            if entry.uid == uid:
+                return entry.label or (Path(entry.path).name if entry.path else None)
+        return None
+
+    def _provenance(self, source: dict | None, current: dict | None) -> dict | None:
+        """What one analysis was computed from, in readable form, and whether it still applies."""
+        if source is None:
+            return None
+        out = {
+            "volume_uid": source.get("uid"),
+            "volume": self._volume_name(source.get("uid")),
+            "region_box": [list(pair) for pair in source["region"]] if source.get("region") else None,
+            "region_revision": source.get("revision"),
+            "centre": list(source["centre"]) if source.get("centre") else None,
+            "spacing": list(source.get("spacing", ())),
+            "units": source.get("units", "voxel"),
+            "describes_current_input": source == current,
+        }
+        if source.get("box") is not None:
+            out["analysis_box"] = [list(pair) for pair in source["box"]]
+        if source.get("sweep") is not None:
+            out["sweep_settings"] = dict(source["sweep"])
+        return out
+
+    def export_provenance(self) -> dict:
+        """Per-analysis provenance for the exported summary.
+
+        The file used to carry the autocorrelation, the sweep and the recommendation together with no
+        record of what each came from, so an autocorrelation of one volume and a sweep of another --
+        which the window allows, and warns about on screen -- were indistinguishable once saved.
+        """
+        acf = self._provenance(self._result_source, self.current_source()) if self.result is not None else None
+        rve = self._provenance(self._sweep_source, self._sweep_input()) if self.sweep is not None else None
+        keys = ("uid", "region", "revision", "centre")
+        same = None
+        if acf is not None and rve is not None:
+            a, b = self._result_source or {}, self._sweep_source or {}
+            same = all(a.get(k) == b.get(k) for k in keys)
+        return {"autocorrelation": acf, "rve": rve, "same_input": same}
+
     def save_json(self, path) -> None:
-        write_summary_json(self.result, self.sweep, self.recommendation, path)
+        write_summary_json(self.result, self.sweep, self.recommendation, path, provenance=self.export_provenance())
 
     # ------------------------------------------------------------------ misc
     def retranslate_ui(self) -> None:
@@ -1785,24 +1869,29 @@ def write_profiles_csv(result: TextureResult, path) -> None:
                 )
 
 
-def summary_dict(result: TextureResult, sweep: SizeSweep | None, recommendation) -> dict:
-    out = {
-        "status": result.status,
-        "settings": {k: (list(v) if isinstance(v, tuple) else v) for k, v in result.settings.items()},
-        "lengths_voxel": {
-            axis: {THRESHOLD_LABELS.get(t, f"{t:.3g}"): {"value": c.value, "status": c.status} for t, c in table.items()}
-            for axis, table in result.lengths.items()
-        },
-        "lengths_physical": {
-            axis: {THRESHOLD_LABELS.get(t, f"{t:.3g}"): c.value for t, c in table.items()}
-            for axis, table in result.physical_lengths.items()
-        },
-        "noise_floor": None if not np.isfinite(result.noise_floor) else float(result.noise_floor),
-        "periodicity": None
-        if result.periodicity is None
-        else {"axis": result.periodicity[0], "distance": result.periodicity[1], "height": result.periodicity[2]},
-        "spacing": list(result.acf.spacing),
-    }
+def summary_dict(result: TextureResult | None, sweep: SizeSweep | None, recommendation, provenance: dict | None = None) -> dict:
+    """The exported summary. ``result`` may be ``None``: an RVE analysis alone is a result worth saving."""
+    out: dict = {}
+    if result is not None:
+        out |= {
+            "status": result.status,
+            "settings": {k: (list(v) if isinstance(v, tuple) else v) for k, v in result.settings.items()},
+            "lengths_voxel": {
+                axis: {THRESHOLD_LABELS.get(t, f"{t:.3g}"): {"value": c.value, "status": c.status} for t, c in table.items()}
+                for axis, table in result.lengths.items()
+            },
+            "lengths_physical": {
+                axis: {THRESHOLD_LABELS.get(t, f"{t:.3g}"): c.value for t, c in table.items()}
+                for axis, table in result.physical_lengths.items()
+            },
+            "noise_floor": None if not np.isfinite(result.noise_floor) else float(result.noise_floor),
+            "periodicity": None
+            if result.periodicity is None
+            else {"axis": result.periodicity[0], "distance": result.periodicity[1], "height": result.periodicity[2]},
+            "spacing": list(result.acf.spacing),
+        }
+    if provenance is not None:
+        out["provenance"] = provenance
     if recommendation is not None:
         out["recommendation"] = asdict(recommendation)
     if sweep is not None:
@@ -1834,7 +1923,9 @@ def summary_dict(result: TextureResult, sweep: SizeSweep | None, recommendation)
     return out
 
 
-def write_summary_json(result: TextureResult, sweep: SizeSweep | None, recommendation, path) -> None:
+def write_summary_json(
+    result: TextureResult | None, sweep: SizeSweep | None, recommendation, path, provenance: dict | None = None
+) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(summary_dict(result, sweep, recommendation), f, indent=2)
+        json.dump(summary_dict(result, sweep, recommendation, provenance), f, indent=2)

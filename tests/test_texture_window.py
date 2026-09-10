@@ -442,3 +442,119 @@ def test_the_buttons_settle_whichever_signal_arrives_first(qapp, aniso, real_swe
     assert not tw._btn_use_size.isEnabled()
     tw._worker = None
     window.close()
+
+
+def test_an_unusable_typed_box_is_reported_and_blocks_the_analyses(qapp, aniso):
+    """Scenario 4: equal bounds must not leave the display disagreeing with the region in use.
+
+    ``normalise_box`` rejects a width below two, and the handler used to swallow that and return, so
+    the spin boxes showed one range while ``range_box`` -- and therefore the analysis -- still
+    described the previous region.
+    """
+    window = MainWindow()
+    tw = _ready(window, aniso)
+    _pump()
+    good = tw.range_box()
+    assert good is not None and tw._btn_analyse.isEnabled()
+
+    tw.range_hi["x"].setValue(int(tw.range_lo["x"].value()))  # a zero-width axis
+    _pump()
+    assert tw._box_invalid
+    assert tw.range_box() == good, "the region moved to an unusable box"
+    assert "2 voxel" in tw._range_info.text()  # the message names the rule
+    assert not tw._btn_analyse.isEnabled() and not tw._btn_sweep.isEnabled()
+    tw.analyse()  # and pressing it anyway says why rather than analysing the old region
+    _pump()
+    assert "2 voxel" in tw._status.text() and tw._worker is None
+
+    tw.range_hi["x"].setValue(int(tw.range_lo["x"].value()) + 20)  # a usable box again
+    _pump()
+    assert not tw._box_invalid and tw._btn_analyse.isEnabled()
+    assert "2 voxel" not in tw._range_info.text()
+    window.close()
+
+
+def test_an_rve_only_result_can_be_saved(qapp, aniso, real_sweep, tmp_path, monkeypatch):
+    """Scenario 8: completing only step 2 must not require step 3 before anything can be saved.
+
+    ``_settle`` enabled CSV, JSON and PNG only when an autocorrelation result existed, even though
+    the RVE result and its plot were on screen and ``save_png`` already picks that figure.
+    """
+    window = MainWindow()
+    tw = _ready(window, aniso)
+    monkeypatch.setattr(type(tw), "_draw_sweep", lambda self: None)
+    assert tw.result is None
+    tw._job_source = tw._sweep_input()
+    tw._on_sweep_finished(real_sweep)
+    tw.go_to_step(tw.TAB_SWEEP)
+    _pump()
+
+    assert tw.sweep is not None and tw.result is None
+    assert tw._btn_json.isEnabled() and tw._btn_png.isEnabled()
+    assert not tw._btn_csv.isEnabled()  # the profiles CSV is the autocorrelation's own export
+    tw.go_to_step(tw.TAB_ACF)  # nothing to draw on that tab yet, so there is no image to save
+    _pump()
+    assert not tw._btn_png.isEnabled()
+
+    out = tmp_path / "rve.json"
+    tw.save_json(out)
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert "sweep" in data and "lengths_voxel" not in data
+    assert data["provenance"]["rve"] is not None and data["provenance"]["autocorrelation"] is None
+    window.close()
+
+
+def test_the_summary_says_what_each_analysis_came_from(qapp, aniso, real_sweep, tmp_path, monkeypatch):
+    """Scenario 7: an autocorrelation of one input and a sweep of another must be distinguishable.
+
+    ``save_json`` always wrote the retained autocorrelation, sweep and recommendation together, and
+    the file recorded no source at all -- so two volumes of the same geometry produced byte-identical
+    provenance, and the on-screen warning about a previous input did not survive the export.
+    """
+    window = MainWindow()
+    tw = _ready(window, aniso)
+    monkeypatch.setattr(type(tw), "_draw_sweep", lambda self: None)
+    window.state.volumes[0].label = "specimen-A"
+    _pump()
+
+    tw.analyse()
+    assert tw.wait(300_000)
+    _pump()
+    assert tw.result is not None
+    acf_region = tw.range_box()
+
+    tw.region.apply(MaskOp("rectangle", plane="xy", points=((12.0, 10.0), (46.0, 40.0)), mode="replace", depth=(8, 36)))
+    tw.region.set_centre((28, 24, 22))
+    _pump()
+    tw._job_source = tw._sweep_input()
+    tw._on_sweep_finished(real_sweep)
+    _pump()
+
+    out = tmp_path / "both.json"
+    tw.save_json(out)
+    prov = json.loads(out.read_text(encoding="utf-8"))["provenance"]
+    assert prov["autocorrelation"]["volume"] == "specimen-A"
+    assert prov["autocorrelation"]["region_box"] == [list(pair) for pair in acf_region]
+    assert prov["rve"]["region_box"] == [list(pair) for pair in tw.range_box()]
+    assert prov["autocorrelation"]["region_box"] != prov["rve"]["region_box"]
+    assert prov["same_input"] is False, "two different inputs were exported as one"
+    assert prov["autocorrelation"]["describes_current_input"] is False  # the region moved after it
+    assert prov["rve"]["describes_current_input"] is True
+    assert prov["autocorrelation"]["units"] and prov["rve"]["units"]
+    window.close()
+
+
+def test_the_cube_info_names_every_capped_axis(qapp, aniso):
+    """A cube reduced on one axis only reported nothing, because the test was on the largest axis."""
+    window = MainWindow()
+    tw = window.open_texture_window()
+    window.state.set_volume_arrays([aniso, aniso], ["ref", "def"])
+    _pump()
+    tw.set_range(((4, 60), (4, 52), (10, 34)))  # z spans 24, x and y much more
+    tw.region.set_centre((32, 28, 22))
+    tw.cube_size.setValue(40)
+    _pump()
+    text = tw._acf_region.text()
+    assert "reduced from 40" in text and "z" in text.split("reduced from 40")[1]
+    assert "x" not in text.split("reduced from 40")[1].split(":")[0]
+    window.close()
