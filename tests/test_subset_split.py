@@ -1,5 +1,7 @@
 """Subset splitting: the connected component around the subset centre, the kernels' gate, and the effect."""
 
+import sys
+
 import numpy as np
 import pytest
 
@@ -272,3 +274,67 @@ def test_the_drawn_grid_stops_at_the_wall():
     live = elements[elements[:, 0] >= 0]
     x = mesh.coordinates[:, 0]
     assert not np.any((x[live[:, 0]] < 45) & (x[live[:, 1]] > 49))
+
+
+def test_the_split_budget_is_decided_for_the_reference_not_per_tile(monkeypatch):
+    """A budget that runs out mid-plan must leave no tile split, not only the late ones.
+
+    Deciding per tile gave the tiles that fitted a Hessian, a mean and a ZNCC denominator built over
+    their kept component alone, and then dropped the keep rows for the whole reference -- so those
+    nodes went on to correlate the *full* window against a normalisation built from a subset of it,
+    while the nodes of the later tiles used the full window throughout. Nothing raised; the numbers
+    were simply wrong, and inconsistently so between tiles.
+    """
+    from dataclasses import replace
+
+    from al_dvc.core.data_structures import VOIRange
+    from al_dvc.io.volume_ops import normalize_volume
+    from al_dvc.mesh.grid_mesh import apply_mask_to_mesh, build_grid_axes, mesh_setup
+    from al_dvc.solver.local_icgn import plan_split, precompute_local_context, split_keep_bytes
+    from al_dvc.solver.tiling import ReferenceSource, plan_tiles
+
+    shape = (64, 72, 192)  # long enough in x that plan_tiles gives more than one box
+    para = replace(dvcpara_default(), winsize=(WIN, WIN, WIN), winstepsize=(8, 8, 8), subset_split=True, tile_local=112)
+    mask = np.ones(shape, np.uint8)
+    mask[:, :, 45:47] = 0  # one wall per half, so more than one tile holds subsets that are really cut
+    mask[:, :, 141:143] = 0
+    fn = normalize_volume(generate_speckle_volume(shape, sigma=2.0, seed=3))
+    voi = VOIRange(x=(0, shape[2] - 1), y=(0, shape[1] - 1), z=(0, shape[0] - 1))
+    mesh = mesh_setup(*build_grid_axes(voi, shape, para.winsize, para.winstepsize))
+    mesh = apply_mask_to_mesh(mesh, mask, para.winsize, para.min_valid_ratio, cut_bridging=True)
+
+    def source():
+        return ReferenceSource(f=fn, mask=mask > 0, gradient_mode="stored")
+
+    half = tuple(w // 2 for w in para.winsize)
+    stride = int(getattr(para, "subset_stride", 1))
+    coords_int = np.round(mesh.coordinates).astype(np.int64)
+    tiles = list(plan_tiles(mesh.grid_shape, coords_int, shape, para, half))
+    assert len(tiles) > 1, "the plan must be tiled for this test to mean anything"
+
+    frac, enabled = plan_split(mesh, source(), para, mesh.node_valid, half, stride)
+    assert enabled and frac is not None
+    node_valid = np.asarray(mesh.node_valid, dtype=bool)
+    whole_need = split_keep_bytes(int(np.count_nonzero(node_valid & (frac < 1.0))), half, stride)
+    first = tiles[0][0]
+    first_need = split_keep_bytes(int(np.count_nonzero(node_valid[first] & (frac[first] < 1.0))), half, stride)
+    assert 0 < first_need < whole_need, (first_need, whole_need)
+    # fits one tile but not the reference: the old code split that tile, then dropped the keep rows.
+    # al_dvc.solver re-exports the local_icgn *function* under the submodule's name, so the module has
+    # to come from sys.modules -- attribute lookup finds the function.
+    module = sys.modules["al_dvc.solver.local_icgn"]
+    monkeypatch.setattr(module, "MAX_SPLIT_BYTES", (first_need + whole_need) // 2)
+
+    squeezed = precompute_local_context(mesh, source(), para)
+    never = precompute_local_context(mesh, source(), replace(para, subset_split=False))
+
+    assert squeezed.split_index is None and squeezed.split_fraction is None
+    for field in ("H_all", "L_all", "meanf", "bottomf", "n_valid", "valid"):
+        assert np.array_equal(getattr(squeezed, field), getattr(never, field)), field
+
+    # The geometry has to be one where splitting actually moves those numbers, or the equality above
+    # would hold for any implementation and this test would assert nothing.
+    monkeypatch.setattr(module, "MAX_SPLIT_BYTES", 512 * 1024 * 1024)
+    full = precompute_local_context(mesh, source(), para)
+    assert int(np.count_nonzero(np.nan_to_num(full.split_fraction, nan=1.0) < 1.0)) > 0
+    assert not np.array_equal(full.H_all, never.H_all)

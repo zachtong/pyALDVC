@@ -6,6 +6,19 @@ All notable changes to pyALDVC are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **The subset-split byte budget is decided for the whole reference, not per tile.** When the packed
+  keep rows exceeded `MAX_SPLIT_BYTES` part-way through a tiled plan, splitting was switched off from
+  that tile onward and the keep rows were dropped for the whole reference -- but the tiles that had
+  already run kept the Hessian, mean and ZNCC denominator they had built over their *kept component
+  alone*. Those nodes then correlated the full subset window against a normalisation built from a
+  subset of it, while the nodes of the later tiles used the full window throughout. Nothing raised
+  and nothing was logged past the one warning; the numbers were simply wrong, and inconsistently so
+  between tiles. `plan_split` now sizes the keep rows for the whole reference before any tile runs,
+  so the decision is one decision, and `split_rows` takes the per-node in-mask fraction it computed
+  rather than sweeping the mask again. Reachable on a masked run large enough to be tiled whose
+  candidate subsets need more than 512 MB of keep rows.
+
 ### Added
 - **Guards that keep the large-volume work from rotting.** `tests/test_large_volume_guards.py` pins the
   *shape* of the optimisations rather than their speed: how many bytes an operation allocates and how

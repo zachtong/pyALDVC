@@ -209,7 +209,7 @@ boundary voxels of the pair box already flood-filled: `n` is the smallest eigenv
 
 | path | change |
 |---|---|
-| `solver/local_icgn.py` | **First, alone, with its own test:** fix the budget defect. Size the whole-reference keep-row need *before* the tile loop (per-tile candidate counts come from the `subset_valid_fraction` call `split_rows` already makes) and disable splitting for the reference before any tile runs, instead of at `:212-218` after some tiles built split Hessians. |
+| `solver/local_icgn.py` | ~~**First, alone, with its own test:** fix the budget defect.~~ **Done** -- `plan_split` sizes the keep rows for the whole reference before the tile loop, `split_rows` takes the fraction instead of re-sweeping, and `tests/test_subset_split.py::test_the_split_budget_is_decided_for_the_reference_not_per_tile` fails against the old per-tile budget. Size the whole-reference keep-row need *before* the tile loop (per-tile candidate counts come from the `subset_valid_fraction` call `split_rows` already makes) and disable splitting for the reference before any tile runs, instead of at `:212-218` after some tiles built split Hessians. |
 | `solver/numba_kernels.py` | Two-pass extension of `_build_split_rows_jit`. Pass 1 (same window loop) collects `B` and returns per-candidate centroid (3), covariance (6 upper terms) and `n_b`; the host does one batched `eigh` over `(M,3,3)` plus the sheet gate, which **keeps LAPACK out of `prange`**. Pass 2 (`_straddle_sides_jit`) re-walks only gated windows and returns `n_plus`, `n_minus`, `n_keep_fullres`. `build_split_rows` returns a 6-tuple. Constants live here. |
 | `solver/reference_kernels.py` | `build_split_rows_np` + `straddle_from_window(sub, keep)` -- the NumPy oracle CLAUDE.md requires (`build_split_rows` has none today) and the numpy-backend path. |
 | `solver/local_icgn.py` | `split_rows` to a 6-tuple (grow the `cand.size == 0` early return too); `LocalContext.straddle_fraction`; `precompute_local_context` appends `straddle` to `split_parts` and scatters it in the existing loop at `:262-268` (`zeros(N, float32)`, scatter at `taken`, NaN at `~valid`, `None` when `split_used` is False); the existing log line gains the straddle count and median. |
@@ -361,7 +361,7 @@ pairs.
 ## Also found, not part of either design
 
 - The **budget defect** in the verification table above: a correctness bug, pre-existing, and the
-  first thing to fix because A′ touches the same path.
+  first thing to fix because A′ touches the same path. **Fixed** -- see `CHANGELOG.md` under Fixed.
 - `local_split` / `merge_split` do **not** need to learn about a new per-node array; the tiled merge
   is correct only because the halo guarantees a node's window never straddles a box face.
 - `clean_initial_guess` already routes cut nodes around the boundary and skips exactly the nodes A′

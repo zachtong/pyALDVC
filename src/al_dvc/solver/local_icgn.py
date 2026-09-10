@@ -138,37 +138,81 @@ def _noise_pattern(hx: int, hy: int, hz: int, stride: int) -> NDArray[np.float64
     return np.ascontiguousarray(noise_hessian_pattern((hx, hy, hz), stride), dtype=np.float64)
 
 
-def split_rows(ref: ReferenceBundle, para: DVCPara, coords_int, node_valid, half, stride, budget=None):
+def split_keep_bytes(n_candidates: int, half, stride: int) -> int:
+    """Bytes the packed keep rows of ``n_candidates`` subsets need at this subset size and stride."""
+    n_sampled = int(np.prod([(2 * int(h)) // int(stride) + 1 for h in half]))
+    return int(n_candidates) * ((n_sampled + 7) // 8)
+
+
+def plan_split(mesh: DVCMesh, source, para: DVCPara, node_valid, half, stride, limit: int | None = None):
+    """``(frac, enabled)``: the per-node in-mask fraction, and whether splitting fits in the budget.
+
+    Sized for the **whole reference before any tile runs**. Deciding per tile is what the budget check
+    used to do, and it was wrong in a way that did not show up as an error: a tile that fitted had its
+    Hessian, mean and ZNCC denominator built over its kept component only, and when a later tile blew
+    the budget the keep rows were dropped for the whole reference -- so those nodes went on to
+    correlate the *full* window against a normalisation built from a subset of it, while the nodes of
+    the later tiles used the full window throughout. One decision for the reference removes both the
+    mismatch and the inconsistency between tiles.
+
+    ``frac`` is taken once against the whole-volume mask. A tile's own ``subset_valid_fraction`` would
+    give the same numbers, because ``plan_tiles`` pads every box so that a node's window lies wholly
+    inside it -- ``tests/test_tiling.py`` holds that equality.
+    """
+    if not bool(getattr(para, "subset_split", False)) or getattr(source, "mask", None) is None:
+        return None, False
+    coords = np.round(np.asarray(mesh.coordinates, dtype=np.float64))
+    frac = subset_valid_fraction(source.mask, coords, para.winsize)
+    n_cand = int(np.count_nonzero(np.asarray(node_valid, dtype=bool) & (frac < 1.0)))
+    need = split_keep_bytes(n_cand, half, stride)
+    cap = MAX_SPLIT_BYTES if limit is None else int(limit)
+    if need > cap:
+        logger.warning(
+            "Subset splitting off for this reference: %d subsets touch a boundary and their keep rows would need "
+            "%.1f GB (limit %.1f GB). Use a larger step, a smaller subset or subset_stride.",
+            n_cand,
+            need / 1e9,
+            cap / 1e9,
+        )
+        return None, False
+    return frac, True
+
+
+def split_rows(ref: ReferenceBundle, para: DVCPara, coords_int, node_valid, half, stride, frac=None, limit=None):
     """``(split_index, split_keep, n_keep, n_inmask)`` of subset splitting, or ``None`` when it is off.
 
     Candidates are the valid nodes whose full subset window contains a masked voxel (or leaves the
     box); each gets the 6-connected in-mask component around its centre as a packed keep row. The
     coordinates are expressed in ``ref``'s own frame, so a tile passes its cropped bundle and its
     shifted coordinates and gets rows numbered from zero.
+
+    ``frac`` is the in-mask fraction of each node's window when the caller already has it (see
+    :func:`plan_split`), which also means the caller has sized the keep rows; pass ``limit`` instead
+    to have this function size and refuse them itself.
     """
     if not bool(getattr(para, "subset_split", False)) or not ref.has_mask:
         return None  # nothing to split against: no mask means no boundary inside the volume
     from .numba_kernels import build_split_rows
 
     coords_int = np.asarray(coords_int, dtype=np.int64)
-    frac = subset_valid_fraction(ref.mask, coords_int.astype(np.float64), para.winsize)
-    cand = np.flatnonzero(np.asarray(node_valid, dtype=bool) & (frac < 1.0))
+    if frac is None:
+        frac = subset_valid_fraction(ref.mask, coords_int.astype(np.float64), para.winsize)
+    cand = np.flatnonzero(np.asarray(node_valid, dtype=bool) & (np.asarray(frac) < 1.0))
     N = coords_int.shape[0]
     split_index = np.full(N, -1, dtype=np.int64)
     if cand.size == 0:
         return split_index, np.zeros((1, 1), dtype=np.uint8), np.zeros(0, np.int64), np.zeros(0, np.int64)
-    n_sampled = int(np.prod([(2 * h) // stride + 1 for h in half]))
-    need = cand.size * ((n_sampled + 7) // 8)
-    limit = MAX_SPLIT_BYTES if budget is None else budget
-    if need > limit:
-        logger.warning(
-            "Subset splitting off for this reference: %d subsets touch a boundary and their keep rows would need "
-            "%.1f GB (limit %.1f GB). Use a larger step, a smaller subset or subset_stride.",
-            cand.size,
-            need / 1e9,
-            limit / 1e9,
-        )
-        return None
+    if limit is not None:
+        need = split_keep_bytes(cand.size, half, stride)
+        if need > int(limit):
+            logger.warning(
+                "Subset splitting off: %d subsets touch a boundary and their keep rows would need "
+                "%.1f GB (limit %.1f GB). Use a larger step, a smaller subset or subset_stride.",
+                cand.size,
+                need / 1e9,
+                int(limit) / 1e9,
+            )
+            return None
     # on-the-fly gradients read a 3-voxel stencil around every kept voxel: keep those away from the faces
     margin = 0 if ref.stored_gradients else 3
     rows, n_keep, n_inmask = build_split_rows(coords_int, cand, *half, stride, ref.mask, margin)
@@ -204,18 +248,19 @@ def precompute_local_context(mesh: DVCMesh, ref, para: DVCPara) -> LocalContext:
     valid = np.zeros(N, dtype=bool)
     node_valid = np.asarray(mesh.node_valid, dtype=bool)
     split_parts: list[tuple] = []
-    budget = MAX_SPLIT_BYTES
-    split_used = True
+    # One decision for the whole reference: a per-tile one leaves earlier tiles normalised over their
+    # kept component while the frame goes on to correlate the full window (see plan_split).
+    split_frac, split_used = plan_split(mesh, source, para, node_valid, half, stride)
     for nodes, box in plan:
         bundle = source.bundle_for(box)
         local = coords_int[nodes] if box.is_whole else box.shift(coords_int[nodes])
-        split = split_rows(bundle, para, local, node_valid[nodes], half, stride, budget=budget)
+        split = split_rows(bundle, para, local, node_valid[nodes], half, stride, frac=split_frac[nodes]) if split_used else None
         if split is None:
-            split_used = False
+            if split_used:  # sized for the whole reference above, so this cannot happen
+                raise RuntimeError("subset splitting became unavailable after the reference was sized")
             split_kw: dict = {}
         else:
             split_kw = {"split_index": split[0], "split_keep": split[1]}
-            budget -= int(np.asarray(split[1]).nbytes)
         args = (
             local,
             hx,
