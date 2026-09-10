@@ -678,6 +678,8 @@
   "skipped": "omitido",
   "slice-folder": "carpeta de cortes",
   "stable from {size} voxel": "estable desde {size} vóxeles",
+  "stable from {size} voxel, for the previous input": "estable desde {size} vóxeles, para la entrada anterior",
+  "stable from {size} voxel; step 3 keeps the size you typed": "estable desde {size} vóxeles; el paso 3 conserva el tamaño introducido",
   "stalled": "estancado",
   "static rendering; use the camera presets to rotate": "renderizado estático; use los ajustes de cámara para rotar",
   "the input changed since: analyse again": "la entrada cambió desde entonces: vuelva a analizar",

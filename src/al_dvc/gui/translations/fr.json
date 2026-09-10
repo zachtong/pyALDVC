@@ -678,6 +678,8 @@
   "skipped": "ignoré",
   "slice-folder": "dossier de coupes",
   "stable from {size} voxel": "stable à partir de {size} voxels",
+  "stable from {size} voxel, for the previous input": "stable à partir de {size} voxels, pour l'entrée précédente",
+  "stable from {size} voxel; step 3 keeps the size you typed": "stable à partir de {size} voxels ; l'étape 3 conserve la taille saisie",
   "stalled": "bloqué",
   "static rendering; use the camera presets to rotate": "rendu statique ; utilisez les préréglages de caméra pour tourner",
   "the input changed since: analyse again": "l'entrée a changé depuis : relancez l'analyse",

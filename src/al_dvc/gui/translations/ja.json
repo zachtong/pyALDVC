@@ -678,6 +678,8 @@
   "skipped": "スキップ",
   "slice-folder": "スライスフォルダー",
   "stable from {size} voxel": "{size} ボクセルから安定",
+  "stable from {size} voxel, for the previous input": "{size} ボクセルから安定（前の入力について）",
+  "stable from {size} voxel; step 3 keeps the size you typed": "{size} ボクセルから安定。ステップ 3 は入力したサイズを保持します",
   "stalled": "停滞",
   "static rendering; use the camera presets to rotate": "静的レンダリング。回転にはカメラプリセットを使ってください",
   "the input changed since: analyse again": "その後入力が変更されました。再解析してください",

@@ -245,6 +245,7 @@ class RegionViewer(QWidget):
         self._artists: list[dict] | None = None  # one dict of persistent artists per pane
         self._contour_key: tuple | None = None  # what the drawn region outlines were built from
         self._hold = 0  # >0 while a burst of changes is collected into a single redraw
+        self._editable = True  # False: the slices browse and pick only, drawing is off
         self._vmin, self._vmax = 0.0, 1.0
         self.tools = RegionTools()  # placed by the owner, next to the other controls of the region step
         self.figure = Figure(figsize=(9, 3.6))
@@ -401,23 +402,60 @@ class RegionViewer(QWidget):
     def picking_centre(self) -> bool:
         return self._pick_centre
 
+    def set_editable(self, on: bool) -> None:
+        """Whether a drag on the slices draws. Off, the viewer browses and picks a centre only.
+
+        The drawing tools live on one step's page, but the canvas does not know that: without this a
+        drag on another step's slices ran the tool and the mode that were last selected, and with
+        ``replace`` selected that silently threw away a carefully drawn region.
+        """
+        on = bool(on)
+        if on == self._editable:
+            return
+        self._editable = on
+        if not on:
+            self._cancel_gesture()
+
+    @property
+    def editable(self) -> bool:
+        return self._editable
+
+    def snapshot(self) -> np.ndarray | None:
+        """The region as a read-only array that keeps its content while the region is edited on."""
+        return None if self._editor is None else self._editor.snapshot()
+
     def set_region(self, mask: np.ndarray | None) -> None:
-        """Replace the region by ``mask`` (``None``: the whole volume); the drawing history is dropped."""
+        """Replace the region by ``mask``; ``None`` (the whole volume) is undoable, an array is not.
+
+        A boolean volume cannot be carried in a :class:`MaskOp`, so an arbitrary mask still has to
+        replace the base and drop the history. Everything the user can express as a shape -- the whole
+        volume, a box -- goes through :meth:`apply` instead and can be undone.
+        """
         if self._editor is None:
             return
-        base = FULL_BASE if mask is None else np.asarray(mask, dtype=bool)
+        if mask is None:
+            self.apply(MaskOp("fill"))
+            return
         self._cancel_gesture()
-        self._editor.reset(base)
+        self._editor.reset(np.asarray(mask, dtype=bool))
         self._after_edit()
 
     def set_box(self, box) -> None:
-        """Replace the region by the box ``((x0, x1), (y0, y1), (z0, z1))``."""
+        """Replace the region by the half-open box ``((x0, x1), (y0, y1), (z0, z1))``, undoably."""
         if self._editor is None:
             return
-        (x0, x1), (y0, y1), (z0, z1) = box
-        m = np.zeros(self._editor.shape, dtype=bool)
-        m[z0:z1, y0:y1, x0:x1] = True
-        self.set_region(m)
+        (x0, x1), (y0, y1), (z0, z1) = (tuple(int(v) for v in pair) for pair in box)
+        # a rectangle on xy extruded through z is exactly the box, and it is one undoable operation;
+        # MaskOp corners and depth are inclusive while a box is half-open
+        self.apply(
+            MaskOp(
+                "rectangle",
+                "xy",
+                ((float(x0), float(y0)), (float(x1 - 1), float(y1 - 1))),
+                depth=(z0, z1 - 1),
+                mode="replace",
+            )
+        )
 
     def apply(self, op: MaskOp) -> None:
         if self._editor is None:
@@ -686,6 +724,8 @@ class RegionViewer(QWidget):
             if event.button == LEFT:
                 self._centre_from_click(plane, float(event.xdata), float(event.ydata))
             return
+        if not self._editable:
+            return  # browsing: the drawing tools belong to the step that owns them
         tool = self.tools.settings().tool
         p = _voxel_point(event)
         if tool == "polygon":

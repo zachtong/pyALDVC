@@ -7,6 +7,37 @@ All notable changes to pyALDVC are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **The texture analysis no longer lets the region move under a running job.** The sweep was handed
+  the mask editor's own array while region editing stayed enabled, so a shape added mid-sweep changed
+  the input of the cube sizes that had not been analysed yet -- and the source tag could detect that
+  afterwards but never reconstruct what had actually been correlated. `MaskEditor.snapshot()` now
+  returns a read-only view and the next edit rebinds the editor to a copy, so the worker keeps the
+  region it was given and nothing is copied unless an edit really happens. A boolean volume of a
+  large scan is a byte per voxel, which is why this is copy-on-write rather than a copy at dispatch.
+- **A drag on the slices of another step no longer redraws the region.** The drawing tools live on
+  step 1's page, but the canvas kept the last tool and mode, so a navigation-like drag on step 2 with
+  *Replace* selected silently threw away a carefully drawn region. The viewer has an explicit
+  editable state: step 1 draws, the other steps browse and (in step 2) pick a centre.
+- **Whole volume and a typed bounding box can be undone.** Both went through `MaskEditor.reset`,
+  which drops the operations and the redo stack, so the Undo button beside them could not bring back
+  a region that had taken real work to draw. They are ordinary operations now -- a `fill`, and a
+  rectangle extruded through z -- which is also exactly the box, verified over three hundred random
+  boxes. Copying an arbitrary DVC region of interest still replaces the base and says so: a boolean
+  volume cannot be carried in a `MaskOp`.
+- **A finished RVE sweep no longer overwrites a cube size it does not describe.** `_on_sweep_finished`
+  wrote the stable size into step 3 whenever one existed, before any staleness check, and forced the
+  view to the RVE tab -- so a sweep of a region the user had already replaced quietly became the
+  analysed cube, labelled as coming from the RVE analysis. It now writes only when the sweep still
+  describes the current input *and* the user has not typed a size since dispatch; otherwise the
+  sweep is kept, the log says which case it was, and the controls and the current tab are left
+  alone. The provenance label is also cleared when the reference volume changes, so it cannot credit
+  the analysis of another volume. The manual *Use size* action already had this check.
+- **The texture window's buttons settle whatever order the worker's signals arrive in.** The result,
+  cancel and failure signals are emitted from inside `QThread.run`, so a slot can reach the UI while
+  the thread is still alive -- and the refresh declines to act then, which could leave *Apply* and
+  *Use size* disabled until some later input change happened to refresh them. The native `finished`
+  signal now performs the final refresh, with the worker bound into the connection so a termination
+  from a job that has since been replaced is ignored.
 - **The subset-split byte budget is decided for the whole reference, not per tile.** When the packed
   keep rows exceeded `MAX_SPLIT_BYTES` part-way through a tiled plan, splitting was switched off from
   that tile onward and the keep rows were dropped for the whole reference -- but the tiles that had

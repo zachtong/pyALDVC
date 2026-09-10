@@ -294,6 +294,7 @@ class MaskEditor:
     mask: NDArray[np.bool_] = field(init=False)
     _redo: list[MaskOp] = field(default_factory=list, init=False, repr=False)
     _full_base: bool = field(default=False, init=False, repr=False)
+    _shared: bool = field(default=False, init=False, repr=False)  # a snapshot is out; copy before editing
     _count: int | None = field(default=None, init=False, repr=False)
     _box: Box | None = field(default=None, init=False, repr=False)
     _box_valid: bool = field(default=False, init=False, repr=False)
@@ -342,6 +343,25 @@ class MaskEditor:
             self._count = int(np.count_nonzero(self.mask))
         return self._count
 
+    def snapshot(self) -> NDArray[np.bool_]:
+        """A read-only view of the mask that keeps its content while the editor goes on being edited.
+
+        The next in-place edit rebinds ``self.mask`` to a copy, so a worker handed the snapshot keeps
+        the region it was given -- a long analysis cannot end up reading a mask the user changed while
+        it ran. Nothing is copied unless an edit actually happens, which is the common case, and a
+        boolean volume of a large scan is a byte per voxel that should not be spent for nothing.
+        """
+        self._shared = True
+        view = self.mask.view()
+        view.flags.writeable = False  # the holder must not write into the editor's array either
+        return view
+
+    def _detach(self) -> None:
+        """Give up the array a snapshot is holding, before writing into it."""
+        if self._shared:
+            self.mask = self.mask.copy()
+            self._shared = False
+
     def box(self) -> Box | None:
         """Bounding box ``((x0, x1), (y0, y1), (z0, z1))`` of the material voxels; None when empty.
 
@@ -356,6 +376,7 @@ class MaskEditor:
     # ------------------------------------------------------------------ editing
     def apply(self, op: MaskOp) -> NDArray[np.bool_]:
         """Apply one operation in place; returns the mask."""
+        self._detach()
         if op.shape == "invert":
             np.logical_not(self.mask, out=self.mask)
         elif op.shape == "fill":
@@ -434,18 +455,25 @@ class MaskEditor:
                 self.apply(op)
             self.base, self._full_base = self.mask.copy(), False
         self.ops = []
-        self.mask = self._base_copy()
+        self.mask = self._base_copy()  # a fresh array: whatever a snapshot holds stays as it was
+        self._shared = False
         self._invalidate()
         for op in ops:
             self.apply(op)
         self._redo = redo
 
     def reset(self, base: NDArray[np.bool_] | str | None = None) -> None:
-        """Drop every operation and start again from ``base`` (None: all False, :data:`FULL_BASE`: all True)."""
+        """Drop every operation and start again from ``base`` (None: all False, :data:`FULL_BASE`: all True).
+
+        The operation history goes with it, so this is not undoable: use it for a new volume or an
+        explicit destructive reset, and express a *replacement* of the region as an operation
+        (``fill``, or a ``replace`` shape) so that it can be undone.
+        """
         self._set_base(base, copy=True)
         self.ops = []
         self._redo = []
-        self.mask = self._base_copy()
+        self.mask = self._base_copy()  # a fresh array, so a snapshot keeps what it was given
+        self._shared = False
         self._invalidate()
 
     @property

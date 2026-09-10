@@ -678,6 +678,8 @@
   "skipped": "已跳过",
   "slice-folder": "切片文件夹",
   "stable from {size} voxel": "从 {size} 体素起稳定",
+  "stable from {size} voxel, for the previous input": "从 {size} 体素起稳定（针对之前的输入）",
+  "stable from {size} voxel; step 3 keeps the size you typed": "从 {size} 体素起稳定；步骤 3 保留你输入的尺寸",
   "stalled": "停滞",
   "static rendering; use the camera presets to rotate": "静态渲染；用视角预设旋转",
   "the input changed since: analyse again": "此后输入已更改：请重新分析",

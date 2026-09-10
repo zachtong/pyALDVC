@@ -246,6 +246,7 @@ class TextureWindow(QMainWindow):
         self._shape: tuple[int, int, int] | None = None  # (nz, ny, nx) the region viewer holds
         self._volume_uid = None
         self._size_from_rve: int | None = None  # the edge the RVE step wrote, None when set by hand
+        self._size_edited = False  # the cube of step 3 was typed since the running sweep was dispatched
         self._updating = False
         self.setWindowFlag(Qt.WindowType.Window, True)
         self.resize(1360, 880)
@@ -646,6 +647,7 @@ class TextureWindow(QMainWindow):
         self.steps.set_current(i)
         if i != TAB_SWEEP and self._btn_pick_centre.isChecked():
             self._btn_pick_centre.setChecked(False)  # picking belongs to step 2 only
+        self.region.set_editable(i == TAB_REGION)  # elsewhere the slices browse: a drag must not draw
         self._place_region_viewer(i)
         self._update_overlay()
         self._update_plot_tools()
@@ -701,6 +703,7 @@ class TextureWindow(QMainWindow):
         if shape == self._shape and uid == self._volume_uid:
             return
         self._shape, self._volume_uid = shape, uid
+        self._size_from_rve = None  # the label must not credit the RVE analysis of another volume
         self._updating = True
         try:
             nz, ny, nx = shape if shape is not None else (1, 1, 1)
@@ -918,6 +921,7 @@ class TextureWindow(QMainWindow):
     def _on_size_changed(self) -> None:
         if self._updating:
             return
+        self._size_edited = True  # a finishing sweep must not overwrite what the user just typed
         self._update_cube_info()
         self._update_size_source()
         self._update_overlay()
@@ -992,7 +996,9 @@ class TextureWindow(QMainWindow):
             status.setText(self.tr("Pick a centre point in step 2 first."))
             return
         spacing = tuple(float(v) for v in self._state.para.voxel_size)
-        mask = self.region.mask if self.region.fill_fraction() < 1.0 else None
+        # a read-only snapshot, not the editor's array: the region stays editable while the job runs
+        # and a copy-on-write in the editor keeps what the worker was given (see MaskEditor.snapshot)
+        mask = self.region.snapshot() if self.region.fill_fraction() < 1.0 else None
         job = {"bounds": box, "centre": centre, "spacing": spacing, "mask": mask}
         if kind == "acf":
             cube = self.analysis_box()
@@ -1022,7 +1028,14 @@ class TextureWindow(QMainWindow):
                 return
         self._worker = _TextureWorker(kind, vol, job, parent=self)
         self._job_source = self.current_source() if kind == "acf" else self._sweep_input()
+        if kind == "sweep":
+            self._size_edited = False  # from here, any change to the cube is the user's, not the sweep's
         self._worker.progress.connect(self._on_progress)
+        # the result/cancel/failure signals are emitted from inside run(), so a slot can reach the UI
+        # while the thread is still alive and _refresh_validity would decline to enable anything;
+        # the native termination signal is what guarantees a final, correct button state
+        worker = self._worker
+        worker.finished.connect(lambda w=worker: self._on_worker_finished(w))
         self._worker.finished_analysis.connect(self._on_finished)
         self._worker.finished_sweep.connect(self._on_sweep_finished)
         self._worker.failed.connect(self._on_failed)
@@ -1087,6 +1100,18 @@ class TextureWindow(QMainWindow):
 
     def _is_running(self) -> bool:
         return self._worker is not None and self._worker.isRunning()
+
+    def _on_worker_finished(self, worker) -> None:
+        """The thread has really ended: settle the buttons whatever order the custom signals arrived in.
+
+        ``QThread.finished`` is emitted after ``run`` returns, so ``isRunning`` is false here and
+        :meth:`_refresh_validity` will act on it. The worker is bound into the connection rather than
+        read from ``sender()``, so a signal from a job that has since been replaced is ignored and
+        cannot settle the buttons of the job running now.
+        """
+        if worker is not self._worker:
+            return
+        self._refresh_validity()
 
     def _settle(self) -> None:
         """Terminal UI state after success, failure or cancellation."""
@@ -1164,19 +1189,25 @@ class TextureWindow(QMainWindow):
         self._sweep_source = self._job_source
         self._sweep_progress.setValue(1000)
         size = self.sweep_size()
-        if size is not None:
+        # The input can have moved while the sweep ran, and the user can have typed a cube of their
+        # own. Either way the size this sweep found describes something else now, so it is kept and
+        # labelled rather than written into step 3, and the view stays where the user left it.
+        stale = self.is_sweep_stale
+        if size is not None and not stale and not self._size_edited:
             self._write_size(size)  # step 3 analyses what step 2 found, without another click
         self._settle()
         self._draw_sweep()
-        self.go_to_step(TAB_SWEEP)
-        self._state.log(
-            self.tr("RVE analysis done: {verdict}").format(
-                verdict=self.tr("stable from {size} voxel").format(size=size)
-                if size is not None
-                else self.tr("no stable size in the region")
-            ),
-            "success",
-        )
+        if not stale:
+            self.go_to_step(TAB_SWEEP)
+        if size is None:
+            verdict = self.tr("no stable size in the region")
+        elif stale:
+            verdict = self.tr("stable from {size} voxel, for the previous input").format(size=size)
+        elif self._size_edited:
+            verdict = self.tr("stable from {size} voxel; step 3 keeps the size you typed").format(size=size)
+        else:
+            verdict = self.tr("stable from {size} voxel").format(size=size)
+        self._state.log(self.tr("RVE analysis done: {verdict}").format(verdict=verdict), "success")
 
     def _on_failed(self, message: str, detail: str) -> None:
         kind = self._worker.kind if self._worker is not None else "acf"

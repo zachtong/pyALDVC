@@ -678,6 +678,8 @@
   "skipped": "übersprungen",
   "slice-folder": "Schnittordner",
   "stable from {size} voxel": "stabil ab {size} Voxel",
+  "stable from {size} voxel, for the previous input": "stabil ab {size} Voxel, für die vorherige Eingabe",
+  "stable from {size} voxel; step 3 keeps the size you typed": "stabil ab {size} Voxel; Schritt 3 behält die eingegebene Größe",
   "stalled": "stagniert",
   "static rendering; use the camera presets to rotate": "statische Darstellung; zum Drehen die Kameravorgaben verwenden",
   "the input changed since: analyse again": "die Eingabe hat sich seitdem geändert: erneut analysieren",
