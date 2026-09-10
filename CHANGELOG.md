@@ -38,7 +38,8 @@ All notable changes to pyALDVC are documented here. The format follows
     grey values, so `interp_method="bspline"` is exact under tiling rather than approximate.
   - Not solved by this: the provider still serves whole normalised frames, so the host floor is
     unchanged at about 13 bytes per voxel and 2048^3 is still out of reach. That needs a provider
-    that serves boxes.
+    that serves boxes. `docs/large_volume_limits.md` records that and everything else the
+    optimisation work left behind, with file references and what a fix would take.
 
 ### Changed
 - **Large volumes: the application stops doing whole-volume work for local changes.** Measured on a
