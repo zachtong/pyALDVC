@@ -204,7 +204,6 @@ def precompute_local_context(mesh: DVCMesh, ref, para: DVCPara) -> LocalContext:
     valid = np.zeros(N, dtype=bool)
     node_valid = np.asarray(mesh.node_valid, dtype=bool)
     split_parts: list[tuple] = []
-    split_off = 0
     budget = MAX_SPLIT_BYTES
     split_used = True
     for nodes, box in plan:
@@ -254,7 +253,6 @@ def precompute_local_context(mesh: DVCMesh, ref, para: DVCPara) -> LocalContext:
         valid[nodes] = np.asarray(vd_t, dtype=bool)
         if split is not None:
             split_parts.append((nodes, split[0], split[1], split[2], split[3]))
-        split_off += 1
     valid = np.asarray(valid, dtype=bool) & node_valid
     dt = time.perf_counter() - t0
     split_index = split_keep = split_fraction = None
