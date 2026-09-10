@@ -81,6 +81,7 @@ def build_session(state: AppState, results_path: str | None = None) -> SessionDa
             "color_min": state.color_min,
             "color_max": state.color_max,
             "overlay_alpha": state.overlay_alpha,
+            "background_frame": state.background_frame,
             "current_frame": state.current_frame,
         },
         results_path=results_path,
@@ -239,6 +240,17 @@ def _rebuild_drawn_masks(state: AppState) -> None:
             entry.mask_ops = None
 
 
+def _background_frame(value, n_volumes: int) -> int | None:
+    """The saved background frame, or None (follow the selected one) when it no longer points at a frame."""
+    if value is None:
+        return None
+    try:
+        index = int(value)
+    except (TypeError, ValueError):
+        return None
+    return index if 0 <= index < n_volumes else None
+
+
 def apply_session(data: SessionData, state: AppState, path: str | Path | None = None) -> list[str]:
     """Load a session into ``state``; returns the paths that do not exist (volumes are kept).
 
@@ -262,6 +274,7 @@ def apply_session(data: SessionData, state: AppState, path: str | Path | None = 
         "color_min": float(d.get("color_min", 0.0)),
         "color_max": float(d.get("color_max", 1.0)),
         "overlay_alpha": float(d.get("overlay_alpha", 0.75)),
+        "background_frame": _background_frame(d.get("background_frame"), len(volumes)),
     }
     output_dir = Path(data.output_dir)
     # ---- commit

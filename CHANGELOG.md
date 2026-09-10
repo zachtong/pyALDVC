@@ -7,6 +7,17 @@ All notable changes to pyALDVC are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **The background image under a field has its own frame.** The node grid never leaves the reference
+  configuration, so a field value is drawn where its subset started; drawn over the selected
+  deformed frame the two are a displacement apart, because the material that was at that position
+  has moved. The slice tab has a `Background` combo -- *Selected frame* (the default, unchanged
+  behaviour), *Reference (frame 0)*, or any frame -- and the 3-D tab's volume slices follow the same
+  setting, so the two tabs cannot disagree. A hint next to it says which configuration is on screen.
+  The choice is saved in the session, and a pinned frame that the sequence no longer has is
+  forgotten rather than re-applied later. The strain window and the image export already paired the
+  field with the reference volume; this makes the main window able to do the same.
+  `docs/field_configuration.md` records where each display draws its field and why option 2 of three
+  was the one taken.
 - **`para.tile_local`: solve the local steps over sub-boxes of the volume.** Every local kernel
   addresses `f`, `gx`, `gy`, `gz`, `mask` and `g` relative to a node centre and none of them reduces
   across nodes, so a block of nodes can be solved against a crop of the volumes with the crop's

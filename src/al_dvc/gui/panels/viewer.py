@@ -86,6 +86,12 @@ class SliceViewer(QWidget):
         self.show_mesh.setChecked(bool(getattr(state, "show_mesh", True)))
         self.show_subset = QCheckBox()  # the subset of the crosshair node and of the node under the pointer
         self.show_subset.setChecked(bool(getattr(state, "show_subset_window", False)))
+        self.background_frame = QComboBox()  # which volume is drawn under the field
+        self.background_frame.setMinimumWidth(140)
+        self._background_label = QLabel()
+        self._config_label = QLabel()
+        self._config_label.setObjectName("hint")
+        self._updating_background = False
         self._lattice_label = QLabel()
         self._lattice_label.setObjectName("hint")
         self._plan = None  # LatticePlan drawn on the slices, None when hidden or not computable
@@ -107,6 +113,10 @@ class SliceViewer(QWidget):
         layout_row.addWidget(self._lattice_label)
         layout_row.addStretch(1)
         layout_row.addWidget(self.equal_scale)
+        layout_row.addSpacing(12)
+        layout_row.addWidget(self._background_label)
+        layout_row.addWidget(self.background_frame)
+        layout_row.addWidget(self._config_label)
         layout_row.addSpacing(12)
         layout_row.addWidget(self._layout_label)
         layout_row.addWidget(self.layout_combo)
@@ -136,6 +146,7 @@ class SliceViewer(QWidget):
         self.canvas.mpl_connect("key_press_event", self._on_key)
         self.canvas.mpl_connect("axes_leave_event", lambda _e: self._set_hover(None, None))
         self.canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.background_frame.currentIndexChanged.connect(self._on_background_frame)
         self.layout_combo.currentIndexChanged.connect(lambda i: self.set_layout(LAYOUTS[i]))
         self.equal_scale.toggled.connect(self._on_equal_scale)
         self.show_mesh.toggled.connect(self._on_show_mesh)
@@ -146,7 +157,7 @@ class SliceViewer(QWidget):
         self._state.volumes_changed.connect(self._on_volumes_changed)
         self._state.current_frame_changed.connect(lambda _i: self._on_volumes_changed())
         self._state.results_changed.connect(self.redraw)
-        self._state.display_changed.connect(self.redraw)
+        self._state.display_changed.connect(self._on_display_changed)
         self._state.mask_changed.connect(self.redraw)
         self._state.params_changed.connect(self.redraw)
         self.retranslate_ui()
@@ -216,11 +227,49 @@ class SliceViewer(QWidget):
         if self.equal_scale.isChecked() and self._volume is not None:
             self.redraw()
 
+    # ------------------------------------------------------------------ background frame
+    def _fill_background_choices(self) -> None:
+        """One entry per frame plus "the selected one"; rebuilt whenever the sequence changes."""
+        self._updating_background = True
+        try:
+            want = self._state.background_frame
+            self.background_frame.clear()
+            self.background_frame.addItem(self.tr("Selected frame"), None)
+            for i in range(len(self._state.volumes)):
+                label = self.tr("Reference (frame 0)") if i == 0 else self.tr("Frame {n}").format(n=i)
+                self.background_frame.addItem(label, i)
+            index = self.background_frame.findData(want)
+            if index < 0 and want is not None:
+                # the pinned frame is gone: forget it, so adding frames back cannot silently re-apply it
+                self._state.background_frame = None
+            self.background_frame.setCurrentIndex(index if index >= 0 else 0)
+            self.background_frame.setEnabled(bool(self._state.volumes))
+        finally:
+            self._updating_background = False
+
+    def _on_background_frame(self, _index: int) -> None:
+        if self._updating_background:
+            return
+        self._state.set_display(background_frame=self.background_frame.currentData())
+
+    def _update_config_label(self) -> None:
+        """Say which configuration is on screen; the field never leaves the reference one."""
+        idx = self._state.background_index()
+        showing = idx is not None and self._state.show_overlay and self._state.result_frame() is not None
+        if not showing:
+            self._config_label.setText("")
+            return
+        self._config_label.setText(
+            self.tr("(both in the reference configuration)")
+            if idx == 0
+            else self.tr("(field at reference positions, image deformed)")
+        )
+
     # ------------------------------------------------------------------ data
-    def _on_volumes_changed(self) -> None:
-        self._cancel_gesture()
-        idx = self._state.current_frame
-        if not self._state.volumes or idx >= len(self._state.volumes):
+    def _load_background(self, reset_sliders: bool) -> None:
+        """Read the volume the background is set to; ``reset_sliders`` on a new sequence or frame."""
+        idx = self._state.background_index()
+        if idx is None or idx >= len(self._state.volumes):
             self._volume = None
             self._volume_index = None
             self.redraw()
@@ -230,23 +279,37 @@ class SliceViewer(QWidget):
         except Exception as exc:
             self._state.log(f"cannot load frame {idx}: {exc}", "error")
             self._volume = None
+            self._volume_index = None
             self.redraw()
             return
         self._volume = np.asarray(vol)
         self._volume_index = idx
         self._vmin, self._vmax = grey_limits(self._volume)
         nz, ny, nx = self._volume.shape
-        for axis, n in (("z", nz), ("y", ny), ("x", nx)):
-            s = self.sliders[axis]
-            s.blockSignals(True)
-            s.setRange(0, n - 1)
-            cur = self._state.slice_index.get(axis)
-            s.setValue(min(cur, n - 1) if cur is not None else n // 2)
-            s.blockSignals(False)
-            self._state.slice_index[axis] = s.value()
+        if reset_sliders:
+            for axis, n in (("z", nz), ("y", ny), ("x", nx)):
+                s = self.sliders[axis]
+                s.blockSignals(True)
+                s.setRange(0, n - 1)
+                cur = self._state.slice_index.get(axis)
+                s.setValue(min(cur, n - 1) if cur is not None else n // 2)
+                s.blockSignals(False)
+                self._state.slice_index[axis] = s.value()
         self.mask_tools.depth_from.setMaximum(max(nz, ny, nx) - 1)
         self.mask_tools.depth_to.setMaximum(max(nz, ny, nx) - 1)
         self.redraw()
+
+    def _on_volumes_changed(self) -> None:
+        self._cancel_gesture()
+        self._fill_background_choices()
+        self._load_background(reset_sliders=True)
+
+    def _on_display_changed(self) -> None:
+        """A display change only re-reads the volume when it moved the background to another frame."""
+        if self._state.background_index() != self._volume_index:
+            self._load_background(reset_sliders=False)
+        else:
+            self.redraw()
 
     def _on_slider(self, axis: str, value: int) -> None:
         self._state.set_slice(axis, int(value))  # emits display_changed -> redraw here and in the 3-D view
@@ -292,6 +355,7 @@ class SliceViewer(QWidget):
             self.canvas.draw_idle()
             return
         self._empty.setVisible(False)
+        self._update_config_label()
         vol = self._volume
         nz, ny, nx = vol.shape
         iz, iy, ix = self.slice_indices()
@@ -760,4 +824,16 @@ class SliceViewer(QWidget):
         for i, text in enumerate((self.tr("Row"), self.tr("Column"), self.tr("2 x 2"))):
             self.layout_combo.setItemText(i, text)
         self.layout_combo.setToolTip(self.tr("Arrangement of the XY / XZ / YZ slices"))
+        self._background_label.setText(self.tr("Background"))
+        self.background_frame.setToolTip(
+            self.tr(
+                "Which volume is drawn in grey under the field. The node grid never leaves the reference "
+                "configuration, so a value is drawn where its subset started; over a deformed frame the two are a "
+                "displacement apart, because the material that was at that position has moved. Choosing the "
+                "reference pairs them. The 3-D view's volume slices follow this too."
+            )
+        )
+        self._config_label.setToolTip(self.background_frame.toolTip())
+        self._fill_background_choices()
+        self._update_config_label()
         self.mask_tools.retranslate_ui()

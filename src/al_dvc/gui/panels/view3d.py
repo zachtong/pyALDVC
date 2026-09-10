@@ -575,10 +575,11 @@ class View3DPanel(QWidget):
         return self.camera_spec()
 
     def _volume_for_scene(self):
+        """The volume the grey slice planes show: the slice tab's background frame, so the two agree."""
         if not self.volume_slices.isChecked() or not self._state.volumes:
             return None
         try:
-            return self._state.volume_array(min(self._state.current_frame, len(self._state.volumes) - 1))
+            return self._state.volume_array(self._state.background_index())
         except Exception as exc:
             self._state.log(f"3-D view: cannot load the volume for the slices: {exc}", "warning")
             return None

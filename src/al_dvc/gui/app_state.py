@@ -155,6 +155,11 @@ class AppState(QObject):
         self.color_max: float = 1.0
         self.overlay_alpha: float = 0.75
         self.show_overlay: bool = True
+        # Which volume is drawn under the field. None follows the selected frame -- the frame the
+        # field belongs to -- and an index pins it; 0 (the reference) is the pairing that matches
+        # where the field is actually drawn, because the node grid never leaves the reference
+        # configuration. See docs/field_configuration.md.
+        self.background_frame: int | None = None
         self.slice_index: dict[str, int | None] = {"z": None, "y": None, "x": None}
         self.slice_layout: str = "grid"  # arrangement of the three slices: "grid" (XY / XZ left, YZ top-right), "row", "column"
         self.slice_equal_scale: bool = False  # same voxels-per-pixel scale on the three planes
@@ -639,6 +644,19 @@ class AppState(QObject):
                 raise AttributeError(key)
             setattr(self, key, val)
         self.display_changed.emit()
+
+    def background_index(self) -> int | None:
+        """Index of the volume to draw under the field, ``None`` without a sequence.
+
+        ``background_frame`` is honoured while it still points at a frame; a sequence that shrank
+        falls back to the selected frame rather than to a frame that is no longer there.
+        """
+        if not self.volumes:
+            return None
+        pinned = self.background_frame
+        if pinned is not None and 0 <= int(pinned) < len(self.volumes):
+            return int(pinned)
+        return min(self.current_frame, len(self.volumes) - 1)
 
     def set_slice(self, axis: str, index: int | None) -> None:
         self.slice_index[axis] = index

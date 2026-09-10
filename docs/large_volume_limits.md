@@ -107,5 +107,6 @@ already resolves `gradient_mode="auto"`, so it can show the tiled figure the sam
 ## 7. The configuration mismatch in the field displays
 
 Separate from memory, and recorded here because it was found while measuring: the field displays draw
-a **reference-configuration** field, and the main slice viewer draws it over a
-**deformed-configuration** image. See `docs/field_configuration.md`.
+a **reference-configuration** field. The slice tab and the 3-D volume slices now let the background
+frame be chosen so the two can be paired (`AppState.background_frame`), but the field itself is still
+never warped outside the 3-D `warped` mode. See `docs/field_configuration.md`.
