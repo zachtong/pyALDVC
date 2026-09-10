@@ -7,6 +7,20 @@ All notable changes to pyALDVC are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Guards that keep the large-volume work from rotting.** `tests/test_large_volume_guards.py` pins the
+  *shape* of the optimisations rather than their speed: how many bytes an operation allocates and how
+  many times a function is called. Both are deterministic, so unlike a timing threshold they can run
+  on a CI runner of any speed -- which is why the `perf` tests are excluded and these are not. Eight
+  guards: a depth-limited mask op allocates nothing volume-sized, an editor over the whole volume holds
+  one boolean volume and not two, a run without a mask carries a 1x1x1 placeholder rather than an
+  all-ones volume, the whole-volume reference bundle is built once per reference, one texture-window
+  edit scans the volume for its bounding box once (it used to be twelve times), one edit repaints the
+  region viewer once, the lattice preview is not recomputed on a slider tick, and the grey window is
+  sampled once per volume rather than once per redraw.
+  `scripts/check_guards.py` reverts each optimisation in the source, checks that the matching guard
+  fails, and puts the source back -- a guard that passes with and without the change it protects reads
+  as coverage while asserting nothing. All eight catch their regression today; the script refuses to
+  run unless `src/` is clean, so an interrupted check costs one `git checkout`.
 - **The background image under a field has its own frame.** The node grid never leaves the reference
   configuration, so a field value is drawn where its subset started; drawn over the selected
   deformed frame the two are a displacement apart, because the material that was at that position
