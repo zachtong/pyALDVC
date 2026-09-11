@@ -42,6 +42,7 @@ sequence of 3-D scans into displacement and strain fields.
 - **Accurate where subset DVC breaks down.** Local subsets are coupled to a global smoothness step, so steep gradients, boundaries and noisy scans stay sub-voxel accurate.
 - **Cracks and holes stay sharp.** A subset that meets a boundary keeps only the material on its own side of it, and the smoothing never crosses it, so a displacement jump survives instead of being averaged away.
 - **Fast.** A 1024 x 1024 x 306 micro-CT scan with 79 200 nodes takes 23 s on an NVIDIA GPU, 3.6 min on a 24-core CPU.
+- **Big scans fit.** A masked 1024^3 run peaks at 14 GB of volume memory instead of 53, so it runs on a 32 GB workstation; drawing and browsing stay responsive because a local change no longer costs a pass over the whole volume.
 - **Point and click.** Load the scans, draw the region of interest on the slices, run, look, export. No code.
 - **Knows your data.** The texture analysis measures your scan and suggests the subset size and step.
 - **See it in 3-D.** Field slices, the deformed lattice, displacement arrows; animations recorded as GIF or MP4.
@@ -79,6 +80,7 @@ Micro-CT scan of the MATLAB example, 1024 x 1024 x 306 voxels, 79 200 nodes:
 | Strain | in the run | its own window, four methods, four measures, recomputed on demand |
 | 3-D view | - | slices, lattice, arrows, animations, GIF / MP4 recording |
 | Formats | MATLAB | TIFF, MATLAB, NumPy, HDF5, NIfTI, NRRD, DICOM; ParaView export |
+| Large scans | whole volume in memory | local steps over sub-boxes, streamed frames, gradients on the fly when they would not fit |
 | Long sequences | - | checkpoints, resume, batch runs, sessions |
 | Install | MATLAB licence | `pip install al-dvc`, or a portable Windows bundle |
 

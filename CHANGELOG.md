@@ -4,71 +4,7 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
-
-### Fixed
-- **The texture analysis no longer lets the region move under a running job.** The sweep was handed
-  the mask editor's own array while region editing stayed enabled, so a shape added mid-sweep changed
-  the input of the cube sizes that had not been analysed yet -- and the source tag could detect that
-  afterwards but never reconstruct what had actually been correlated. `MaskEditor.snapshot()` now
-  returns a read-only view and the next edit rebinds the editor to a copy, so the worker keeps the
-  region it was given and nothing is copied unless an edit really happens. A boolean volume of a
-  large scan is a byte per voxel, which is why this is copy-on-write rather than a copy at dispatch.
-- **A drag on the slices of another step no longer redraws the region.** The drawing tools live on
-  step 1's page, but the canvas kept the last tool and mode, so a navigation-like drag on step 2 with
-  *Replace* selected silently threw away a carefully drawn region. The viewer has an explicit
-  editable state: step 1 draws, the other steps browse and (in step 2) pick a centre.
-- **Whole volume and a typed bounding box can be undone.** Both went through `MaskEditor.reset`,
-  which drops the operations and the redo stack, so the Undo button beside them could not bring back
-  a region that had taken real work to draw. They are ordinary operations now -- a `fill`, and a
-  rectangle extruded through z -- which is also exactly the box, verified over three hundred random
-  boxes. Copying an arbitrary DVC region of interest still replaces the base and says so: a boolean
-  volume cannot be carried in a `MaskOp`.
-- **An unusable typed bounding box is reported instead of ignored.** `normalise_box` rejects a width
-  below two voxels and the handler swallowed that and returned, so the spin boxes showed one range
-  while the region -- and therefore the analysis -- was still the previous one. The bounds are three
-  pairs of spin boxes that report every keystroke, so snapping them back would fight the typist:
-  instead the message says what the rule is and what is still in use, and both analyses are disabled
-  until the bounds are a box again.
-- **An RVE-only result can be exported.** The exports were enabled only when an autocorrelation
-  result existed, so completing step 2 and wanting its plot or its numbers meant running an unrelated
-  step 3 first. The PNG now follows the plot on the tab you are looking at, the JSON summary accepts a
-  sweep with no autocorrelation, and the profiles CSV stays what its name says -- the
-  autocorrelation's own export.
-- **The exported summary says what each analysis came from.** `save_json` always wrote the retained
-  autocorrelation, sweep and recommendation together with no record of their inputs, so an
-  autocorrelation of one volume beside a sweep of another -- which the window allows, and warns about
-  on screen -- was indistinguishable once saved, and two volumes of the same geometry exported
-  identically. There is now a `provenance` block per analysis: volume name and uid, region box and
-  revision, centre, spacing, the captured units, the analysis box or sweep settings, whether it still
-  describes the current input, and a `same_input` flag when both are present.
-- **The cube info names every capped axis.** The reduction notice tested the largest axis, so a cube
-  clipped on one axis only -- 64 x 64 x 24 against a scalar control reading 64 -- said nothing at all.
-- **A finished RVE sweep no longer overwrites a cube size it does not describe.** `_on_sweep_finished`
-  wrote the stable size into step 3 whenever one existed, before any staleness check, and forced the
-  view to the RVE tab -- so a sweep of a region the user had already replaced quietly became the
-  analysed cube, labelled as coming from the RVE analysis. It now writes only when the sweep still
-  describes the current input *and* the user has not typed a size since dispatch; otherwise the
-  sweep is kept, the log says which case it was, and the controls and the current tab are left
-  alone. The provenance label is also cleared when the reference volume changes, so it cannot credit
-  the analysis of another volume. The manual *Use size* action already had this check.
-- **The texture window's buttons settle whatever order the worker's signals arrive in.** The result,
-  cancel and failure signals are emitted from inside `QThread.run`, so a slot can reach the UI while
-  the thread is still alive -- and the refresh declines to act then, which could leave *Apply* and
-  *Use size* disabled until some later input change happened to refresh them. The native `finished`
-  signal now performs the final refresh, with the worker bound into the connection so a termination
-  from a job that has since been replaced is ignored.
-- **The subset-split byte budget is decided for the whole reference, not per tile.** When the packed
-  keep rows exceeded `MAX_SPLIT_BYTES` part-way through a tiled plan, splitting was switched off from
-  that tile onward and the keep rows were dropped for the whole reference -- but the tiles that had
-  already run kept the Hessian, mean and ZNCC denominator they had built over their *kept component
-  alone*. Those nodes then correlated the full subset window against a normalisation built from a
-  subset of it, while the nodes of the later tiles used the full window throughout. Nothing raised
-  and nothing was logged past the one warning; the numbers were simply wrong, and inconsistently so
-  between tiles. `plan_split` now sizes the keep rows for the whole reference before any tile runs,
-  so the decision is one decision, and `split_rows` takes the per-node in-mask fraction it computed
-  rather than sweeping the mask again. Reachable on a masked run large enough to be tiled whose
-  candidate subsets need more than 512 MB of keep rows.
+## [0.8.0] - 2026-09-11
 
 ### Added
 - **Guards that keep the large-volume work from rotting.** `tests/test_large_volume_guards.py` pins the
@@ -192,6 +128,69 @@ All notable changes to pyALDVC are documented here. The format follows
   (one window for every frame), so the speckle has about three times the contrast it had.
 
 ### Fixed
+- **The texture analysis no longer lets the region move under a running job.** The sweep was handed
+  the mask editor's own array while region editing stayed enabled, so a shape added mid-sweep changed
+  the input of the cube sizes that had not been analysed yet -- and the source tag could detect that
+  afterwards but never reconstruct what had actually been correlated. `MaskEditor.snapshot()` now
+  returns a read-only view and the next edit rebinds the editor to a copy, so the worker keeps the
+  region it was given and nothing is copied unless an edit really happens. A boolean volume of a
+  large scan is a byte per voxel, which is why this is copy-on-write rather than a copy at dispatch.
+- **A drag on the slices of another step no longer redraws the region.** The drawing tools live on
+  step 1's page, but the canvas kept the last tool and mode, so a navigation-like drag on step 2 with
+  *Replace* selected silently threw away a carefully drawn region. The viewer has an explicit
+  editable state: step 1 draws, the other steps browse and (in step 2) pick a centre.
+- **Whole volume and a typed bounding box can be undone.** Both went through `MaskEditor.reset`,
+  which drops the operations and the redo stack, so the Undo button beside them could not bring back
+  a region that had taken real work to draw. They are ordinary operations now -- a `fill`, and a
+  rectangle extruded through z -- which is also exactly the box, verified over three hundred random
+  boxes. Copying an arbitrary DVC region of interest still replaces the base and says so: a boolean
+  volume cannot be carried in a `MaskOp`.
+- **An unusable typed bounding box is reported instead of ignored.** `normalise_box` rejects a width
+  below two voxels and the handler swallowed that and returned, so the spin boxes showed one range
+  while the region -- and therefore the analysis -- was still the previous one. The bounds are three
+  pairs of spin boxes that report every keystroke, so snapping them back would fight the typist:
+  instead the message says what the rule is and what is still in use, and both analyses are disabled
+  until the bounds are a box again.
+- **An RVE-only result can be exported.** The exports were enabled only when an autocorrelation
+  result existed, so completing step 2 and wanting its plot or its numbers meant running an unrelated
+  step 3 first. The PNG now follows the plot on the tab you are looking at, the JSON summary accepts a
+  sweep with no autocorrelation, and the profiles CSV stays what its name says -- the
+  autocorrelation's own export.
+- **The exported summary says what each analysis came from.** `save_json` always wrote the retained
+  autocorrelation, sweep and recommendation together with no record of their inputs, so an
+  autocorrelation of one volume beside a sweep of another -- which the window allows, and warns about
+  on screen -- was indistinguishable once saved, and two volumes of the same geometry exported
+  identically. There is now a `provenance` block per analysis: volume name and uid, region box and
+  revision, centre, spacing, the captured units, the analysis box or sweep settings, whether it still
+  describes the current input, and a `same_input` flag when both are present.
+- **The cube info names every capped axis.** The reduction notice tested the largest axis, so a cube
+  clipped on one axis only -- 64 x 64 x 24 against a scalar control reading 64 -- said nothing at all.
+- **A finished RVE sweep no longer overwrites a cube size it does not describe.** `_on_sweep_finished`
+  wrote the stable size into step 3 whenever one existed, before any staleness check, and forced the
+  view to the RVE tab -- so a sweep of a region the user had already replaced quietly became the
+  analysed cube, labelled as coming from the RVE analysis. It now writes only when the sweep still
+  describes the current input *and* the user has not typed a size since dispatch; otherwise the
+  sweep is kept, the log says which case it was, and the controls and the current tab are left
+  alone. The provenance label is also cleared when the reference volume changes, so it cannot credit
+  the analysis of another volume. The manual *Use size* action already had this check.
+- **The texture window's buttons settle whatever order the worker's signals arrive in.** The result,
+  cancel and failure signals are emitted from inside `QThread.run`, so a slot can reach the UI while
+  the thread is still alive -- and the refresh declines to act then, which could leave *Apply* and
+  *Use size* disabled until some later input change happened to refresh them. The native `finished`
+  signal now performs the final refresh, with the worker bound into the connection so a termination
+  from a job that has since been replaced is ignored.
+- **The subset-split byte budget is decided for the whole reference, not per tile.** When the packed
+  keep rows exceeded `MAX_SPLIT_BYTES` part-way through a tiled plan, splitting was switched off from
+  that tile onward and the keep rows were dropped for the whole reference -- but the tiles that had
+  already run kept the Hessian, mean and ZNCC denominator they had built over their *kept component
+  alone*. Those nodes then correlated the full subset window against a normalisation built from a
+  subset of it, while the nodes of the later tiles used the full window throughout. Nothing raised
+  and nothing was logged past the one warning; the numbers were simply wrong, and inconsistently so
+  between tiles. `plan_split` now sizes the keep rows for the whole reference before any tile runs,
+  so the decision is one decision, and `split_rows` takes the per-node in-mask fraction it computed
+  rather than sweeping the mask again. Reachable on a masked run large enough to be tiled whose
+  candidate subsets need more than 512 MB of keep rows.
+
 - The node grid drawn on the slices and the deformed lattice in the 3-D view joined nodes that
   the mask separates, so a crack or a hole looked bridged even though the solver had cut the
   mesh there. Both now stop at the boundary: the slice preview marks the cut edges with the
