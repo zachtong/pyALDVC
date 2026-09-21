@@ -5,6 +5,14 @@ version: 0.9.0
 date-released: 2026-09-21
 license: BSD-3-Clause
 repository-code: "https://github.com/zachtong/pyALDVC"
+doi: 10.5281/zenodo.22883767
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.22883767
+    description: "The concept DOI: resolves to the latest release"
+  - type: doi
+    value: 10.5281/zenodo.22883768
+    description: "Version 0.9.0"
 authors:
   - family-names: Tong
     given-names: Zixiang

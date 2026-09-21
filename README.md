@@ -152,6 +152,23 @@ Read the [user guide](docs/user_guide.md) to get started.
 
 ## Citation
 
+Software (concept DOI, always the latest version; each release also has its own):
+
+> Tong, Z., Yang, J. pyALDVC: Augmented Lagrangian Digital Volume Correlation in Python.
+> Zenodo. https://doi.org/10.5281/zenodo.22883767
+
+```bibtex
+@software{tong_pyaldvc,
+  author    = {Tong, Zixiang and Yang, Jin},
+  title     = {{pyALDVC}: Augmented Lagrangian Digital Volume Correlation in Python},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.22883767},
+  url       = {https://github.com/zachtong/pyALDVC}
+}
+```
+
+The method:
+
 > J. Yang, L. Hazlett, A. K. Landauer, C. Franck. Augmented Lagrangian
 > Digital Volume Correlation (ALDVC). *Experimental Mechanics* 60, 1205-1223
 > (2020). https://doi.org/10.1007/s11340-020-00607-3
