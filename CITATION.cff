@@ -1,17 +1,19 @@
 cff-version: 1.2.0
 message: "If you use pyALDVC, please cite the software and the AL-DVC method paper."
 title: "pyALDVC: Augmented Lagrangian Digital Volume Correlation in Python"
-version: 0.2.0
-date-released: 2026-09-02
+version: 0.8.0
+date-released: 2026-09-11
 license: BSD-3-Clause
 repository-code: "https://github.com/zachtong/pyALDVC"
 authors:
   - family-names: Tong
     given-names: Zixiang
     email: zachtong@utexas.edu
+    orcid: "https://orcid.org/0009-0008-6807-0757"
     affiliation: "The University of Texas at Austin"
   - family-names: Yang
     given-names: Jin
+    orcid: "https://orcid.org/0000-0002-5967-980X"
     affiliation: "The University of Texas at Austin"
 keywords:
   - digital volume correlation

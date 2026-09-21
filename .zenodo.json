@@ -1,0 +1,45 @@
+{
+  "title": "pyALDVC: Augmented Lagrangian Digital Volume Correlation in Python",
+  "upload_type": "software",
+  "description": "<p>pyALDVC is an open-source Python implementation of augmented Lagrangian digital volume correlation (AL-DVC): local subset correlation coupled to a global smoothness step by ADMM, for full-field 3-D displacement and strain measurement from volumetric images (micro-CT, confocal and multiphoton microscopy, and other modalities). It ships a desktop application in seven languages and a command-line interface, masks drawn on the slices with subset splitting at boundaries, a texture analysis that measures the correlation length of a scan and the size of its representative volume element, strain post-processing, 3-D visualisation, checkpointed multi-frame runs, and readers and writers for the common volumetric image formats.</p><p>Each release on Zenodo corresponds to the tag of the same name on GitHub and to the version of the same number on PyPI (<code>pip install al-dvc</code>).</p>",
+  "creators": [
+    {
+      "name": "Tong, Zixiang",
+      "affiliation": "The University of Texas at Austin",
+      "orcid": "0009-0008-6807-0757"
+    },
+    {
+      "name": "Yang, Jin",
+      "affiliation": "The University of Texas at Austin",
+      "orcid": "0000-0002-5967-980X"
+    }
+  ],
+  "license": "BSD-3-Clause",
+  "access_right": "open",
+  "keywords": [
+    "digital volume correlation",
+    "DVC",
+    "augmented Lagrangian",
+    "ADMM",
+    "full-field measurement",
+    "micro-CT",
+    "confocal microscopy",
+    "experimental mechanics",
+    "Python"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "10.1007/s11340-020-00607-3",
+      "relation": "isDerivedFrom",
+      "resource_type": "publication-article",
+      "scheme": "doi"
+    },
+    {
+      "identifier": "https://pypi.org/project/al-dvc/",
+      "relation": "isIdenticalTo",
+      "resource_type": "software",
+      "scheme": "url"
+    }
+  ],
+  "language": "eng"
+}
