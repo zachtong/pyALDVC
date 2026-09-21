@@ -24,13 +24,17 @@ from .analysis import TextureResult, result_from_acf
 from .boxes import Box, box_centre, box_size, normalise_box, whole_box
 from .crossing import THRESHOLDS
 from .rve import (
+    CRITERIA,
+    DEFAULT_CV_ABS_TOLERANCE,
+    DEFAULT_CV_WINDOW,
     DEFAULT_MIN_SPAN,
     DEFAULT_TOLERANCE_ABS,
     DEFAULT_TOLERANCE_REL,
     SizeLevel,
     SizeSweep,
     SubVolume,
-    decide_plateau,
+    criterion_settings,
+    decide,
 )
 
 DEFAULT_START = 32  # edge of the smallest cube of the sweep
@@ -119,12 +123,15 @@ def analyse_cube(
     max_lag=None,
     min_overlap: float = MIN_OVERLAP,
     radial_bin: float | None = None,
+    estimator: str = ESTIMATOR,
 ) -> TextureResult:
     """Profiles, correlation lengths, noise floor and periodicity of one box of ``vol``.
 
     ``mask`` (the analysis region, over the whole volume) only matters where it cuts into the box:
     the voxels it excludes take no part in any pair and the overlap correction counts the pairs that
-    remain. ``settings["fill"]`` reports how much of the box survived.
+    remain. ``settings["fill"]`` reports how much of the box survived. ``estimator`` is the
+    overlap-corrected one unless a caller wants the raw ``"window"`` estimator, which is what the
+    DVC Challenge 2.0 analysis used and carries the geometric decay of the overlap.
     """
     a = np.asarray(vol)
     if a.ndim != 3:
@@ -146,9 +153,9 @@ def analyse_cube(
             sub_mask = m
     size = box_size(box)
     lag = max_lag_for(size) if max_lag is None else max_lag
-    ac = autocorrelation(sub, spacing, lag, ESTIMATOR, sub_mask, min_overlap)
+    ac = autocorrelation(sub, spacing, lag, estimator, sub_mask, min_overlap)
     settings = {
-        "estimator": ESTIMATOR,
+        "estimator": estimator,
         "box": tuple(tuple(int(v) for v in pair) for pair in box),
         "centre": box_centre(box),
         "size": size,
@@ -179,13 +186,21 @@ def sweep_concentric(
     min_span: float = DEFAULT_MIN_SPAN,
     progress: Callable[[float, str], None] | None = None,
     stop: Callable[[], bool] | None = None,
+    estimator: str = ESTIMATOR,
+    criterion: str = "plateau",
+    cv_window: int = DEFAULT_CV_WINDOW,
+    cv_tolerance=None,
+    cv_abs_tolerance: float = DEFAULT_CV_ABS_TOLERANCE,
 ) -> SizeSweep:
     """Correlation lengths against the edge of concentric cubes about ``centre``.
 
     One cube per size, each analysed on its own data alone, so the size from which the lengths stop
     moving is the size the texture actually needs. The spread across positions is not measured (one
-    cube per size), so the plateau test rests on the size trend alone.
+    cube per size), so the convergence test rests on the size trend alone: the plateau test by
+    default, or the sliding-window CV test of DVC Challenge 2.0 with ``criterion="cv_window"``.
     """
+    if criterion not in CRITERIA:
+        raise ValueError(f"criterion must be one of {CRITERIA}, got {criterion!r}")
     a = np.asarray(vol)
     bounds = whole_box(a.shape) if bounds is None else normalise_box(bounds, a.shape)
     sizes = concentric_sizes(centre, bounds, start, step, count)
@@ -196,7 +211,7 @@ def sweep_concentric(
         if progress is not None:
             progress(i / max(1, len(sizes)), " x ".join(str(v) for v in size))
         box = cube_box(centre, size)
-        res = analyse_cube(a, box, spacing, mask, thresholds)
+        res = analyse_cube(a, box, spacing, mask, thresholds, estimator=estimator)
         (x0, x1), (y0, y1), (z0, z1) = box
         sub = SubVolume((z0, z1, y0, y1, x0, x1), {float(t): res.length(axis, t) for t in thresholds})
         mean = {float(t): (float(v) if (v := sub.lengths[float(t)]) is not None else float("nan")) for t in thresholds}
@@ -207,28 +222,32 @@ def sweep_concentric(
         progress(1.0, "done")
     eff = np.array([lvl.effective for lvl in levels], dtype=np.float64)
     decisions = {
-        float(t): decide_plateau(
+        float(t): decide(
             eff,
             [lvl.mean[float(t)] for lvl in levels],
             [lvl.std[float(t)] for lvl in levels],
             float(t),
-            tolerance_rel,
-            tolerance_abs,
-            min_span,
+            criterion,
+            tolerance_rel=tolerance_rel,
+            tolerance_abs=tolerance_abs,
+            min_span=min_span,
+            cv_window=cv_window,
+            cv_tolerance=cv_tolerance,
+            cv_abs_tolerance=cv_abs_tolerance,
         )
         for t in thresholds
     }
     settings = {
         "axis": axis,
-        "estimator": ESTIMATOR,
+        "estimator": estimator,
         "centre": tuple(int(v) for v in centre),
         "bounds": tuple(tuple(int(v) for v in pair) for pair in bounds),
         "start": int(start),
         "step": int(step),
         "count": int(count),
         "min_overlap": MIN_OVERLAP,
-        "tolerance_rel": tolerance_rel,
-        "tolerance_abs": tolerance_abs,
-        "min_span": min_span,
+        **criterion_settings(
+            criterion, tolerance_rel, tolerance_abs, min_span, cv_window, cv_tolerance, cv_abs_tolerance, thresholds
+        ),
     }
     return SizeSweep(levels, decisions, axis, settings)

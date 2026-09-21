@@ -152,6 +152,8 @@ al-dvc run config.yaml                                                 # see exa
 al-dvc plot results/aldvc.npz --field exx --frame 1
 al-dvc batch study/*.aldvc --export npz summary report              # sessions saved by the GUI, one after another
 al-dvc texture scan/ref.tif                                            # correlation lengths and a subset suggestion
+al-dvc texture scan/ref.tif --sweep --rve-criterion cv-window          # RVE sweep with the DVC Challenge 2.0 test
+al-dvc texture scan/ref.tif --sweep --estimator window                 # the raw window estimator (geometric decay kept)
 al-dvc info scan/*.tif
 ```
 

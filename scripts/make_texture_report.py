@@ -330,6 +330,65 @@ def page_sweep(pdf):
     return sweep
 
 
+def page_criteria(pdf):
+    """The plateau test against the sliding-window CV test of DVC Challenge 2.0, on the same concentric
+    sweep, with both estimators. The raw window estimator carries the geometric decay of the overlap,
+    which shrinks with the cube, so part of what looks like convergence with size is that bias fading."""
+    from al_dvc.texture import DEFAULT_CV_TOLERANCE, sweep_concentric
+
+    radius, phi = 5.0, 0.3
+    shape = (160, 160, 160)
+    vol, _ = boolean_spheres(shape, radius, phi, seed=21)
+    centre = (80, 80, 80)
+    truth = {t: analytic_length(radius, phi, t) for t in (ONE_OVER_E, 0.1)}
+    t0 = time.perf_counter()
+    runs = {}
+    for estimator in ("overlap", "window"):
+        for criterion in ("plateau", "cv_window"):
+            runs[estimator, criterion] = sweep_concentric(
+                vol, centre, start=16, step=16, count=9, estimator=estimator, criterion=criterion
+            )
+    dt = time.perf_counter() - t0
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.8), sharey=False)
+    for ax, t in zip(axes, (ONE_OVER_E, 0.1)):
+        for estimator, color in (("overlap", "C0"), ("window", "C3")):
+            sweep = runs[estimator, "plateau"]
+            ax.plot(sweep.sizes, sweep.means(t), marker="o", color=color, label=f"{estimator} estimator")
+            for criterion, ls in (("plateau", "--"), ("cv_window", ":")):
+                d = runs[estimator, criterion].decisions[t]
+                if d.converged:
+                    ax.axvline(sweep.sizes[d.start_index], color=color, ls=ls, lw=1.2)
+        ax.axhline(truth[t], color="k", lw=0.8, ls="-.", label="analytic length")
+        ax.set_xlabel("cube edge [voxel]")
+        ax.set_ylabel("correlation length [voxel]")
+        ax.set_title(f"threshold {t:.2f}: dashed = plateau, dotted = sliding-window CV")
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=8)
+    lines = [
+        f"Boolean spheres R = {radius:.0f}, phi = {phi}, {shape[0]}^3, concentric cubes 16..144 about the centre ({dt:.1f} s).",
+        f"CV tolerances {DEFAULT_CV_TOLERANCE[ONE_OVER_E]:.2f} (1/e) / {DEFAULT_CV_TOLERANCE[0.1]:.2f} (0.1), "
+        "window 4, fallback 0.5 voxel.",
+    ]
+    for t in (ONE_OVER_E, 0.1):
+        for estimator in ("overlap", "window"):
+            cells = []
+            for criterion in ("plateau", "cv_window"):
+                sweep = runs[estimator, criterion]
+                d = sweep.decisions[t]
+                cells.append(f"{criterion}: edge {sweep.sizes[d.start_index]:.0f}" if d.converged else f"{criterion}: none")
+            first, last = runs[estimator, "plateau"].means(t)[[0, -1]]
+            lines.append(
+                f"threshold {t:.2f}, {estimator:7}: length {first:.2f} at 16 -> {last:.2f} at 144 "
+                f"(analytic {truth[t]:.2f}); {'; '.join(cells)}"
+            )
+    fig.text(0.06, 0.01, "\n".join(lines), fontsize=7.5, family="monospace")
+    fig.tight_layout(rect=(0, 0.2, 1, 1))
+    pdf.savefig(fig)
+    plt.close(fig)
+    return runs
+
+
 def page_heuristic(pdf):
     """The subset factor against the displacement error of the pipeline on a Boolean-sphere pair."""
     radius, phi = 5.0, 0.3
@@ -427,6 +486,7 @@ def main(argv=None) -> int:
         page_concentric(pdf)
         page_directional(pdf)
         page_sweep(pdf)
+        page_criteria(pdf)
         heuristic = page_heuristic(pdf)
         page_timings_and_limits(pdf, rows_valid, crop, heuristic)
     print("wrote", out)

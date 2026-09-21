@@ -254,12 +254,22 @@ def cmd_texture(args: argparse.Namespace) -> int:
     sweep = None
     if args.sweep:
         sweep = sweep_concentric(
-            vol, centre, box, args.sweep_start, args.sweep_step, args.sweep_count, spacing=spacing, mask=mask
+            vol,
+            centre,
+            box,
+            args.sweep_start,
+            args.sweep_step,
+            args.sweep_count,
+            spacing=spacing,
+            mask=mask,
+            estimator=args.estimator,
+            criterion=args.rve_criterion.replace("-", "_"),
+            cv_window=args.cv_window,
         )
     edge = args.size if args.size else _sweep_edge(sweep) or min(limits)
     size = tuple(min(int(edge), int(limit)) for limit in limits)  # clipped per axis, as the window does
     try:
-        result = analyse_cube(vol, cube_box(centre, size), spacing, mask)
+        result = analyse_cube(vol, cube_box(centre, size), spacing, mask, estimator=args.estimator)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -419,6 +429,7 @@ def build_parser() -> argparse.ArgumentParser:
     i.set_defaults(func=cmd_info)
 
     from .texture.concentric import DEFAULT_COUNT, DEFAULT_START, DEFAULT_STEP
+    from .texture.rve import DEFAULT_CV_WINDOW
 
     t = sub.add_parser("texture", help="correlation lengths of a volume and a subset suggestion")
     t.add_argument("volume", help="volume file (any supported format)")
@@ -437,6 +448,20 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--sweep-start", type=int, default=DEFAULT_START, help="edge of the smallest cube of the sweep")
     t.add_argument("--sweep-step", type=int, default=DEFAULT_STEP, help="growth of the cube edge per size")
     t.add_argument("--sweep-count", type=int, default=DEFAULT_COUNT, help="number of cube sizes")
+    t.add_argument(
+        "--estimator",
+        choices=("overlap", "window"),
+        default="overlap",
+        help="autocorrelation estimator: overlap-corrected (default), or the raw window estimator of DVC Challenge 2.0",
+    )
+    t.add_argument(
+        "--rve-criterion",
+        choices=("plateau", "cv-window"),
+        default="plateau",
+        help="how the sweep decides a length is stable: the plateau test (default), or the sliding-window CV test "
+        "of DVC Challenge 2.0",
+    )
+    t.add_argument("--cv-window", type=int, default=DEFAULT_CV_WINDOW, help="consecutive sizes per window of the CV test")
     t.add_argument("-o", "--out", default="texture", help="output directory")
     t.set_defaults(func=cmd_texture)
 

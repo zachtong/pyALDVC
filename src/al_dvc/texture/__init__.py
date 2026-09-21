@@ -35,7 +35,23 @@ from .concentric import (
 from .crossing import THRESHOLD_LABELS, THRESHOLDS, Crossing, correlation_length, lengths
 from .profiles import Profile, directional_profiles, radial_profile
 from .recommend import Recommendation, recommend_parameters
-from .rve import PlateauDecision, SizeLevel, SizeSweep, SubVolume, decide_plateau, sample_positions, size_schedule, sweep_sizes
+from .rve import (
+    CRITERIA,
+    DEFAULT_CV_ABS_TOLERANCE,
+    DEFAULT_CV_TOLERANCE,
+    DEFAULT_CV_WINDOW,
+    PlateauDecision,
+    SizeLevel,
+    SizeSweep,
+    SubVolume,
+    cv_tolerance_for,
+    decide,
+    decide_cv_window,
+    decide_plateau,
+    sample_positions,
+    size_schedule,
+    sweep_sizes,
+)
 from .sliding import analyse_range, lag_reach, sliding_autocorrelation
 
 __all__ = [
@@ -52,6 +68,10 @@ __all__ = [
     "Autocorrelation",
     "Box",
     "Crossing",
+    "CRITERIA",
+    "DEFAULT_CV_ABS_TOLERANCE",
+    "DEFAULT_CV_TOLERANCE",
+    "DEFAULT_CV_WINDOW",
     "PlateauDecision",
     "Profile",
     "Recommendation",
@@ -76,6 +96,9 @@ __all__ = [
     "correlation_length",
     "cube_box",
     "cube_limits",
+    "cv_tolerance_for",
+    "decide",
+    "decide_cv_window",
     "decide_plateau",
     "directional_profiles",
     "lag_reach",

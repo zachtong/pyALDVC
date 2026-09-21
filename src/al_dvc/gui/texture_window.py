@@ -439,7 +439,15 @@ class TextureWindow(QMainWindow):
         self.sweep_step.setValue(DEFAULT_STEP)
         self.sweep_count = spin(2, 32, 1)
         self.sweep_count.setValue(DEFAULT_COUNT)
-        for key, w in [("sweep_start", self.sweep_start), ("sweep_step", self.sweep_step), ("sweep_count", self.sweep_count)]:
+        self.sweep_criterion = combo([])  # how "stable" is decided; texts in retranslate_ui
+        self.sweep_criterion.addItem("", "plateau")
+        self.sweep_criterion.addItem("", "cv_window")
+        for key, w in [
+            ("sweep_start", self.sweep_start),
+            ("sweep_step", self.sweep_step),
+            ("sweep_count", self.sweep_count),
+            ("sweep_criterion", self.sweep_criterion),
+        ]:
             lab = form_label()
             self.labels[key] = lab
             sform.addRow(lab, w)
@@ -613,6 +621,7 @@ class TextureWindow(QMainWindow):
             w.valueChanged.connect(lambda _v: self._on_centre_spins())
         self.cube_size.valueChanged.connect(lambda _v: self._on_size_changed())
         self.factor.valueChanged.connect(lambda _v: self._on_factor_changed())
+        self.sweep_criterion.currentIndexChanged.connect(lambda _i: self._on_sweep_settings())
         for w in (self.sweep_start, self.sweep_step, self.sweep_count):
             w.valueChanged.connect(lambda _v: self._on_sweep_settings())
         self.plot_background.currentIndexChanged.connect(lambda _i: self._redraw())
@@ -889,7 +898,7 @@ class TextureWindow(QMainWindow):
         if box is None or centre is None:
             return []
         try:
-            return concentric_sizes(centre, box, **self.sweep_settings())
+            return concentric_sizes(centre, box, **self.sweep_schedule(self.sweep_settings()))
         except ValueError:
             return []
 
@@ -1000,11 +1009,18 @@ class TextureWindow(QMainWindow):
         return self.sweep is not None and self._sweep_source != self._sweep_input()
 
     def sweep_settings(self) -> dict:
+        """Everything the sweep is run with; part of the sweep's source, so a change makes a result stale."""
         return {
             "start": int(self.sweep_start.value()),
             "step": int(self.sweep_step.value()),
             "count": int(self.sweep_count.value()),
+            "criterion": str(self.sweep_criterion.currentData() or "plateau"),
         }
+
+    @staticmethod
+    def sweep_schedule(settings: dict) -> dict:
+        """The part of the sweep settings that decides which cubes are analysed."""
+        return {k: settings[k] for k in ("start", "step", "count")}
 
     # ------------------------------------------------------------------ analyses
     def _start(self, kind: str) -> None:
@@ -1047,7 +1063,7 @@ class TextureWindow(QMainWindow):
         else:
             job["sweep"] = self.sweep_settings()
             try:
-                sizes = concentric_sizes(centre, box, **job["sweep"])
+                sizes = concentric_sizes(centre, box, **self.sweep_schedule(job["sweep"]))
             except ValueError as exc:
                 status.setText(str(exc))
                 return
@@ -1763,6 +1779,7 @@ class TextureWindow(QMainWindow):
             "sweep_start": self.tr("First size [voxel]"),
             "sweep_step": self.tr("Size step [voxel]"),
             "sweep_count": self.tr("Number of sizes"),
+            "sweep_criterion": self.tr("Stability test"),
             "box": self.tr("Bounding box [voxel]"),
             "stable_length": self.tr("Stable length [voxel]"),
             "factor": self.tr("Subset / L(1/e)"),
@@ -1787,6 +1804,16 @@ class TextureWindow(QMainWindow):
         self.labels["sweep_start"].setToolTip(self.tr("Edge of the smallest cube analysed"))
         self.labels["sweep_step"].setToolTip(self.tr("Growth of the cube edge from one size to the next"))
         self.labels["sweep_count"].setToolTip(self.tr("How many cubes to analyse; fewer when the region stops the growth"))
+        self.labels["sweep_criterion"].setToolTip(
+            self.tr(
+                "Plateau: a length is stable from the first size that stays within a band of the largest sizes. "
+                "Sliding-window CV: the test of DVC Challenge 2.0 -- four consecutive sizes whose lengths vary by "
+                "less than 5 % (1/e), 10 % (0.1) or 20 % (0.01), or by less than half a voxel, and every later "
+                "window too."
+            )
+        )
+        self.sweep_criterion.setItemText(0, self.tr("Plateau"))
+        self.sweep_criterion.setItemText(1, self.tr("Sliding-window CV (DVC Challenge 2.0)"))
         self.labels["box"].setToolTip(self.tr("Typing a box replaces the drawn region by that box"))
         self._btn_pick_centre.setText(self.tr("Pick on the slices"))
         self._btn_pick_centre.setToolTip(self.tr("Click a slice to move the centre; the other two slices follow"))

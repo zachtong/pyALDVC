@@ -31,6 +31,18 @@ DEFAULT_TOLERANCE_ABS = 0.25  # voxels
 DEFAULT_MIN_SPAN = 1.5  # largest size / plateau start size
 DEFAULT_REFERENCE_SIZES = 2  # the reference is the mean over this many of the largest sizes
 
+# The second criterion is the one of DVC Challenge 2.0 (Tong et al., Supplementary Material S2.2): a
+# sliding window of consecutive sizes is stable when the coefficient of variation of its lengths is
+# within a tolerance -- looser for the longer, noisier length scales -- or their standard deviation is
+# within half a voxel, and the stability must persist over every later window. Its numbers are those
+# of the reference implementation distributed with that dataset, including the population standard
+# deviation (ddof = 0) it computes.
+CRITERIA = ("plateau", "cv_window")
+DEFAULT_CV_WINDOW = 4  # consecutive sizes per window
+DEFAULT_CV_TOLERANCE = {THRESHOLDS[0]: 0.05, 0.1: 0.10, 0.01: 0.20}  # CV tolerance per threshold
+DEFAULT_CV_ABS_TOLERANCE = 0.5  # voxels: the fallback for lengths so short that the CV is meaningless
+EPS_CV = 1e-12
+
 
 @dataclass(frozen=True)
 class SubVolume:
@@ -74,6 +86,7 @@ class PlateauDecision:
     deviations: NDArray[np.float64]  # |mean_i - reference| per level
     spreads: NDArray[np.float64]  # std across positions per level
     reason: str = ""
+    criterion: str = "plateau"  # which test produced this decision (see CRITERIA)
 
 
 @dataclass(frozen=True)
@@ -193,6 +206,151 @@ def decide_plateau(
     return PlateauDecision(threshold, False, None, reference, tol, dev, spreads, reason)
 
 
+def cv_tolerance_for(threshold: float, cv_tolerance=None) -> float:
+    """The CV tolerance of one threshold: a number for every threshold, a mapping per threshold, or the defaults."""
+    if cv_tolerance is None:
+        table = DEFAULT_CV_TOLERANCE
+    elif isinstance(cv_tolerance, dict):
+        table = cv_tolerance
+    else:
+        return float(cv_tolerance)
+    t = float(threshold)
+    for key, value in table.items():
+        if abs(float(key) - t) < 1e-9:
+            return float(value)
+    return float(DEFAULT_CV_TOLERANCE.get(t, 0.05))
+
+
+def decide_cv_window(
+    sizes: NDArray,
+    means: NDArray,
+    spreads: NDArray,
+    threshold: float,
+    window: int = DEFAULT_CV_WINDOW,
+    cv_tolerance=None,
+    abs_tolerance: float = DEFAULT_CV_ABS_TOLERANCE,
+) -> PlateauDecision:
+    """The sliding-window coefficient-of-variation test on one threshold's lengths.
+
+    The levels are ordered by size (ties by their original index). A window of ``window`` consecutive
+    lengths is stable when ``std / mean <= cv_tolerance`` or ``std <= abs_tolerance`` (population
+    standard deviation, as the reference implementation computes it); a window with a missing length
+    is skipped. The decision is the **first** level of the earliest stable window whose every later
+    window is stable too (the persistence check), which is what "the smallest ROI satisfying the
+    criterion" means in DVC Challenge 2.0. ``reference`` is the mean of that window and ``tolerance``
+    the CV band around it in voxels, so the result reads like :func:`decide_plateau`'s.
+    """
+    sizes = np.asarray(sizes, dtype=np.float64)
+    means = np.asarray(means, dtype=np.float64)
+    spreads = np.asarray(spreads, dtype=np.float64)
+    n = sizes.size
+    t = float(threshold)
+    tol = cv_tolerance_for(t, cv_tolerance)
+    w = max(2, int(window))
+    nan = float("nan")
+
+    def refused(reason: str) -> PlateauDecision:
+        return PlateauDecision(t, False, None, nan, nan, np.full(n, nan), spreads, reason, "cv_window")
+
+    if n == 0:
+        return refused("no sizes")
+    if n < w:
+        return refused(f"fewer sizes ({n}) than the window ({w})")
+    order = np.lexsort((np.arange(n), sizes))  # by size, then by the order the sizes were analysed in
+    m = means[order]
+
+    def window_values(end: int):
+        start = end - w + 1
+        vals = m[start : end + 1]
+        return vals if start >= 0 and bool(np.all(np.isfinite(vals))) else None
+
+    def stable(vals) -> bool | None:
+        """True / False, or None for a window the reference implementation skips (mean at zero)."""
+        mu = float(np.mean(vals))
+        if mu <= EPS_CV:
+            return None
+        sd = float(np.std(vals))  # ddof = 0
+        return sd / mu <= tol or sd <= abs_tolerance
+
+    reason = "no window of sizes is stable"
+    for end in range(w - 1, n):
+        vals = window_values(end)
+        if vals is None:
+            reason = "a length is missing inside a window of sizes"
+            continue
+        ok = stable(vals)
+        if ok is None:
+            continue
+        if not ok:
+            sd, mu = float(np.std(vals)), float(np.mean(vals))
+            reason = f"CV {sd / mu:.3f} exceeds {tol:.3f} and the spread {sd:.3f} exceeds {abs_tolerance:.3f} voxel"
+            continue
+        persistent = True
+        for later in range(end + 1, n):
+            later_vals = window_values(later)
+            if later_vals is None:
+                persistent, reason = False, "a length is missing in a later window of sizes"
+                break
+            later_ok = stable(later_vals)
+            if later_ok is None:
+                continue
+            if not later_ok:
+                persistent, reason = False, "a later window of sizes is not stable"
+                break
+        if persistent:
+            start = end - w + 1
+            reference = float(np.mean(vals))
+            return PlateauDecision(
+                t,
+                True,
+                int(order[start]),
+                reference,
+                tol * reference,
+                np.abs(means - reference),
+                spreads,
+                "",
+                "cv_window",
+            )
+    return refused(reason)
+
+
+def decide(
+    sizes,
+    means,
+    spreads,
+    threshold: float,
+    criterion: str = "plateau",
+    *,
+    tolerance_rel: float = DEFAULT_TOLERANCE_REL,
+    tolerance_abs: float = DEFAULT_TOLERANCE_ABS,
+    min_span: float = DEFAULT_MIN_SPAN,
+    cv_window: int = DEFAULT_CV_WINDOW,
+    cv_tolerance=None,
+    cv_abs_tolerance: float = DEFAULT_CV_ABS_TOLERANCE,
+) -> PlateauDecision:
+    """One threshold's convergence decision under ``criterion`` (see :data:`CRITERIA`)."""
+    if criterion not in CRITERIA:
+        raise ValueError(f"criterion must be one of {CRITERIA}, got {criterion!r}")
+    if criterion == "cv_window":
+        return decide_cv_window(sizes, means, spreads, threshold, cv_window, cv_tolerance, cv_abs_tolerance)
+    return decide_plateau(sizes, means, spreads, threshold, tolerance_rel, tolerance_abs, min_span)
+
+
+def criterion_settings(
+    criterion: str, tolerance_rel, tolerance_abs, min_span, cv_window, cv_tolerance, cv_abs_tolerance, thresholds
+) -> dict:
+    """The criterion and its parameters as they are recorded in ``SizeSweep.settings``."""
+    return {
+        "criterion": criterion,
+        "tolerance_rel": tolerance_rel,
+        "tolerance_abs": tolerance_abs,
+        "min_span": min_span,
+        "cv_window": int(cv_window),
+        "cv_tolerance": {float(t): cv_tolerance_for(t, cv_tolerance) for t in thresholds},
+        "cv_abs_tolerance": float(cv_abs_tolerance),
+    }
+
+
 def sweep_sizes(
     vol: NDArray,
     mask: NDArray | None = None,
@@ -209,10 +367,16 @@ def sweep_sizes(
     seed: int = 0,
     progress: Callable[[float, str], None] | None = None,
     stop: Callable[[], bool] | None = None,
+    criterion: str = "plateau",
+    cv_window: int = DEFAULT_CV_WINDOW,
+    cv_tolerance=None,
+    cv_abs_tolerance: float = DEFAULT_CV_ABS_TOLERANCE,
 ) -> SizeSweep:
     """Correlation lengths against sub-volume size inside the region of ``vol``."""
     if axis not in (*AXES, "radial"):
         raise ValueError(f"axis must be x, y, z or radial, got {axis!r}")
+    if criterion not in CRITERIA:
+        raise ValueError(f"criterion must be one of {CRITERIA}, got {criterion!r}")
     a = np.asarray(vol)
     window = analysis_window(a.shape, mask, max_voxels=a.size)  # the region's box, uncropped
     region = a[window]
@@ -261,14 +425,18 @@ def sweep_sizes(
             break
     sweep_sizes_arr = np.array([lvl.effective for lvl in levels], dtype=np.float64)
     decisions = {
-        float(t): decide_plateau(
+        float(t): decide(
             sweep_sizes_arr,
             [lvl.mean[float(t)] for lvl in levels],
             [lvl.std[float(t)] for lvl in levels],
             float(t),
-            tolerance_rel,
-            tolerance_abs,
-            min_span,
+            criterion,
+            tolerance_rel=tolerance_rel,
+            tolerance_abs=tolerance_abs,
+            min_span=min_span,
+            cv_window=cv_window,
+            cv_tolerance=cv_tolerance,
+            cv_abs_tolerance=cv_abs_tolerance,
         )
         for t in thresholds
     }
@@ -277,10 +445,10 @@ def sweep_sizes(
         "samples_per_size": samples_per_size,
         "estimator": estimator,
         "min_overlap": min_overlap,
-        "tolerance_rel": tolerance_rel,
-        "tolerance_abs": tolerance_abs,
-        "min_span": min_span,
         "seed": seed,
         "region": tuple((s.start, s.stop) for s in window),
+        **criterion_settings(
+            criterion, tolerance_rel, tolerance_abs, min_span, cv_window, cv_tolerance, cv_abs_tolerance, thresholds
+        ),
     }
     return SizeSweep(levels, decisions, axis, settings)

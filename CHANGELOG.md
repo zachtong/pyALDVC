@@ -4,6 +4,26 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **The RVE sweep can decide stability the way DVC Challenge 2.0 does.** Step 2 of the texture
+  analysis has a *Stability test* selector: the plateau test it always had, or the sliding-window
+  coefficient-of-variation test of the DVC Challenge 2.0 analysis (Tong et al., Supplementary
+  Material S2.2): four consecutive sizes whose lengths vary by less than 5 % (1/e), 10 % (0.1) or
+  20 % (0.01) or by less than half a voxel, persisting over every later window, reporting the first
+  size of the earliest such window. `decide_cv_window` is a port of the reference implementation
+  distributed with that dataset, checked against a verbatim copy of its loop on six hundred random
+  size sequences, and keeps its population standard deviation. `sweep_concentric` and `sweep_sizes`
+  take `criterion="cv_window"` and record the criterion and its parameters in the sweep's
+  settings; the CLI has `--rve-criterion cv-window` and `--cv-window`.
+- **The concentric sweep and `analyse_cube` take an `estimator`.** `"window"`, the raw estimator
+  that the DVC Challenge 2.0 analysis used (mean-subtracted, zero-padded, normalised by the zero
+  lag), reproduces that analysis to floating-point rounding; the default stays the overlap-corrected
+  one. The report's new page puts the two side by side on the same sweep: the raw estimator carries
+  the geometric decay of the overlap, which shrinks as the cube grows, so part of what it shows as
+  convergence with size is that bias fading. CLI: `--estimator window`.
+
 ## [0.8.0] - 2026-09-11
 
 ### Added

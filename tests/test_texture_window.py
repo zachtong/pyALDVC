@@ -558,3 +558,45 @@ def test_the_cube_info_names_every_capped_axis(qapp, aniso):
     assert "reduced from 40" in text and "z" in text.split("reduced from 40")[1]
     assert "x" not in text.split("reduced from 40")[1].split(":")[0]
     window.close()
+
+
+def test_the_stability_test_selector_reaches_the_sweep_and_makes_a_result_stale(qapp, aniso, real_sweep, monkeypatch):
+    """The criterion is part of the sweep's settings: it is handed to sweep_concentric, and changing it
+    after a sweep marks that sweep as describing a previous input, like every other sweep setting."""
+    from al_dvc.gui import texture_window as tw_mod
+
+    window = MainWindow()
+    tw = _ready(window, aniso)
+    combo = tw.sweep_criterion
+    assert [combo.itemData(i) for i in range(combo.count())] == ["plateau", "cv_window"]
+    assert tw.sweep_settings()["criterion"] == "plateau"
+    assert "criterion" not in tw.sweep_schedule(tw.sweep_settings())  # only start/step/count pick the cubes
+
+    combo.setCurrentIndex(1)
+    _pump()
+    assert tw.sweep_settings()["criterion"] == "cv_window"
+
+    started: list = []
+
+    class _NoRun(tw_mod._TextureWorker):
+        def start(self, *a, **k):
+            started.append(self)
+
+    keep, tw_mod._TextureWorker = tw_mod._TextureWorker, _NoRun
+    try:
+        tw.run_sweep_analysis()
+    finally:
+        tw_mod._TextureWorker = keep
+    assert started and started[0]._job["sweep"]["criterion"] == "cv_window"
+    tw._worker = None
+
+    # a finished sweep under one criterion is stale once the other is selected
+    monkeypatch.setattr(type(tw), "_draw_sweep", lambda self: None)
+    tw._job_source = tw._sweep_input()
+    tw._on_sweep_finished(real_sweep)
+    _pump()
+    assert not tw.is_sweep_stale
+    combo.setCurrentIndex(0)
+    _pump()
+    assert tw.is_sweep_stale
+    window.close()

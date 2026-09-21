@@ -8,6 +8,7 @@ from al_dvc.texture import (
     THRESHOLDS,
     analyse_cube,
     autocorrelation,
+    boolean_spheres,
     box_centre,
     box_of_mask,
     concentric_boxes,
@@ -131,3 +132,26 @@ def test_the_sweep_reports_progress_and_can_be_stopped():
         vol, (24, 24, 24), start=16, step=8, count=4, progress=lambda f, m: seen.append((f, m)), stop=lambda: len(seen) > 2
     )
     assert seen and seen[-1][1] == "done" and len(sweep.levels) < 4
+
+
+def test_the_sweep_takes_the_cv_window_criterion_and_the_window_estimator():
+    """Both knobs the DVC Challenge 2.0 reproduction needs: its convergence test and its estimator."""
+    vol, _ = boolean_spheres((96, 96, 96), 5.0, 0.3, seed=3)
+    centre = (48, 48, 48)
+    kw = dict(start=24, step=16, count=5)
+    default = sweep_concentric(vol, centre, **kw)
+    paper = sweep_concentric(vol, centre, **kw, criterion="cv_window", estimator="window")
+    assert default.settings["criterion"] == "plateau" and default.settings["estimator"] == "overlap"
+    assert paper.settings["criterion"] == "cv_window" and paper.settings["estimator"] == "window"
+    assert paper.settings["cv_window"] == 4 and paper.settings["cv_tolerance"][0.1] == 0.10
+    assert all(d.criterion == "cv_window" for d in paper.decisions.values())
+    # the raw window estimator carries the geometric decay of the overlap: shorter lengths, most of
+    # all on the smallest cube, where the lag is the largest fraction of the edge
+    t = THRESHOLDS[0]
+    assert paper.levels[0].mean[t] < default.levels[0].mean[t]
+    assert paper.levels[-1].mean[t] < default.levels[-1].mean[t]
+    small = 1 - paper.levels[0].mean[t] / default.levels[0].mean[t]
+    large = 1 - paper.levels[-1].mean[t] / default.levels[-1].mean[t]
+    assert small > large > 0
+    with pytest.raises(ValueError):
+        sweep_concentric(vol, centre, **kw, criterion="nope")
