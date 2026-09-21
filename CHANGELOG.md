@@ -4,7 +4,7 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.9.0] - 2026-09-21
 
 ### Added
 - **The RVE sweep can decide stability the way DVC Challenge 2.0 does.** Step 2 of the texture
