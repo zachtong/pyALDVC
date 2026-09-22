@@ -158,6 +158,7 @@ class MaskToolbar(QWidget):
 
         self._btn["auto"].clicked.connect(self._on_auto)
         self._state.auto_mask_state.connect(self._on_auto_state)
+        self._state.save_mask_state.connect(self._on_save_state)
         self._btn["undo"].clicked.connect(self._state.undo_mask)
         self._btn["redo"].clicked.connect(self._state.redo_mask)
         self._btn["invert"].clicked.connect(lambda: self._state.apply_mask_op(MaskOp("invert")))
@@ -295,11 +296,19 @@ class MaskToolbar(QWidget):
         path, _ = QFileDialog.getSaveFileName(self, self.tr("Save mask"), default, MASK_FILTER)
         if path:
             try:
-                out = self._state.save_mask(path)
+                self._state.start_save_mask(path)  # the write runs on a worker thread; _on_save_state follows it
             except Exception as exc:
                 self._state.log(f"saving the mask failed: {exc}", "error")
-                return
-            self._state.log(self.tr("Mask saved: {path}").format(path=out))
+
+    def _on_save_state(self, state: str, path: str) -> None:
+        if state == "started":
+            self._status.setText(self.tr("Saving the mask..."))
+        elif state == "finished":
+            self._state.log(self.tr("Mask saved: {path}").format(path=path))
+            self._status.setText("")
+        else:
+            self._status.setText(self.tr("Saving the mask failed; see the log."))
+        self.refresh()
 
     # ------------------------------------------------------------------ view
     def refresh(self) -> None:
@@ -316,7 +325,7 @@ class MaskToolbar(QWidget):
         for key in ("invert", "fill", "clear"):
             self._btn[key].setEnabled(has_volume and not running)
         mask = self._state.current_mask() if has_volume else None
-        self._btn["save"].setEnabled(mask is not None)
+        self._btn["save"].setEnabled(mask is not None and not self._state.save_mask_running())
         self._btn["remove"].setEnabled(mask is not None)
         self._btn_copy_all.setEnabled(mask is not None and len(self._state.volumes) > 1)
         if mask is None:

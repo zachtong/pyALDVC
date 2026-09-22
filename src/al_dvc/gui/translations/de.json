@@ -465,6 +465,8 @@
   "Save summary as JSON...": "Zusammenfassung als JSON speichern…",
   "Save the session first: the batch runs the file on disk.": "Speichern Sie die Sitzung zuerst: Der Stapel verarbeitet die Datei auf der Festplatte.",
   "Save them first?": "Zuerst speichern?",
+  "Saving the mask failed; see the log.": "Speichern der Maske fehlgeschlagen; siehe Protokoll.",
+  "Saving the mask...": "Maske wird gespeichert...",
   "Scale": "Skala",
   "Screenshot saved: {path}": "Bildschirmfoto gespeichert: {path}",
   "Screenshot...": "Bildschirmfoto...",

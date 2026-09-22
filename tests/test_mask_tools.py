@@ -376,3 +376,98 @@ def test_a_result_for_a_frame_that_is_no_longer_selected_is_discarded(qapp, pair
     assert states[-1] == "cancelled" and not state.auto_mask_running()
     assert state.volumes[0].mask is None and state.volumes[1].mask is None  # applied to neither
     window.close()
+
+
+# --------------------------------------------------------------------------- saving the mask, off the UI thread
+def test_write_mask_file_writes_uint8_without_copying_a_contiguous_mask(tmp_path, monkeypatch):
+    from al_dvc.gui import app_state as st
+
+    mask = np.zeros((12, 14, 16), dtype=bool)
+    mask[2:8, 3:9, 4:10] = True
+    seen = {}
+    real = st.write_mask_file.__globals__  # noqa: F841 - keep the module alive for the patch below
+    import al_dvc.io.volume_io as vio
+
+    orig = vio.save_volume
+
+    def spy(path, vol, **kw):
+        seen["shares"] = np.shares_memory(vol, mask)
+        seen["dtype"] = vol.dtype
+        return orig(path, vol, **kw)
+
+    monkeypatch.setattr(vio, "save_volume", spy)
+    out = st.write_mask_file(tmp_path / "m.npy", mask)
+    assert seen["dtype"] == np.uint8 and seen["shares"]  # a view of the boolean array, not a copy
+    assert np.array_equal(load_volume(out).astype(bool), mask)
+
+
+def test_saving_the_mask_runs_off_the_ui_thread_and_attaches_the_file(qapp, pair, tmp_path):
+    window = _window(qapp, pair)
+    tools, state = window.viewer.mask_tools, window.state
+    state.apply_mask_op(MaskOp("rectangle", "xy", ((4.0, 4.0), (30.0, 28.0)), depth=(3, 20)))
+    _pump()
+    drawn = state.current_mask().copy()
+    events: list = []
+    state.save_mask_state.connect(lambda s, p: events.append(s))
+    out = tmp_path / "saved_mask.tif"
+
+    worker = state.start_save_mask(out)
+    assert worker is not None and state.save_mask_running() and not tools._btn["save"].isEnabled()
+    assert state.start_save_mask(out) is None  # one at a time
+    assert worker.wait(60_000)
+    _pump(40)
+    assert events == ["started", "finished"] and not state.save_mask_running()
+    assert np.array_equal(load_volume(out).astype(bool), drawn)
+    assert state.volumes[0].mask_path == str(out) and state.volumes[0].mask_ops is None
+    assert state.mask_editor is not None and not state.mask_editor.can_undo  # the file is the new starting point
+    assert tools._btn["save"].isEnabled()
+    window.close()
+
+
+def test_a_drawing_made_while_the_mask_is_being_saved_is_kept(qapp, pair, tmp_path, monkeypatch):
+    """The file holds the mask as it was; the editor is not reset over the newer drawing."""
+    import threading
+
+    from al_dvc.gui import app_state as st
+
+    gate = threading.Event()
+    real = st.write_mask_file
+
+    def slow(path, mask):
+        gate.wait(60)
+        return real(path, mask)
+
+    monkeypatch.setattr(st, "write_mask_file", slow)
+    window = _window(qapp, pair)
+    state = window.state
+    state.apply_mask_op(MaskOp("rectangle", "xy", ((4.0, 4.0), (30.0, 28.0)), depth=(3, 20)))
+    _pump()
+    before = state.current_mask().copy()
+    out = tmp_path / "saved_mask.npy"
+    worker = state.start_save_mask(out)
+    state.apply_mask_op(MaskOp("rectangle", "xy", ((6.0, 6.0), (12.0, 12.0)), mode="cut", depth=(3, 20)))  # meanwhile
+    _pump()
+    after = state.current_mask().copy()
+    assert not np.array_equal(before, after)
+    gate.set()
+    assert worker.wait(60_000)
+    _pump(40)
+    assert np.array_equal(load_volume(out).astype(bool), before)  # what was there when the save started
+    assert np.array_equal(state.current_mask(), after)  # the newer drawing survived
+    assert state.mask_editor.can_undo  # and its history was not reset
+    window.close()
+
+
+def test_a_failed_save_attaches_nothing(qapp, pair, tmp_path):
+    window = _window(qapp, pair)
+    state = window.state
+    state.apply_mask_op(MaskOp("fill"))
+    _pump()
+    events: list = []
+    state.save_mask_state.connect(lambda s, p: events.append(s))
+    worker = state.start_save_mask(tmp_path / "mask.unsupported")
+    assert worker.wait(60_000)
+    _pump(40)
+    assert events == ["started", "failed"] and not state.save_mask_running()
+    assert state.volumes[0].mask_path is None
+    window.close()

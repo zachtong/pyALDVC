@@ -113,6 +113,40 @@ class VolumeEntry:
         return self.label or (Path(self.path).name if self.path else "array")
 
 
+def write_mask_file(path: str | Path, mask) -> Path:
+    """Write ``mask`` as a uint8 volume (1 = material). A contiguous boolean array is written through a
+    view, so nothing volume-sized is allocated for the conversion."""
+    from al_dvc.io.volume_io import save_volume
+
+    out = Path(path)
+    m = np.asarray(mask)
+    data = m.view(np.uint8) if m.dtype == np.bool_ and m.flags.c_contiguous else m.astype(np.uint8)
+    save_volume(out, data)
+    return out
+
+
+class SaveMaskWorker(QThread):
+    """``write_mask_file`` on a worker thread. The mask it holds is the one written, whatever is drawn meanwhile."""
+
+    finished_path = Signal(object)  # the Path written
+    failed = Signal(str)
+
+    def __init__(self, path: Path, mask, revision: int, parent=None) -> None:
+        super().__init__(parent)
+        self.path = Path(path)
+        self.mask = mask
+        self.revision = int(revision)
+
+    def run(self) -> None:  # noqa: D401 - QThread entry point
+        try:
+            out = write_mask_file(self.path, self.mask)
+        except Exception as exc:  # surface to the UI
+            logger.exception("Saving the mask failed")
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+            return
+        self.finished_path.emit(out)
+
+
 class AutoMaskWorker(QThread):
     """``threshold_region`` on a worker thread, with stage progress and a cancel that lands at the next stage."""
 
@@ -168,6 +202,7 @@ class AppState(QObject):
     output_dir_changed = Signal(str)
     mask_changed = Signal()
     auto_mask_state = Signal(str)  # "started" | "finished" | "cancelled" | "failed"
+    save_mask_state = Signal(str, str)  # ("started" | "finished" | "failed", path)
 
     def __init__(self) -> None:
         super().__init__()
@@ -553,24 +588,87 @@ class AppState(QObject):
         self.mask_changed.emit()
 
     def save_mask(self, path: str | Path) -> Path:
-        """Write the current mask as a volume file (uint8, 1 = material) and attach the file to the target frames."""
+        """Write the current mask as a volume file (uint8, 1 = material) and attach the file to the target frames.
+
+        Synchronous: the CLI, sessions and tests use it. The window uses :meth:`start_save_mask`.
+        """
         mask = self.current_mask()
         if mask is None:
             raise ValueError("there is no mask to save")
-        from al_dvc.io.volume_io import save_volume
+        out = write_mask_file(path, mask)
+        self._attach_saved_mask(out, mask, self.mask_revision)
+        return out
 
-        out = Path(path)
-        save_volume(out, mask.astype(np.uint8))
+    def _attach_saved_mask(self, out: Path, mask, revision: int) -> None:
+        """Bookkeeping after a mask file was written: the file becomes the frames' mask.
+
+        ``revision`` is the mask revision the written array came from. If the user drew while the file
+        was being written, the drawing is kept and the file simply holds the mask as it was -- the
+        editor is not reset over the newer drawing, and the log says so.
+        """
         for i in self._target_frames():
             if i < len(self.volumes):
                 self.volumes[i].mask_path = str(out)
                 self.volumes[i].mask = mask if i == self.current_frame else mask.copy()
                 self.volumes[i].mask_ops = None  # the file is the composed mask: nothing to replay on top of it
         if self.mask_editor is not None:
-            self.mask_editor.reset(mask)  # drawing continues from the saved file; the undo history restarts
+            if revision == self.mask_revision:
+                self.mask_editor.reset(mask)  # drawing continues from the saved file; the undo history restarts
+            else:
+                self.log("The mask file holds the mask as it was when saving started; the edits since are not in it", "warning")
+                self.volumes[self.current_frame].mask = self.mask_editor.mask  # the frame keeps the newer drawing
         self.dirty = True
         self.volumes_changed.emit()
-        return out
+
+    # ------------------------------------------------------------------ saving the mask, off the UI thread
+    def save_mask_running(self) -> bool:
+        return getattr(self, "_save_mask", None) is not None
+
+    def save_mask_thread_running(self) -> bool:
+        w = getattr(self, "_save_mask", None)
+        return w is not None and w.isRunning()
+
+    def start_save_mask(self, path: str | Path):
+        """Write the current mask on a worker thread; returns the worker, or None when nothing can be saved.
+
+        The write used to run on the UI thread with no feedback: a mask of a large scan froze the window
+        for the seconds the file took. The worker writes a snapshot of the mask as it is now; drawing
+        stays possible meanwhile, and a drawing made during the write is kept rather than lost to the
+        history reset that follows a save. There is no cancel: a half-written file would be worse than
+        a wait.
+        """
+        if self.save_mask_running():
+            return None
+        mask = self.current_mask()
+        if mask is None:
+            raise ValueError("there is no mask to save")
+        if self.mask_editor is not None and self.mask_editor.mask is mask:
+            mask = self.mask_editor.snapshot()  # the editor copies on its next edit; the worker's array stays
+        worker = SaveMaskWorker(Path(path), mask, int(self.mask_revision), parent=self)
+        worker.finished_path.connect(lambda out, w=worker: self._save_mask_done(w, out))
+        worker.failed.connect(lambda message, w=worker: self._save_mask_ended(w, "failed", message))
+        worker.finished.connect(worker.deleteLater)
+        self._save_mask = worker
+        worker.start()
+        self.save_mask_state.emit("started", str(path))
+        return worker
+
+    def _save_mask_done(self, worker, out) -> None:
+        if worker is not getattr(self, "_save_mask", None):
+            return
+        try:
+            self._attach_saved_mask(Path(out), np.asarray(worker.mask, dtype=bool), worker.revision)
+        except Exception as exc:
+            self._save_mask_ended(worker, "failed", f"{type(exc).__name__}: {exc}")
+            return
+        self._save_mask_ended(worker, "finished")
+
+    def _save_mask_ended(self, worker, state: str, message: str = "") -> None:
+        if worker is getattr(self, "_save_mask", None):
+            self._save_mask = None
+        if message:
+            self.log(f"saving the mask failed: {message}", "error")
+        self.save_mask_state.emit(state, str(worker.path))
 
     def set_mask_display(self, show: bool | None = None, alpha: float | None = None, target: str | None = None) -> None:
         if show is not None:

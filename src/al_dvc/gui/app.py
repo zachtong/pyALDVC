@@ -652,6 +652,7 @@ class MainWindow(QMainWindow):
             if window is not None:
                 jobs.append((attr, window._is_running, window.cancel))
         jobs.append(("automatic mask", self.state.auto_mask_thread_running, self.state.cancel_auto_mask))
+        jobs.append(("saving the mask", self.state.save_mask_thread_running, lambda: None))  # a write finishes its file
         jobs.append(("recording", self.view3d.recording, self.view3d.cancel_recording))
         export = getattr(self, "export_dialog", None)
         if export is not None and hasattr(export, "is_busy"):

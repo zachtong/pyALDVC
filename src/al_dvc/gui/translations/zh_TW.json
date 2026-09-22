@@ -465,6 +465,8 @@
   "Save summary as JSON...": "將摘要儲存為 JSON…",
   "Save the session first: the batch runs the file on disk.": "請先儲存工作階段：批次執行的是磁碟上的檔案。",
   "Save them first?": "先儲存嗎？",
+  "Saving the mask failed; see the log.": "儲存遮罩失敗；請查看日誌。",
+  "Saving the mask...": "正在儲存遮罩...",
   "Scale": "座標",
   "Screenshot saved: {path}": "截圖已儲存：{path}",
   "Screenshot...": "截圖...",

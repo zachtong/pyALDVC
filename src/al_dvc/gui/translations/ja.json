@@ -465,6 +465,8 @@
   "Save summary as JSON...": "概要を JSON で保存…",
   "Save the session first: the batch runs the file on disk.": "先にセッションを保存してください。バッチはディスク上のファイルを実行します。",
   "Save them first?": "先に保存しますか？",
+  "Saving the mask failed; see the log.": "マスクの保存に失敗しました。ログを確認してください。",
+  "Saving the mask...": "マスクを保存しています...",
   "Scale": "スケール",
   "Screenshot saved: {path}": "スクリーンショットを保存しました：{path}",
   "Screenshot...": "スクリーンショット...",
