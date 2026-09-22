@@ -324,3 +324,21 @@ def test_application_icon_is_shipped(qapp):
     icon = _Path(gui_pkg.__file__).parent / "assets" / "pyALDVC.png"
     assert icon.is_file() and icon.stat().st_size > 1000
     assert not qapp.windowIcon().isNull()
+
+
+def test_the_tile_control_reaches_the_parameters(qapp, small_pair):
+    """para.tile_local had no control: the spin box sets it, reflects it, and the memory line says so."""
+    window = MainWindow()
+    window.state.set_volume_arrays(list(small_pair), ["ref", "def"])
+    _pump()
+    panel = window.param_panel
+    assert window.state.para.tile_local == 0 and panel.tile_local.value() == 0
+    assert panel.tile_local.specialValueText() != ""  # 0 reads as "off", not as a size
+    panel.tile_local.setValue(256)
+    _pump()
+    assert window.state.para.tile_local == 256
+    assert "256" in panel._memory.text()
+    window.state.set_params(tile_local=0)
+    _pump()
+    assert panel.tile_local.value() == 0 and "256" not in panel._memory.text()
+    window.close()

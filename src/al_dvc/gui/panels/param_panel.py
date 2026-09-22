@@ -104,10 +104,17 @@ class ParamPanel(QWidget):
         self.backend_status.setWordWrap(True)
         self.n_threads = spin(0, 512, 1)
         self.gradient_mode = self._choice("gradient")
+        self.tile_local = spin(0, 4096, 32)  # 0 = the whole volume in one box
+        self.tile_local.setSpecialValueText(self.tr("off"))
         perf = self._add_section(
             "performance",
             layout,
-            [("backend", self.backend), ("n_threads", self.n_threads), ("gradient_mode", self.gradient_mode)],
+            [
+                ("backend", self.backend),
+                ("n_threads", self.n_threads),
+                ("gradient_mode", self.gradient_mode),
+                ("tile_local", self.tile_local),
+            ],
         )
         perf.add_widget(self.backend_status)
         self._memory = QLabel()
@@ -216,6 +223,7 @@ class ParamPanel(QWidget):
         self.prefilter.valueChanged.connect(lambda v: self._set("prefilter_sigma", float(v)))
         self.gradient_mode.currentIndexChanged.connect(lambda _i: self._set("gradient_mode", self.gradient_mode.currentData()))
         self.n_threads.valueChanged.connect(lambda v: self._set("n_threads", int(v)))
+        self.tile_local.valueChanged.connect(lambda v: self._set("tile_local", int(v)))
         self.mu.valueChanged.connect(lambda v: self._set("mu", float(v)))
         self.beta_auto.toggled.connect(self._on_beta_auto)
         self.beta.valueChanged.connect(lambda v: None if self.beta_auto.isChecked() else self._set("beta", float(v)))
@@ -311,6 +319,7 @@ class ParamPanel(QWidget):
             self.prefilter.setValue(float(p.prefilter_sigma))
             select_key(self.gradient_mode, p.gradient_mode)
             self.n_threads.setValue(int(p.n_threads))
+            self.tile_local.setValue(int(p.tile_local))
             self.mu.setValue(float(p.mu))
             self.beta_auto.setChecked(p.beta is None)
             self.beta.setEnabled(p.beta is not None)
@@ -353,6 +362,11 @@ class ParamPanel(QWidget):
         if voi is not None:
             frac = 100.0 * float(box_shape[0] * box_shape[1] * box_shape[2]) / float(shape[0] * shape[1] * shape[2])
             text += "\n" + self.tr("Analysed box from the region of interest: {pct:.0f}% of the volume").format(pct=frac)
+        if int(p.tile_local) > 0:
+            # the tile bounds the reference side (its gradients, the GPU upload); the frames themselves are not tiled
+            text += "\n" + self.tr(
+                "Local steps in boxes of {n} voxel: the reference gradients and the GPU upload are bounded by a box"
+            ).format(n=int(p.tile_local))
         self._memory.setText(text)
 
     def refresh_backend_status(self) -> None:
@@ -382,6 +396,7 @@ class ParamPanel(QWidget):
             "backend": self.tr("Compute backend"),
             "n_threads": self.tr("CPU threads (0 = all)"),
             "gradient_mode": self.tr("Gradient memory"),
+            "tile_local": self.tr("Local-step tile [voxel]"),
             "subpb2": self.tr("Global step discretisation"),
             "subset_stride": self.tr("Subset sampling stride"),
             "init_coarse": self.tr("Coarse initial-guess lattice"),
@@ -434,6 +449,11 @@ class ParamPanel(QWidget):
                 "Precomputed: the three gradient volumes are stored once (fast, 21-25 bytes per voxel). "
                 "On the fly: gradients are recomputed for every subset (slower, 9 bytes per voxel), for large scans. "
                 "Automatic keeps them until they would need more than 8 GB, which is where a large scan stops fitting."
+            ),
+            "tile_local": self.tr(
+                "Solve the local steps over boxes of this edge instead of the whole volume, so the reference gradients "
+                "and what goes to the GPU never exceed a box. Off: one box. The answer is the same to about 1e-14 "
+                "voxel; a box of 384-512 fits the GPU memory of most cards."
             ),
             "subpb2": self.tr(
                 "How the global step of AL-DVC is discretised: finite elements (hexahedral mesh, default) or finite "

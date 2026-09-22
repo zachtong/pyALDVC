@@ -29,6 +29,9 @@ All notable changes to pyALDVC are documented here. The format follows
   `FileVolumeProvider`; mask files stream with it, and a drawn mask is rebuilt from its operations
   up front (a threshold operation needs the intensities), reading that frame once and keeping only
   the boolean mask.
+- **`para.tile_local` has a control in the parameter panel.** A *Local-step tile* spin box in the
+  performance section (0 = off), and the memory line says when the local steps are boxed. The two
+  margins stay config-file settings.
 
 ## [0.9.0] - 2026-09-21
 

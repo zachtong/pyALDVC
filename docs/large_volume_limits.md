@@ -103,8 +103,9 @@ a `.mat` holding five volumes costs five volumes of RAM.
 
 ## 6. Not surfaced in the GUI
 
-`para.tile_local`, `tile_disp_margin` and `tile_strain_margin` are settable from a config file or a
-script but have no control in the parameter panel; the first merge kept the blast radius small. The
+~~`para.tile_local` has no control in the parameter panel.~~ **Done (0.9.x):** the performance section
+has a *Local-step tile* spin box (0 = off) and the memory line says when the local steps are boxed.
+`tile_disp_margin` and `tile_strain_margin` remain config-file settings; the first merge kept the blast radius small. The
 combo would be about fifteen lines plus its six translations, and the panel's memory estimate line
 already resolves `gradient_mode="auto"`, so it can show the tiled figure the same way.
 
