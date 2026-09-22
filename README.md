@@ -141,10 +141,21 @@ start, not a guarantee. One click writes it into the run.
 
 ## Install
 
+With conda ([Miniforge](https://github.com/conda-forge/miniforge) if the machine has none yet):
+
 ```bash
-pip install al-dvc            # add "[gpu]" for the NVIDIA backend
-al-dvc-gui
+conda create -n pyaldvc python=3.12 -y
+conda activate pyaldvc
+pip install al-dvc            # NVIDIA GPU: pip install "al-dvc[gpu]"
+al-dvc-gui                    # command line: al-dvc --help
 ```
+
+- conda only provides Python; al-dvc and its dependencies come from PyPI, so do not `conda install` numpy, scipy and the like into this environment afterwards. Python 3.10 to 3.12 are tested in CI.
+- `pip install al-dvc` is the complete application: GUI, 3-D view and command line.
+- `[gpu]` installs the CUDA 12 libraries as pip packages: the machine needs an NVIDIA driver, not the CUDA Toolkit.
+- Check the install with `python -m al_dvc.gui.self_test`: six checks, each `[ok]` or `[FAIL]`, saved to `pyaldvc_self_test.txt`. The compute-backend line names the GPU when one is used.
+- Optional: `pip install nibabel pynrrd pydicom` reads NIfTI, NRRD and DICOM; `pip install imageio imageio-ffmpeg` exports 3-D animations as MP4 (GIF needs nothing). Without them the application says what to install when you need it.
+- Update with `pip install -U al-dvc`.
 
 No Python? Every [release](https://github.com/zachtong/pyALDVC/releases) ships a portable Windows bundle: unzip, double-click `pyALDVC.exe`.
 
