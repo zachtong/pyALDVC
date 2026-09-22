@@ -33,6 +33,21 @@ All notable changes to pyALDVC are documented here. The format follows
   performance section (0 = off), and the memory line says when the local steps are boxed. The two
   margins stay config-file settings.
 
+### Fixed
+- **The GPU backend started on NumPy 2.5 as the CPU one, silently.** numba-cuda 0.30.4, the latest
+  release, registers an overload for `np.row_stack` when it compiles a kernel, and NumPy 2.5 removed
+  `np.row_stack` (numba itself guards the same line; numba-cuda does not yet). A fresh
+  `pip install "al-dvc[gpu]"` resolves NumPy 2.5, so on an RTX 5090 every run fell back to the CPU
+  kernels while the self-test reported `[ok] Compute backend: CPU kernels` -- with a hint to install the
+  extra that was installed. The `[gpu]` extra now requires `numpy<2.5` until numba-cuda guards the line.
+- **The self-test fails a GPU backend that is installed but does not start.** The probe now says why the
+  backend is off -- numba-cuda missing, no CUDA device or driver, or a device whose CUDA stack failed --
+  and only the last is a failure: a machine without a GPU still passes on the CPU kernels. The failure
+  names the NumPy 2.5 cause and its fix when that is the reason.
+- **The GPU occupancy warning is silenced again.** numba-cuda raises its own `NumbaPerformanceWarning`
+  class, so the filter on numba's class let "Grid size 1 will likely result in GPU under-utilization"
+  through onto the console of every small run and of the self-test. The message itself is filtered now.
+
 ## [0.9.0] - 2026-09-21
 
 ### Added

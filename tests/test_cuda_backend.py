@@ -311,3 +311,100 @@ def test_precompute_matches_cpu():
     ctx_g = precompute_local_context(case["mesh"], b, para)
     assert np.array_equal(ctx_g.valid, ctx.valid)
     np.testing.assert_allclose(ctx_g.bottomf[ok], ctx.bottomf[ok], rtol=1e-5)
+
+
+# --------------------------------------------------------------------------- why the backend is off (no GPU needed)
+class _FakeDevice:
+    name = b"Fake GPU"
+    compute_capability = (9, 0)
+
+
+class _FakeCuda:
+    def __init__(self, available: bool) -> None:
+        self._available = available
+
+    def is_available(self) -> bool:
+        return self._available
+
+    def get_current_device(self) -> _FakeDevice:
+        return _FakeDevice()
+
+
+def _fresh_probe(monkeypatch) -> None:
+    """Forget the cached probe so the next cuda_available() probes again; the originals come back after the test."""
+    monkeypatch.setattr(ck, "_available", None)
+    monkeypatch.setattr(ck, "_unavailable_reason", "")
+    monkeypatch.setattr(ck, "_unavailable_kind", "")
+
+
+def test_the_probe_tells_a_cpu_machine_from_a_broken_gpu_stack(monkeypatch):
+    """No numba.cuda, no device, and a device whose CUDA stack fails are three different answers."""
+
+    def no_numba_cuda():
+        raise ImportError("No module named 'numba.cuda'")
+
+    def numpy_2_5_removed_row_stack():
+        raise AttributeError("module 'numpy' has no attribute 'row_stack'")
+
+    _fresh_probe(monkeypatch)
+    monkeypatch.setattr(ck, "_import_cuda", no_numba_cuda)
+    assert not ck.cuda_available() and ck.unavailable_kind() == "missing"
+
+    _fresh_probe(monkeypatch)
+    monkeypatch.setattr(ck, "_import_cuda", lambda: _FakeCuda(False))
+    assert not ck.cuda_available() and ck.unavailable_kind() == "no_device"
+
+    _fresh_probe(monkeypatch)
+    monkeypatch.setattr(ck, "_import_cuda", lambda: _FakeCuda(True))
+    monkeypatch.setattr(ck, "_probe_kernel", numpy_2_5_removed_row_stack)
+    assert not ck.cuda_available() and ck.unavailable_kind() == "error"
+    assert "row_stack" in ck.unavailable_reason()
+
+    _fresh_probe(monkeypatch)
+    monkeypatch.setattr(ck, "_probe_kernel", lambda: None)
+    assert ck.cuda_available() and ck.unavailable_kind() == ""
+
+
+def test_the_self_test_fails_a_gpu_backend_that_is_installed_but_does_not_start(monkeypatch):
+    """It used to pass as "CPU kernels" and suggest installing the extra that was installed."""
+    from al_dvc.gui import self_test as st
+
+    def backend(available: bool, kind: str, reason: str) -> None:
+        monkeypatch.setattr(ck, "_available", available)
+        monkeypatch.setattr(ck, "_unavailable_kind", kind)
+        monkeypatch.setattr(ck, "_unavailable_reason", reason)
+
+    # without the optional backend the CPU passes, and the line says how to add the GPU
+    monkeypatch.setattr(st, "_gpu_backend_installed", lambda: False)
+    backend(False, "missing", "ImportError: No module named 'numba_cuda'")
+    assert "pip install" in st.check_cuda()
+
+    # installed on a machine without a CUDA device or driver: still a CPU machine, and no install hint
+    monkeypatch.setattr(st, "_gpu_backend_installed", lambda: True)
+    backend(False, "no_device", "RuntimeError: numba.cuda reports no usable CUDA device")
+    text = st.check_cuda()
+    assert "no usable CUDA device" in text and "pip install" not in text
+
+    # installed, a device present, the stack fails: a broken install, with the fix for the known cause
+    backend(False, "error", "AttributeError: module 'numpy' has no attribute 'row_stack'")
+    with pytest.raises(st.CheckFailed) as err:
+        st.check_cuda()
+    assert "row_stack" in str(err.value) and "numpy<2.5" in str(err.value)
+
+    monkeypatch.setattr(st, "CHECKS", [("Compute backend", st.check_cuda)])
+    assert st.run_self_test(None) == 1  # reported as a failure, not as "all checks passed"
+
+
+def test_the_occupancy_warning_is_silenced_whichever_class_carries_it():
+    """numba-cuda raises its own NumbaPerformanceWarning, which a filter on numba's class missed."""
+    import warnings
+
+    class ForeignPerformanceWarning(UserWarning):
+        pass
+
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        ck._quiet_performance_warnings()
+        warnings.warn(ForeignPerformanceWarning("Grid size 1 will likely result in GPU under-utilization due to low occupancy."))
+        warnings.warn(ForeignPerformanceWarning("something else"))
+    assert [str(w.message) for w in seen] == ["something else"]

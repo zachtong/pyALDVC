@@ -65,6 +65,11 @@ al-dvc-gui = "al_dvc.gui.app:main"
 # 3-D view included); "pip install al-dvc[gpu]" adds the CUDA backend for NVIDIA GPUs.
 gpu = [
     "numba-cuda[cu12]>=0.10",
+    # numba-cuda 0.30.4 (the latest release on 2026-09-22) registers an overload for np.row_stack
+    # when it compiles a kernel, and NumPy 2.5 removed np.row_stack: on NumPy >= 2.5 the CUDA backend
+    # fails to start and every run falls back to the CPU kernels. numba itself guards the same line
+    # (numba/np/arrayobj.py, "Numpy 2.5 removed np.row_stack"); lift this bound once numba-cuda does.
+    "numpy<2.5",
 ]
 
 [tool.hatch.build.targets.wheel]

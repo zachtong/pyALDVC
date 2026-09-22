@@ -72,13 +72,24 @@ _STENCIL = (-1.0 / 60, 3.0 / 20, -3.0 / 4, 0.0, 3.0 / 4, -3.0 / 20, 1.0 / 60)
 
 _available: bool | None = None
 _unavailable_reason = ""
+# Why the backend is off, for callers that must tell a CPU machine from a broken GPU install:
+# "missing" (numba.cuda cannot be imported), "no_device" (no usable device or driver), "error" (a device
+# is present but the CUDA stack failed on it), "" while unknown or when the backend is available.
+_unavailable_kind = ""
 _probe_lock = threading.Lock()
 # numba's driver logs every cuMemFree at INFO; that is noise in an application log
 logging.getLogger("numba.cuda.cudadrv.driver").setLevel(logging.WARNING)
 
 
 def _quiet_performance_warnings() -> None:
-    """Small last chunks and the probe launch few blocks; numba-cuda warns about occupancy on every such launch."""
+    """Small last chunks and the probe launch few blocks; numba-cuda warns about occupancy on every such launch.
+
+    numba-cuda raises its own ``NumbaPerformanceWarning`` (``numba.cuda.core.errors``), a different class from
+    numba's, so a filter on numba's class alone let the occupancy warning through -- onto the console of every
+    run and of the self-test. The message is filtered too, whichever class carries it; nothing is imported
+    from numba.cuda for it, so a CPU-only install pays nothing.
+    """
+    warnings.filterwarnings("ignore", message=r"Grid size \d+ will likely result in GPU under-utilization")
     try:
         from numba.core.errors import NumbaPerformanceWarning
 
@@ -102,20 +113,30 @@ def cuda_available() -> bool:
         return _probe_once()
 
 
-def _probe_once() -> bool:
-    global _available, _unavailable_reason
-    try:
-        from numba import cuda
+def _import_cuda():
+    """``numba.cuda``; a function so that the probe can be exercised without a GPU."""
+    from numba import cuda
 
+    return cuda
+
+
+def _probe_once() -> bool:
+    global _available, _unavailable_reason, _unavailable_kind
+    kind = "missing"
+    try:
+        cuda = _import_cuda()
+        kind = "no_device"
         if not cuda.is_available():
             raise RuntimeError("numba.cuda reports no usable CUDA device")
+        kind = "error"  # a device is there: from here on a failure is the CUDA stack's, not the machine's
         dev = cuda.get_current_device()
         _probe_kernel()
         name = dev.name.decode() if isinstance(dev.name, bytes) else str(dev.name)
         logger.info("CUDA backend: %s (compute capability %s)", name, ".".join(str(c) for c in dev.compute_capability))
-        _available = True
+        _available, _unavailable_kind = True, ""
     except Exception as exc:  # missing package, no driver, unsupported device, compile failure
         _unavailable_reason = f"{type(exc).__name__}: {exc}"
+        _unavailable_kind = kind
         logger.warning("CUDA backend unavailable, using the CPU kernels (%s)", _unavailable_reason)
         _available = False
     return _available
@@ -124,6 +145,12 @@ def _probe_once() -> bool:
 def unavailable_reason() -> str:
     cuda_available()
     return _unavailable_reason
+
+
+def unavailable_kind() -> str:
+    """Why the backend is off: ``"missing"``, ``"no_device"`` or ``"error"``; ``""`` when it is available."""
+    cuda_available()
+    return _unavailable_kind
 
 
 def _probe_kernel() -> None:

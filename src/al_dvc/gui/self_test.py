@@ -116,13 +116,38 @@ def check_view3d() -> str:
     return f"pyvista {pv.__version__}, VTK {vtkVersion.GetVTKVersion()}, off-screen render ok"
 
 
+def _gpu_backend_installed() -> bool:
+    """Whether the optional GPU backend (numba-cuda, the ``[gpu]`` extra) is installed."""
+    try:
+        from importlib.metadata import version
+
+        version("numba-cuda")
+    except Exception:
+        return False
+    return True
+
+
 def check_cuda() -> str:
-    """Compute backend: the CUDA device when the optional backend works, else the CPU (never a failure)."""
-    from al_dvc.solver.cuda_kernels import cuda_available, device_name, unavailable_reason
+    """Compute backend: the CUDA device when the optional backend works, else the CPU.
+
+    The GPU is optional, so a machine without the GPU backend, or without a CUDA device, passes on the CPU
+    kernels. A GPU backend that is installed and has a device but does not start is a broken install and
+    fails: it used to pass as "CPU kernels" with a hint to install the very extra that was installed, which
+    is how numba-cuda's clash with NumPy 2.5 went unnoticed on an RTX 5090.
+    """
+    from al_dvc.solver.cuda_kernels import cuda_available, device_name, unavailable_kind, unavailable_reason
 
     if cuda_available():
         return f"GPU {device_name()} (backend auto -> cuda)"
-    return f"CPU kernels (CUDA not available: {unavailable_reason()[:60]}; optional: pip install al-dvc[gpu])"
+    reason = unavailable_reason()
+    if not _gpu_backend_installed():
+        return 'CPU kernels (optional GPU backend: pip install "al-dvc[gpu]")'
+    if unavailable_kind() == "no_device":
+        return f"CPU kernels: the GPU backend is installed but found no usable CUDA device or driver ({reason[:80]})"
+    hint = ""
+    if "row_stack" in reason:
+        hint = ' -- NumPy 2.5 removed np.row_stack, which numba-cuda still uses: pip install "numpy<2.5"'
+    raise CheckFailed(f"the GPU backend is installed but did not start: {reason}{hint}")
 
 
 CHECKS: list[tuple[str, Callable[[], str]]] = [
