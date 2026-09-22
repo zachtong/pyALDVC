@@ -76,10 +76,13 @@ a `.mat` holding five volumes costs five volumes of RAM.
   in `app_state.py`). The **memory** is unchanged: `binary_fill_holes` still allocates several
   full-volume temporaries and `ndimage.label` an int32 volume (4 bytes per voxel), so past ~1024^3
   it can still exhaust memory -- only the freeze is gone.
-- `AppState.save_mask` converts the mask to uint8 and writes the file on the UI thread, with no
-  progress and no cancel.
-- `gui/batch.py` `load_session_inputs` materialises every volume and every mask of a session before
-  the run starts -- the streaming provider added for the interactive run is not used there.
+- ~~`AppState.save_mask` writes the file on the UI thread.~~ **Done (0.9.x):** the window saves
+  through `SaveMaskWorker`; a contiguous boolean mask is written through a uint8 view, so the
+  conversion allocates nothing. No cancel, by design: a half-written file is worse than a wait.
+- ~~`gui/batch.py` materialises every volume and mask of a session before the run starts.~~ **Done
+  (0.9.x):** `session_provider` hands the run a `FileVolumeProvider`; mask files stream too. A drawn
+  mask is rebuilt from its operations up front (a threshold needs the intensities), so that frame's
+  volume is read once and dropped; only its boolean mask stays resident.
 - `panels/view3d.py` `_volumes_per_result_frame` loads the whole sequence into a list for a "frames"
   recording when volume slices are on.
 - `view3d_scene._grey_window` recomputes its 200 k-sample grey window inside every `build_scene`,

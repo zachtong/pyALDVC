@@ -55,36 +55,63 @@ class BatchJob:
         return self.status == "done"
 
 
-def load_session_inputs(data: SessionData) -> tuple[list, list | None]:
-    """Volumes and masks of a session (mask files, then drawn operations on top)."""
-    from al_dvc.io.volume_io import load_volume
+def session_provider(data: SessionData):
+    """A session's frames as a streaming provider: the run reads a frame when it needs it.
+
+    The batch used to load every volume and every mask of a session into lists before the run
+    started, so a sequence of N frames cost N frames of memory before the first correlation, where
+    the interactive run had long been reading them through ``FileVolumeProvider`` with two normalised
+    frames resident. Mask files stream the same way. A mask that was *drawn* has to be rebuilt from
+    its operations, and a threshold operation needs the intensities, so that frame's volume is read
+    once here and dropped again; only the boolean mask stays.
+    """
+    from al_dvc.io.volume_io import FileVolumeProvider, load_volume
 
     from .mask_editor import MaskEditor
 
-    volumes: list = []
-    masks: list = []
+    paths: list[str] = []
+    mask_paths: list[str | None] = []
+    drawn: list = []
     for v in data.volumes:
         path = v.get("path")
         if not path or not Path(path).exists():
             raise FileNotFoundError(f"volume not found: {path}")
-        vol = load_volume(path)
-        volumes.append(vol)
+        mask_file = v.get("mask") or None
+        if mask_file and not Path(mask_file).exists():
+            raise FileNotFoundError(f"mask not found: {mask_file}")
         mask = None
-        if v.get("mask"):
-            if not Path(v["mask"]).exists():
-                raise FileNotFoundError(f"mask not found: {v['mask']}")
-            mask = np.asarray(load_volume(v["mask"])) > 0
         if v.get("mask_ops"):
-            # the volume lets threshold operations replay, exactly as the GUI rebuilds a session
-            mask = MaskEditor.from_dict(v["mask_ops"], base=mask, volume=vol).mask
-        masks.append(mask)
-    if len(volumes) < 2:
-        raise ValueError(f"a session needs at least two volumes, this one has {len(volumes)}")
-    if all(m is None for m in masks):
+            vol = load_volume(path)  # transient: the drawing replays on it, exactly as the GUI rebuilds a session
+            base = (np.asarray(load_volume(mask_file)) > 0) if mask_file else None
+            mask = MaskEditor.from_dict(v["mask_ops"], base=base, volume=vol).mask
+            del vol
+        paths.append(path)
+        mask_paths.append(mask_file)
+        drawn.append(mask)
+    if len(paths) < 2:
+        raise ValueError(f"a session needs at least two volumes, this one has {len(paths)}")
+    any_mask = any(m is not None for m in drawn) or any(p is not None for p in mask_paths)
+    return FileVolumeProvider(
+        paths,
+        data.para.voi,
+        mask_paths=mask_paths if any_mask else None,
+        masks=drawn if any_mask else None,
+    )
+
+
+def load_session_inputs(data: SessionData) -> tuple[list, list | None]:
+    """Volumes and masks of a session as lists (mask files, then drawn operations on top).
+
+    Materialises every frame: kept for callers that want arrays. The batch run itself uses
+    :func:`session_provider` and never holds more than the provider's cache.
+    """
+    provider = session_provider(data)
+    volumes = [provider.get_normalized(i) for i in range(len(provider))]
+    if not provider.has_masks:
         return volumes, None
+    masks = [provider.get_mask(i) for i in range(len(provider))]
     # the pipeline takes one mask per frame: frames without one are fully material
-    masks = [np.ones(np.asarray(vol).shape, dtype=bool) if m is None else m for vol, m in zip(volumes, masks)]
-    return volumes, masks
+    return volumes, [np.ones(provider.shape, dtype=bool) if m is None else m for m in masks]
 
 
 def export_results_checked(
@@ -145,15 +172,15 @@ def run_session_file(
     t0 = time.perf_counter()
     try:
         data = load_session(path)
-        volumes, masks = load_session_inputs(data)
+        provider = session_provider(data)  # streams the frames; nothing but the provider's cache is resident
         out_dir = Path(data.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         job.output_dir = out_dir
         job.status = "running"
         result = run_aldvc(
             data.para,
-            volumes,
-            masks,
+            provider,
+            None,
             progress_fn=progress_fn,
             stop_fn=stop_fn,
             compute_strain=compute_strain,

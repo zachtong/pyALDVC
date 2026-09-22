@@ -157,3 +157,31 @@ def test_dialog_runs_a_queue(qapp, sessions):
     dialog.clear()
     assert dialog.sessions() == [] and not dialog._btn["start"].isEnabled()
     window.close()
+
+
+def test_the_batch_streams_the_frames_instead_of_holding_the_sequence(sessions, monkeypatch):
+    """run_aldvc receives a streaming provider, and at the end of the run at most its cache is resident.
+
+    The batch used to load every volume and mask of a session into lists before the run started,
+    while the interactive run had long been streaming them; a session of N frames cost N frames of
+    memory before the first correlation.
+    """
+    from al_dvc.gui import batch as batch_module
+    from al_dvc.io.volume_io import FileVolumeProvider
+
+    seen: dict = {}
+    real = batch_module.run_aldvc
+
+    def spy(para, volumes, masks=None, **kw):
+        seen["volumes"] = volumes
+        seen["masks"] = masks
+        return real(para, volumes, masks, **kw)
+
+    monkeypatch.setattr(batch_module, "run_aldvc", spy)
+    job = run_session_file(sessions[1], exports=("npz",), checkpoints=False)  # the session with a drawn mask
+    assert job.status == "done", job.message
+    provider = seen["volumes"]
+    assert isinstance(provider, FileVolumeProvider) and seen["masks"] is None
+    assert provider.has_masks  # the drawn mask reached the run through the provider
+    assert len(provider._cache) <= provider._cache_size  # never the whole sequence
+    assert provider._cache_size == 2

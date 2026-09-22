@@ -16,6 +16,19 @@ All notable changes to pyALDVC are documented here. The format follows
   computing the threshold again on the UI thread. A result for a frame the user has since left is
   discarded rather than applied to the wrong frame, and closing the window waits for the job like
   every other. The memory it uses is unchanged (`docs/large_volume_limits.md`, section 4).
+- **Saving a mask no longer freezes the window either.** The write ran on the UI thread with no
+  feedback. It runs on a worker thread now, the *Save mask* button waits for it, and the file holds
+  the mask as it was when the save started: a drawing made meanwhile is kept, and the editor's
+  history is only restarted when nothing was drawn. A contiguous boolean mask is written through a
+  uint8 view, so nothing volume-sized is allocated for the conversion. No cancel, by design -- a
+  half-written file is worse than a wait.
+- **A batch run streams its frames from disk.** The batch loaded every volume and every mask of a
+  session into memory before the run started, while the interactive run had long been reading them
+  through the streaming provider with two normalised frames resident -- so a session of N frames
+  cost N frames of memory before the first correlation. `session_provider` now hands the run a
+  `FileVolumeProvider`; mask files stream with it, and a drawn mask is rebuilt from its operations
+  up front (a threshold operation needs the intensities), reading that frame once and keeping only
+  the boolean mask.
 
 ## [0.9.0] - 2026-09-21
 
