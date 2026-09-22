@@ -61,6 +61,13 @@ a `.mat` holding five volumes costs five volumes of RAM.
   `LocalContext`: 4.5 GB at 2 M nodes, and `_REF_CACHE_SIZE = 2` can hold two of them. `L_all` is a
   dense lower-triangular factor (half of it is zeros) and `H_all` is symmetric (the CUDA precompute
   already computes only its 78 upper-triangle entries before expanding).
+  **Decided not to do (2026-09-21).** Packing both to their 78 entries would cut this to 1248 bytes
+  per node (2 GB at 2 M nodes) and could be done without touching the kernels -- store packed in the
+  context, unpack per node chunk at the three readers (`local_icgn.py`, `subpb1_solver.py`,
+  `uncertainty.py`). It was left undone because the saving only shows on meshes of a million nodes
+  and more, which the intended use (confocal sequences of a few dozen frames, meshes far below that)
+  does not reach, while the change sits on the solver's hot path. Revisit if a run with more than
+  about 1 M nodes becomes routine.
 - `store_local_result` (`src/al_dvc/core/config.py:141`) defaults to True and keeps `U_local` and
   `F_local` per frame for every frame: about 270 bytes per node per frame, so 54 GB at 2 M nodes and
   100 frames. Setting it False is the fix; it is not the default because the local field is what a
