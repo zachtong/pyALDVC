@@ -137,24 +137,57 @@ def mask_coverage(mask) -> float:
     return float(np.count_nonzero(m)) / float(m.size) if m.size else 0.0
 
 
-def threshold_region(volume, level: float | None = None, keep_largest: bool = True, fill_holes: bool = True):
-    """Boolean volume of the voxels above ``level`` (Otsu when ``None``), optionally cleaned up."""
+class ThresholdCancelled(Exception):
+    """Raised by :func:`threshold_region` when ``stop()`` asked it to give up between two stages."""
+
+
+def threshold_region(
+    volume,
+    level: float | None = None,
+    keep_largest: bool = True,
+    fill_holes: bool = True,
+    progress=None,
+    stop=None,
+):
+    """Boolean volume of the voxels above ``level`` (Otsu when ``None``), optionally cleaned up.
+
+    ``progress(fraction, stage)`` is called at the start of each stage and ``stop()`` is consulted
+    between them. The stages themselves -- SciPy's hole filling and labelling -- run to completion,
+    so a cancel lands at the next stage boundary rather than instantly; on a 512^3 volume that is a
+    few seconds, not the whole minute. Filling holes allocates a few boolean volumes and labelling an
+    int32 one (4 bytes per voxel): the memory is what it always was, only the UI thread is spared.
+    """
     from scipy import ndimage
+
+    def report(fraction: float, stage: str) -> None:
+        if progress is not None:
+            progress(fraction, stage)
+
+    def check() -> None:
+        if stop is not None and stop():
+            raise ThresholdCancelled()
 
     vol = np.asarray(volume)
     if vol.ndim != 3:
         raise ValueError(f"threshold needs a 3-D volume, got shape {vol.shape}")
+    report(0.0, "threshold")
     if level is None:
         step = max(1, int(round(vol.size / 2_000_000)))  # sample large volumes for the histogram
         level = otsu_threshold(vol.ravel()[::step])
     region = vol > level
+    check()
     if fill_holes and region.any():
+        report(0.3, "fill holes")
         region = ndimage.binary_fill_holes(region)
+        check()
     if keep_largest and region.any():
+        report(0.6, "largest component")
         labels, n = ndimage.label(region)
         if n > 1:
             sizes = ndimage.sum(region, labels, index=np.arange(1, n + 1))
             region = labels == (int(np.argmax(sizes)) + 1)
+        check()
+    report(1.0, "done")
     return np.asarray(region, dtype=bool)
 
 
@@ -295,6 +328,10 @@ class MaskEditor:
     _redo: list[MaskOp] = field(default_factory=list, init=False, repr=False)
     _full_base: bool = field(default=False, init=False, repr=False)
     _shared: bool = field(default=False, init=False, repr=False)  # a snapshot is out; copy before editing
+    # The region of the threshold operation in the history, kept so that a replay (an undo of a later
+    # operation) reuses it instead of recomputing the threshold on the UI thread. One boolean volume
+    # at most, dropped when the operation leaves the history.
+    _threshold_cache: dict = field(default_factory=dict, init=False, repr=False)
     _count: int | None = field(default=None, init=False, repr=False)
     _box: Box | None = field(default=None, init=False, repr=False)
     _box_valid: bool = field(default=False, init=False, repr=False)
@@ -386,13 +423,38 @@ class MaskEditor:
         elif op.shape == "threshold":
             if self.volume is None:
                 raise ValueError("a threshold operation needs the volume intensities (MaskEditor.volume)")
-            self._combine(threshold_region(self.volume, op.level, op.keep_largest, op.fill_holes), op.mode)
+            region = self._threshold_cache.get(op)
+            if region is None:
+                region = threshold_region(self.volume, op.level, op.keep_largest, op.fill_holes)
+                self._threshold_cache = {op: region}
+            self._combine(region, op.mode)
         else:
             self._apply_geometry(op)
         self.ops.append(op)
         self._redo.clear()
+        self._prune_threshold_cache()
         self._invalidate()
         return self.mask
+
+    def apply_computed(self, op: MaskOp, region: NDArray[np.bool_]) -> NDArray[np.bool_]:
+        """Apply a ``threshold`` operation whose region was computed elsewhere, typically off the UI thread.
+
+        The operation enters the history like any other and the region is kept for its replays, so an
+        undo of a later operation does not compute the threshold again on the UI thread.
+        """
+        if op.shape != "threshold":
+            raise ValueError(f"apply_computed takes a threshold operation, got {op.shape!r}")
+        region = np.asarray(region, dtype=bool)
+        if region.shape != tuple(self.shape):
+            raise ValueError(f"region shape {region.shape} does not match the mask {tuple(self.shape)}")
+        self._threshold_cache = {op: region}
+        return self.apply(op)
+
+    def _prune_threshold_cache(self) -> None:
+        """Drop cached regions whose operation is no longer in the history (undo stack or redo stack)."""
+        if self._threshold_cache:
+            live = self.ops + self._redo
+            self._threshold_cache = {op: r for op, r in self._threshold_cache.items() if op in live}
 
     def _combine(self, region: NDArray[np.bool_], mode: str) -> None:
         """Combine a region that really is a whole volume (only ``threshold`` produces one)."""
@@ -472,6 +534,7 @@ class MaskEditor:
         self._set_base(base, copy=True)
         self.ops = []
         self._redo = []
+        self._threshold_cache = {}
         self.mask = self._base_copy()  # a fresh array, so a snapshot keeps what it was given
         self._shared = False
         self._invalidate()

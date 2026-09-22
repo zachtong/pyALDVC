@@ -71,10 +71,11 @@ a `.mat` holding five volumes costs five volumes of RAM.
 
 ## 4. Work still on the Qt thread
 
-- The automatic mask (`threshold_region`, `src/al_dvc/gui/mask_editor.py`) runs `vol > level`, then
-  `binary_fill_holes` (several full-volume temporaries) and `ndimage.label` (int32, 4 bytes per
-  voxel), synchronously. The Otsu histogram already subsamples; nothing after it does. Past ~512^3
-  this freezes or exhausts memory. It belongs on a worker thread with progress.
+- ~~The automatic mask runs synchronously on the Qt thread.~~ **Done (0.9.x):** it runs on a worker
+  thread with stage progress and a cancel that lands at the next stage boundary (`AutoMaskWorker`
+  in `app_state.py`). The **memory** is unchanged: `binary_fill_holes` still allocates several
+  full-volume temporaries and `ndimage.label` an int32 volume (4 bytes per voxel), so past ~1024^3
+  it can still exhaust memory -- only the freeze is gone.
 - `AppState.save_mask` converts the mask to uint8 and writes the file on the UI thread, with no
   progress and no cancel.
 - `gui/batch.py` `load_session_inputs` materialises every volume and every mask of a session before

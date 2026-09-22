@@ -157,6 +157,7 @@ class MaskToolbar(QWidget):
         guard_wheel(self)
 
         self._btn["auto"].clicked.connect(self._on_auto)
+        self._state.auto_mask_state.connect(self._on_auto_state)
         self._btn["undo"].clicked.connect(self._state.undo_mask)
         self._btn["redo"].clicked.connect(self._state.redo_mask)
         self._btn["invert"].clicked.connect(lambda: self._state.apply_mask_op(MaskOp("invert")))
@@ -246,17 +247,45 @@ class MaskToolbar(QWidget):
 
     # ------------------------------------------------------------------ actions
     def _on_auto(self) -> None:
-        """Mask from the intensity of the current frame: Otsu threshold, holes filled, largest component kept."""
+        """Mask from the intensity of the current frame: Otsu threshold, holes filled, largest component kept.
+
+        The work runs on a worker thread; while it does, this button reads Cancel and does that.
+        """
+        if self._state.auto_mask_running():
+            self._state.cancel_auto_mask()
+            self._status.setText(self.tr("Cancelling the automatic mask..."))
+            return
         if not self._state.volumes:
             return
-        try:
-            self._state.apply_mask_op(MaskOp("threshold", mode="replace"))
-        except Exception as exc:
-            self._state.log(self.tr("Automatic mask failed: {error}").format(error=exc), "error")
+        worker = self._state.start_auto_mask()
+        if worker is not None:
+            worker.progress.connect(self._on_auto_progress)
+
+    def _on_auto_progress(self, _fraction: float, stage: str) -> None:
+        self._status.setText(self.tr("Automatic mask: {stage}").format(stage=stage))
+
+    def _on_auto_state(self, state: str) -> None:
+        """Start: the button becomes Cancel and the other edits wait. End: the buttons come back."""
+        btn = self._btn["auto"]
+        if state == "started":
+            self._auto_idle = (btn.text(), btn.toolTip())  # the button's own label, set at construction
+            btn.setText(self.tr("Cancel"))
+            btn.setToolTip(self.tr("Stop computing the automatic mask"))
+            self.refresh()  # the edit buttons (undo, redo, invert, ...) follow the job in refresh(), not _update_enabled()
             return
-        mask = self._state.current_mask()
-        if mask is not None:
-            self._state.log(self.tr("Automatic mask: material {pct:.1f}% of the volume").format(pct=100.0 * _coverage(mask)))
+        idle = getattr(self, "_auto_idle", None)
+        if idle is not None:
+            btn.setText(idle[0])
+            btn.setToolTip(idle[1])
+        self.refresh()
+        if state == "finished":
+            mask = self._state.current_mask()
+            if mask is not None:
+                self._state.log(self.tr("Automatic mask: material {pct:.1f}% of the volume").format(pct=100.0 * _coverage(mask)))
+        elif state == "cancelled":
+            self._status.setText(self.tr("Automatic mask cancelled."))
+        else:
+            self._status.setText(self.tr("Automatic mask failed; see the log."))
 
     def _on_save(self) -> None:
         if self._state.current_mask() is None:
@@ -280,10 +309,12 @@ class MaskToolbar(QWidget):
             self.show_mask.blockSignals(False)
         ed = self._state.mask_editor
         has_volume = bool(self._state.volumes)
-        self._btn["undo"].setEnabled(ed is not None and ed.can_undo)
-        self._btn["redo"].setEnabled(ed is not None and ed.can_redo)
-        for key in ("auto", "invert", "fill", "clear"):
-            self._btn[key].setEnabled(has_volume)
+        running = self._state.auto_mask_running()  # the automatic mask is being computed: it owns the history
+        self._btn["undo"].setEnabled(ed is not None and ed.can_undo and not running)
+        self._btn["redo"].setEnabled(ed is not None and ed.can_redo and not running)
+        self._btn["auto"].setEnabled(has_volume)  # start, or cancel while it runs
+        for key in ("invert", "fill", "clear"):
+            self._btn[key].setEnabled(has_volume and not running)
         mask = self._state.current_mask() if has_volume else None
         self._btn["save"].setEnabled(mask is not None)
         self._btn["remove"].setEnabled(mask is not None)

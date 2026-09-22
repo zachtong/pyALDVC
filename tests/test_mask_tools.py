@@ -239,3 +239,140 @@ def test_drag_beyond_the_image_edge_hugs_the_border(qapp, pair):
     mask = state.current_mask()
     assert mask[: nz // 2 + 1, :, : nx // 2 + 1].all() and not mask[nz // 2 + 1 :, :, :].any()
     window.close()
+
+
+# --------------------------------------------------------------------------- the automatic mask, off the UI thread
+def test_threshold_region_reports_its_stages_and_stops_between_them():
+    from al_dvc.gui.mask_editor import ThresholdCancelled, threshold_region
+
+    vol = generate_speckle_volume((24, 28, 32), sigma=2.0, seed=3)
+    stages: list = []
+    region = threshold_region(vol, progress=lambda f, s: stages.append((f, s)))
+    assert [s for _, s in stages] == ["threshold", "fill holes", "largest component", "done"]
+    assert [f for f, _ in stages] == sorted(f for f, _ in stages)
+    assert region.dtype == bool and region.shape == vol.shape
+    assert np.array_equal(region, threshold_region(vol))  # the callbacks change nothing
+
+    seen: list = []
+    with pytest.raises(ThresholdCancelled):  # asked to stop during the first stage: never reaches the second
+        threshold_region(vol, progress=lambda f, s: seen.append(s), stop=lambda: bool(seen))
+    assert seen == ["threshold"]
+
+
+def test_apply_computed_equals_apply_and_the_replay_reuses_the_region(monkeypatch):
+    from al_dvc.gui import mask_editor as me
+    from al_dvc.gui.mask_editor import MaskEditor
+
+    vol = generate_speckle_volume((24, 28, 32), sigma=2.0, seed=3)
+    op = MaskOp("threshold", mode="replace")
+    direct = MaskEditor(vol.shape, base=None, volume=vol)
+    direct.apply(op)
+    region = me.threshold_region(vol)
+
+    calls: list = []
+    real = me.threshold_region
+    monkeypatch.setattr(me, "threshold_region", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    ed = MaskEditor(vol.shape, base=None, volume=vol)
+    ed.apply_computed(op, region)
+    assert np.array_equal(ed.mask, direct.mask) and ed.ops == [op] and calls == []
+
+    ed.apply(MaskOp("rectangle", "xy", ((2.0, 2.0), (10.0, 10.0)), mode="cut", depth=(3, 8)))
+    ed.undo()  # replays the threshold: from the kept region, not a new computation on the UI thread
+    assert np.array_equal(ed.mask, direct.mask) and calls == []
+    ed.undo()  # the threshold itself moves to the redo stack; its region stays for a redo
+    assert not ed.mask.any() and ed._threshold_cache
+    ed.apply(MaskOp("fill"))  # a new operation clears the redo stack: the region has no operation left, so it goes
+    assert ed._threshold_cache == {}
+    with pytest.raises(ValueError):
+        ed.apply_computed(MaskOp("fill"), region)
+
+
+def test_the_automatic_mask_runs_off_the_ui_thread_and_lands_in_the_history(qapp, pair):
+    """The button starts a worker, reads Cancel meanwhile, and the result is an ordinary undoable operation."""
+    from al_dvc.gui.mask_editor import threshold_region
+
+    window = _window(qapp, pair)
+    tools, state = window.viewer.mask_tools, window.state
+    states: list = []
+    state.auto_mask_state.connect(states.append)
+    assert not state.auto_mask_running()
+
+    tools._on_auto()
+    worker = state._auto_mask
+    assert worker is not None and state.auto_mask_running()
+    assert tools._btn["auto"].text() == "Cancel" and not tools._btn["invert"].isEnabled()
+    assert worker.wait(120_000)
+    _pump(40)
+    assert states[0] == "started" and states[-1] == "finished"
+    assert not state.auto_mask_running()
+    mask = state.current_mask()
+    assert mask is not None and mask.any() and not mask.all()
+    assert np.array_equal(mask, threshold_region(state.volume_array(0)))  # what the UI thread used to compute
+    ed = state.mask_editor
+    assert ed.ops[-1].shape == "threshold" and ed.can_undo
+    assert tools._btn["auto"].text() != "Cancel" and tools._btn["invert"].isEnabled()
+    window.close()
+
+
+def _held_threshold(monkeypatch, gate):
+    """threshold_region that reports its first stage, then waits for the test before going on."""
+    from al_dvc.gui import app_state as st
+    from al_dvc.gui import mask_editor as me
+
+    real = me.threshold_region
+
+    def slow(vol, *args, progress=None, stop=None, **kw):
+        if progress is not None:
+            progress(0.0, "threshold")
+        gate.wait(60)
+        if stop is not None and stop():
+            raise me.ThresholdCancelled()
+        return real(vol, *args, progress=progress, stop=stop, **kw)
+
+    monkeypatch.setattr(st, "threshold_region", slow)
+
+
+def test_cancelling_the_automatic_mask_leaves_the_history_alone(qapp, pair, monkeypatch):
+    import threading
+
+    gate = threading.Event()
+    _held_threshold(monkeypatch, gate)
+    window = _window(qapp, pair)
+    tools, state = window.viewer.mask_tools, window.state
+    states: list = []
+    state.auto_mask_state.connect(states.append)
+    assert state.mask_editor is None and state.current_mask() is None
+
+    tools._on_auto()
+    worker = state._auto_mask
+    assert state.auto_mask_running()
+    tools._on_auto()  # the same button, now Cancel
+    gate.set()
+    assert worker.wait(60_000)
+    _pump(40)
+    assert states == ["started", "cancelled"]
+    assert state.mask_editor is None and state.current_mask() is None  # nothing was applied, nothing created
+    assert tools._btn["auto"].text() != "Cancel" and tools._btn["invert"].isEnabled()
+    window.close()
+
+
+def test_a_result_for_a_frame_that_is_no_longer_selected_is_discarded(qapp, pair, monkeypatch):
+    import threading
+
+    gate = threading.Event()
+    _held_threshold(monkeypatch, gate)
+    window = _window(qapp, pair)
+    tools, state = window.viewer.mask_tools, window.state
+    states: list = []
+    state.auto_mask_state.connect(states.append)
+
+    tools._on_auto()
+    worker = state._auto_mask
+    state.set_current_frame(1)  # the user moves on while the mask of frame 0 is being computed
+    _pump()
+    gate.set()
+    assert worker.wait(120_000)
+    _pump(40)
+    assert states[-1] == "cancelled" and not state.auto_mask_running()
+    assert state.volumes[0].mask is None and state.volumes[1].mask is None  # applied to neither
+    window.close()

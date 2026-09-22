@@ -4,6 +4,19 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- **The automatic mask no longer freezes the window.** The Otsu threshold, hole filling and
+  largest-component pass ran on the UI thread: past a few hundred voxels an edge the window hung for
+  tens of seconds and nothing could be cancelled. They run on a worker thread now, the button reads
+  *Cancel* meanwhile (a cancel lands at the next stage, since SciPy's fill and label run to
+  completion), the other edits wait, and the result enters the drawing history as an ordinary
+  operation -- undo works, and an undo of a later operation reuses the computed region instead of
+  computing the threshold again on the UI thread. A result for a frame the user has since left is
+  discarded rather than applied to the wrong frame, and closing the window waits for the job like
+  every other. The memory it uses is unchanged (`docs/large_volume_limits.md`, section 4).
+
 ## [0.9.0] - 2026-09-21
 
 ### Added

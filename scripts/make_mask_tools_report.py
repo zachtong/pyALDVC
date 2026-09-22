@@ -78,6 +78,38 @@ def _timings(sizes) -> list[str]:
     return lines
 
 
+def _auto_mask_timings(sizes) -> list[str]:
+    """The automatic mask's stages on a worker thread: how long each takes, and how long a cancel waits.
+
+    A cancel is honoured between stages (SciPy's fill and label run to completion), so its latency is
+    the duration of the stage in progress; measured here as the time from a stop asked for during the
+    first stage to the ThresholdCancelled that answers it.
+    """
+    from al_dvc.gui.mask_editor import ThresholdCancelled, threshold_region
+
+    lines = []
+    for n in sizes:
+        vol = generate_speckle_volume((n, n, n), sigma=2.0, seed=5)
+        marks: list[tuple[float, str]] = []
+        t0 = time.perf_counter()
+        threshold_region(vol, progress=lambda f, s: marks.append((time.perf_counter(), s)))
+        total = (time.perf_counter() - t0) * 1000
+        stage_ms = {}
+        for (ta, sa), (tb, _sb) in zip(marks, marks[1:]):
+            stage_ms[sa] = (tb - ta) * 1000
+        seen: list = []
+        t1 = time.perf_counter()
+        try:
+            threshold_region(vol, progress=lambda f, s: seen.append(s), stop=lambda: bool(seen))
+        except ThresholdCancelled:
+            pass
+        cancel_ms = (time.perf_counter() - t1) * 1000
+        parts = ", ".join(f"{k} {v:.0f} ms" for k, v in stage_ms.items())
+        lines.append(f"  {n}^3 voxels  total {total:7.0f} ms  ({parts})")
+        lines.append(f"      a cancel asked for during the first stage is answered after {cancel_ms:.0f} ms")
+    return lines
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default=str(ROOT / "reports" / "mask_tools.pdf"))
@@ -197,6 +229,8 @@ def main(argv=None) -> int:
         lines += ["", "Rasterisation timings (one operation, full volume):"] + _timings(
             [128, 256] if args.quick else [128, 256, 512]
         )
+        lines += ["", "Automatic mask (Otsu, fill holes, largest component) on a worker thread -- per stage:"]
+        lines += _auto_mask_timings([64, 128] if args.quick else [64, 128, 256])
         lines += [
             "",
             "Limitations: shapes are prisms along one axis (no free-form 3-D surfaces); the brush",

@@ -93,8 +93,11 @@ def test_toolbar_buttons_and_auto_mask(qapp):
     assert tools.settings().mode == "cut" and tools.mode.currentIndex() == 1
     tools.set_mode("replace")
     assert tools.mode_buttons["replace"].isChecked()
-    tools._btn["auto"].click()
-    qapp.processEvents()
+    tools._btn["auto"].click()  # runs on a worker thread now: wait for it, then let its result land
+    worker = window.state._auto_mask
+    assert worker is not None and worker.wait(60_000)
+    for _ in range(40):
+        qapp.processEvents()
     mask = window.state.current_mask()
     assert mask is not None and 0.2 < mask.mean() < 0.5
     assert abs(mask.mean() - obj.mean()) < 0.03

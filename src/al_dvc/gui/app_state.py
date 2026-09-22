@@ -19,12 +19,12 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QThread, Signal
 
 from al_dvc.core.config import DVCPara, dvcpara_default
 from al_dvc.core.data_structures import PipelineResult, VOIRange, voi_from_mask
 
-from .mask_editor import FULL_BASE, MaskEditor, MaskOp
+from .mask_editor import FULL_BASE, MaskEditor, MaskOp, ThresholdCancelled, threshold_region
 
 logger = logging.getLogger(__name__)
 _NUMBER = re.compile(r"(\d+)")
@@ -113,6 +113,47 @@ class VolumeEntry:
         return self.label or (Path(self.path).name if self.path else "array")
 
 
+class AutoMaskWorker(QThread):
+    """``threshold_region`` on a worker thread, with stage progress and a cancel that lands at the next stage."""
+
+    progress = Signal(float, str)
+    finished_region = Signal(object)  # the boolean volume
+    failed = Signal(str)
+    cancelled = Signal()
+
+    def __init__(self, volume, op: MaskOp, frame: int, parent=None) -> None:
+        super().__init__(parent)
+        self._volume = volume
+        self.op = op
+        self.frame = int(frame)
+        self._stop = False
+
+    def cancel(self) -> None:
+        self._stop = True
+
+    def run(self) -> None:  # noqa: D401 - QThread entry point
+        try:
+            region = threshold_region(
+                self._volume,
+                self.op.level,
+                self.op.keep_largest,
+                self.op.fill_holes,
+                progress=self.progress.emit,
+                stop=lambda: self._stop,
+            )
+        except ThresholdCancelled:
+            self.cancelled.emit()
+            return
+        except Exception as exc:  # surface to the UI
+            logger.exception("Automatic mask failed")
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+            return
+        if self._stop:  # a cancel during the last stage is honoured, not published
+            self.cancelled.emit()
+            return
+        self.finished_region.emit(region)
+
+
 class AppState(QObject):
     """Observable state of the application."""
 
@@ -126,6 +167,7 @@ class AppState(QObject):
     log_message = Signal(str, str)  # (message, level)
     output_dir_changed = Signal(str)
     mask_changed = Signal()
+    auto_mask_state = Signal(str)  # "started" | "finished" | "cancelled" | "failed"
 
     def __init__(self) -> None:
         super().__init__()
@@ -414,6 +456,67 @@ class AppState(QObject):
     def apply_mask_op(self, op: MaskOp) -> None:
         self.ensure_mask_editor().apply(op)
         self._push_mask()
+
+    # ------------------------------------------------------------------ the automatic mask, off the UI thread
+    def auto_mask_running(self) -> bool:
+        """A job is owned, from its start to its terminal signal (which is what the buttons need to know)."""
+        return getattr(self, "_auto_mask", None) is not None
+
+    def auto_mask_thread_running(self) -> bool:
+        """The thread itself is alive -- what a shutdown has to wait for, not what the buttons show."""
+        w = getattr(self, "_auto_mask", None)
+        return w is not None and w.isRunning()
+
+    def start_auto_mask(self, op: MaskOp | None = None):
+        """Compute the threshold mask of the current frame on a worker thread; returns the worker, or None.
+
+        The threshold used to run on the UI thread: past a few hundred voxels an edge the window froze
+        for tens of seconds and nothing could be cancelled. The worker computes the region and hands it
+        to the editor as an ordinary operation when it is done; if the frame was changed meanwhile the
+        result is discarded rather than applied to the wrong frame.
+        """
+        if not self.volumes or self.auto_mask_running():
+            return None
+        op = op if op is not None else MaskOp("threshold", mode="replace")
+        if op.shape != "threshold":
+            raise ValueError(f"the automatic mask is a threshold operation, got {op.shape!r}")
+        frame = int(self.current_frame)
+        worker = AutoMaskWorker(self.volume_array(frame), op, frame, parent=self)
+        worker.finished_region.connect(lambda region, w=worker: self._auto_mask_done(w, region))
+        worker.failed.connect(lambda message, w=worker: self._auto_mask_ended(w, "failed", message))
+        worker.cancelled.connect(lambda w=worker: self._auto_mask_ended(w, "cancelled"))
+        worker.finished.connect(worker.deleteLater)  # the Qt object goes once the thread has really ended
+        self._auto_mask = worker
+        worker.start()
+        self.auto_mask_state.emit("started")  # after start(), so a listener that asks the thread sees it alive
+        return worker
+
+    def cancel_auto_mask(self) -> None:
+        if self.auto_mask_running():
+            self._auto_mask.cancel()
+
+    def _auto_mask_done(self, worker, region) -> None:
+        if worker is not getattr(self, "_auto_mask", None):
+            return  # a job that was replaced; its result is nobody's
+        shape = self.volume_shape()
+        if worker.frame != self.current_frame or shape is None or tuple(region.shape) != tuple(shape):
+            self.log("Automatic mask discarded: the frame changed while it was being computed", "warning")
+            self._auto_mask_ended(worker, "cancelled")
+            return
+        try:
+            self.ensure_mask_editor().apply_computed(worker.op, region)
+            self._push_mask()
+        except Exception as exc:
+            self._auto_mask_ended(worker, "failed", f"{type(exc).__name__}: {exc}")
+            return
+        self._auto_mask_ended(worker, "finished")
+
+    def _auto_mask_ended(self, worker, state: str, message: str = "") -> None:
+        if worker is getattr(self, "_auto_mask", None):
+            self._auto_mask = None
+        if message:
+            self.log(f"Automatic mask failed: {message}", "error")
+        self.auto_mask_state.emit(state)
 
     def undo_mask(self) -> bool:
         if getattr(self, "_mask_copy_backup", None):
