@@ -512,7 +512,7 @@ signals; panels that only read and write the state (`VolumePanel`,
 `PipelineResult` (partial on stop); `session.py` for `.aldvc` JSON sessions with
 paths relative to the file; `KernelWarmup` compiling the kernels on a daemon
 thread shortly after the window opens; `self_test.py` for installation checks
-(`al-dvc-gui --self-test`); the pyALDIC dark theme (`theme.py`, copied) and
+(`al-dvc --self-test`); the pyALDIC dark theme (`theme.py`, copied) and
 Windows title-bar helpers.
 
 The window follows pyALDIC's three columns: volumes and parameters on the

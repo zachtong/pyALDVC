@@ -32,6 +32,11 @@ All notable changes to pyALDVC are documented here. The format follows
 - **`para.tile_local` has a control in the parameter panel.** A *Local-step tile* spin box in the
   performance section (0 = off), and the memory line says when the local steps are boxed. The two
   margins stay config-file settings.
+- **`al-dvc` alone opens the application**, as pyALDIC's `al-dic` opens its window. `al-dvc
+  session.aldvc` opens a saved session in it and `al-dvc --self-test` checks the installation; the
+  commands (`al-dvc run`, `batch`, `texture`, ...) are unchanged, and `al-dvc-gui` keeps working for
+  shortcuts made with 0.9. On a Linux machine without a display (an SSH session on a cluster) `al-dvc`
+  alone lists the commands instead of letting Qt abort.
 
 ### Fixed
 - **The GPU backend started on NumPy 2.5 as the CPU one, silently.** numba-cuda 0.30.4, the latest

@@ -96,7 +96,7 @@ def main(argv=None) -> int:
     with PdfPages(str(out)) as pdf:
         fig = plt.figure(figsize=(8.5, 11))
         lines = [
-            f"pyALDVC {__version__} -- graphical application (al-dvc-gui)",
+            f"pyALDVC {__version__} -- graphical application (al-dvc)",
             "",
             "Standalone PySide6 window laid out like pyALDIC: volumes and folding parameter sections",
             "(fixed-width inputs, wheel only when focused) on the left, the slice viewer in the middle, run",

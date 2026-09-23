@@ -1,6 +1,6 @@
 """Self-test of an installation: Qt, kernels, a small run through the GUI worker, exports.
 
-``al-dvc-gui --self-test`` (or Help > Run self-test) runs every check offscreen
+``al-dvc --self-test`` (or Help > Run self-test) runs every check offscreen
 and writes a short report. Exit code 0 means all checks passed.
 """
 

@@ -240,7 +240,7 @@ the matching frame: 1 = material, 0 = crack or pore. Grey values are uint16.
 
 ## How to run it
 
-1. Start the application (`al-dvc-gui`), *Add volumes...* and pick the four files in `volumes/`.
+1. Start the application (`al-dvc`), *Add volumes...* and pick the four files in `volumes/`.
 2. For every frame, *Load mask...* in the region-of-interest panel and pick the matching file in
    `masks/`. (A single mask also works: load `mask_00.tif` and press *Copy to all frames*.)
 3. Parameters: subset 32, step 8 is a good start; the texture analysis suggests its own.

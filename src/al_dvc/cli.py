@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -382,18 +383,45 @@ def cmd_batch(args: argparse.Namespace) -> int:
     return 0 if all(job.status == "done" for job in jobs) else 1
 
 
-def cmd_gui(args: argparse.Namespace) -> int:
-    """Launch the graphical application."""
+def _display_available() -> bool:
+    """Whether a window can open here: not on Linux without X11 or Wayland (an SSH session on a cluster), where Qt
+    would abort instead of starting."""
+    if sys.platform.startswith("linux"):
+        return any(os.environ.get(name) for name in ("DISPLAY", "WAYLAND_DISPLAY", "QT_QPA_PLATFORM"))
+    return True
+
+
+def _opens_window(argv: list[str]) -> bool:
+    """``al-dvc`` alone, ``al-dvc session.aldvc`` and ``al-dvc --self-test`` belong to the application, as
+    pyALDIC's ``al-dic`` opens its window; every command (``run``, ``batch``, ...) goes to the parser."""
+    return not argv or argv[0] == "--self-test" or argv[0].lower().endswith(".aldvc")
+
+
+def _launch_window(argv: list[str]) -> int:
+    """Open the application with ``argv`` (a session file, or ``--self-test [report]``)."""
+    if argv[:1] != ["--self-test"] and not _display_available():  # the self-test runs offscreen anywhere
+        build_parser().print_help()
+        print("\nThere is no display here, so the application cannot open: use one of the commands above.", file=sys.stderr)
+        return 2
     try:
         from .gui.app import main as gui_main
     except ImportError as exc:  # PySide6 missing
         raise SystemExit(f"the GUI needs PySide6: pip install al-dvc ({exc})") from exc
-    argv = [sys.argv[0]] + ([args.session] if args.session else [])
-    return int(gui_main(argv) or 0)
+    return int(gui_main([sys.argv[0], *argv]) or 0)
+
+
+def cmd_gui(args: argparse.Namespace) -> int:
+    """Launch the graphical application (``al-dvc gui`` is ``al-dvc`` alone, kept for the old spelling)."""
+    return _launch_window([args.session] if args.session else [])
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="al-dvc", description="Augmented Lagrangian Digital Volume Correlation")
+    ap = argparse.ArgumentParser(
+        prog="al-dvc",
+        description="Augmented Lagrangian Digital Volume Correlation",
+        epilog="Without a command, al-dvc opens the application; al-dvc SESSION.aldvc opens a saved session in it, "
+        "and al-dvc --self-test checks the installation.",
+    )
     ap.add_argument("-q", "--quiet", action="store_true", help="only warnings")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -479,13 +507,16 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--quiet", action="store_true", help="no progress line")
     b.add_argument("--verbose", action="store_true", help="print tracebacks of failed jobs")
     b.set_defaults(func=cmd_batch)
-    g = sub.add_parser("gui", help="launch the graphical application")
+    g = sub.add_parser("gui", help="open the application (the same as al-dvc alone)")
     g.add_argument("session", nargs="?", help="session file (.aldvc) to open")
     g.set_defaults(func=cmd_gui)
     return ap
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if _opens_window(argv):
+        return _launch_window(argv)
     ap = build_parser()
     args = ap.parse_args(argv)
     _setup_logging(not args.quiet)

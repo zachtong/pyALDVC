@@ -1,4 +1,4 @@
-"""pyALDVC main window and application entry point (``al-dvc-gui``).
+"""pyALDVC main window and application entry point (``al-dvc``, or ``al-dvc-gui``).
 
 Layout: a left column with the volume list, the parameters and the run
 controls; the three-plane slice viewer in the centre; result display and
@@ -832,7 +832,7 @@ def _session_path_from_argv(argv: list[str]) -> str | None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Launch the GUI (``al-dvc-gui [session.aldvc] [--self-test]``)."""
+    """Launch the GUI (``al-dvc [session.aldvc] [--self-test]``; ``al-dvc-gui`` takes the same arguments)."""
     import multiprocessing
 
     multiprocessing.freeze_support()
