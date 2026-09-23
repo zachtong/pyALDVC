@@ -385,7 +385,7 @@ def main(argv=None) -> int:
             "0.1 voxel with the gradient in place (fewer iterations); off by default because a",
             "discontinuous field is not captured by the interpolated start.",
             "",
-            "Real micro-CT example (79,200 nodes, MATLAB beta), IC-GN iterations per ADMM pass:",
+            "Real confocal example (79,200 nodes, MATLAB beta), IC-GN iterations per ADMM pass:",
             "  plain Hessian 8.1 / 7.3 / 6.9 / 6.5, corrected (cap 0.5) 6.8 / 4.1 / 4.0 / 3.9; a full",
             "  correction (cap 0.1) over-shot on the non-white CT noise: the ADMM stopped after 2 steps",
             "  on an answer 0.024 / 0.028 / 0.077 voxel from MATLAB's instead of 0.005 / 0.006 / 0.020.",

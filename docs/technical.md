@@ -60,7 +60,7 @@ Throughput on a 24-core workstation (Intel Core Ultra 9 285K, Numba warm, ADMM w
 | 256^3 | 32 / 8 | 19 683 | 9.0 s (3.8 s with `subset_stride=2`) | 4.2 s (0.9 s) |
 | 256^3 | 48 / 16 | 2 197 | 3.1 s | 1.5 s |
 | 384^3 | 32 / 16 | 10 648 | 6.7 s | 2.8 s |
-| 1024 x 1024 x 306 micro-CT (MATLAB example) | 32 / 8 | 79 200 | CPU 3.6 min, 3.2 min with `init_coarse_factor=2` (12.5 min before the 0.3.2 work); **RTX 5090: 23 s** | CPU 1.2 min + 1.5 min for three 3-DOF passes, initial guess 0.9 min (0.3 min coarse); GPU 2.6 s + 6.2 s, initial guess 9.9 s |
+| 1024 x 1024 x 306 confocal (MATLAB example) | 32 / 8 | 79 200 | CPU 3.6 min, 3.2 min with `init_coarse_factor=2` (12.5 min before the 0.3.2 work); **RTX 5090: 23 s** | CPU 1.2 min + 1.5 min for three 3-DOF passes, initial guess 0.9 min (0.3 min coarse); GPU 2.6 s + 6.2 s, initial guess 9.9 s |
 
 See `reports/validation_synthetic.pdf` and `reports/performance.pdf` for the
 complete tables, noise sweep, spatial-resolution study and stage timings, and
@@ -69,7 +69,7 @@ scaling, the stride trade-off with and without noise, rejected experiments).
 
 ### Agreement with the MATLAB ALDVC code
 
-`scripts/compare_matlab.py` reruns the micro-CT example shipped with the
+`scripts/compare_matlab.py` reruns the confocal example shipped with the
 MATLAB code (`20190504_cut`, 1024x1024x306, 79,200 nodes at subset 32 / step
 8) on the MATLAB node positions and compares node by node
 (`reports/matlab_crossval_ws32_st8.pdf`). On the interior nodes converged in

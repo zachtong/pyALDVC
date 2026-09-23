@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="pyALDVC banner" width="100%"/>
+  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/banner.png" alt="pyALDVC banner" width="100%"/>
 </p>
 
 <p align="center">
@@ -34,14 +34,14 @@ code (Yang, Hazlett, Landauer, Franck, *Exp. Mech.* 2020) and the volumetric sib
 sequence of 3-D scans into displacement and strain fields.
 
 <p align="center">
-  <img src="assets/pyALDVC_demo.gif" alt="pyALDVC workflow: load volumes, draw a region of interest, run, strain post-processing, 3-D view" width="90%"/>
+  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/pyALDVC_demo.gif" alt="pyALDVC workflow: load volumes, draw a region of interest, run, strain post-processing, 3-D view" width="90%"/>
 </p>
 
 ## Why pyALDVC
 
 - **Accurate where subset DVC breaks down.** Local subsets are coupled to a global smoothness step, so steep gradients, boundaries and noisy scans stay sub-voxel accurate.
 - **Cracks and holes stay sharp.** A subset that meets a boundary keeps only the material on its own side of it, and the smoothing never crosses it, so a displacement jump survives instead of being averaged away.
-- **Fast.** A 1024 x 1024 x 306 micro-CT scan with 79 200 nodes takes 23 s on an NVIDIA GPU, 3.6 min on a 24-core CPU.
+- **Fast.** A 1024 x 1024 x 306 confocal scan with 79 200 nodes takes 23 s on an NVIDIA GPU, 3.6 min on a 24-core CPU.
 - **Big scans fit.** A masked 1024^3 run peaks at 14 GB of volume memory instead of 53, so it runs on a 32 GB workstation; drawing and browsing stay responsive because a local change no longer costs a pass over the whole volume.
 - **Point and click.** Load the scans, draw the region of interest on the slices, run, look, export. No code.
 - **Knows your data.** The texture analysis measures your scan and suggests the subset size and step.
@@ -61,7 +61,7 @@ Synthetic volumes with a known deformation (subset 16, step 8), displacement err
 | 5 deg rotation with 12 voxel motion | 0.001 - 0.006 |
 | 2 % strain, noisy scan (SNR 6) | 0.012 |
 
-Micro-CT scan of the MATLAB example, 1024 x 1024 x 306 voxels, 79 200 nodes:
+Confocal scan of the MATLAB example (hydrogel indentation), 1024 x 1024 x 306 voxels, 79 200 nodes:
 
 | | time | agreement with the MATLAB code |
 |---|---|---|
@@ -97,7 +97,7 @@ the two overlap less, which would pull the curve down on its own, so every lag i
 number of voxel pairs that still contribute.
 
 <p align="center">
-  <img src="src/al_dvc/gui/assets/guide/overlap_correction.gif" alt="A box and its shifted copy; the overlap shrinks with the shift, and the raw curve falls below the corrected one" width="90%"/>
+  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/src/al_dvc/gui/assets/guide/overlap_correction.gif" alt="A box and its shifted copy; the overlap shrinks with the shift, and the raw curve falls below the corrected one" width="90%"/>
 </p>
 
 **2. Grow the box until that length stops changing.** Pick a centre, analyse concentric cubes around
@@ -105,14 +105,14 @@ it, each on its own voxels alone. Below the representative volume element the me
 above it, every size agrees.
 
 <p align="center">
-  <img src="src/al_dvc/gui/assets/guide/rve_sweep.gif" alt="Concentric boxes of growing size about one centre; the correlation length settles once the box is large enough" width="90%"/>
+  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/src/al_dvc/gui/assets/guide/rve_sweep.gif" alt="Concentric boxes of growing size about one centre; the correlation length settles once the box is large enough" width="90%"/>
 </p>
 
 **3. The subset follows.** Four correlation lengths per axis, stepped by half a subset: a recommended
 start, not a guarantee. One click writes it into the run.
 
 <p align="center">
-  <img src="src/al_dvc/gui/assets/guide/subset.png" alt="From the 1/e correlation length to the subset size and the step" width="75%"/>
+  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/src/al_dvc/gui/assets/guide/subset.png" alt="From the 1/e correlation length to the subset size and the step" width="75%"/>
 </p>
 
 ## Case studies
@@ -120,25 +120,25 @@ start, not a guarantee. One click writes it into the run.
 **Synthetic rotation**
 
 <p align="center">
-  <img src="assets/videos/rotation_frame_animation.gif" alt="Synthetic rotation: frames animation with smooth deformation on the deformed lattice" width="90%"/>
+  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/videos/rotation_frame_animation.gif" alt="Synthetic rotation: frames animation with smooth deformation on the deformed lattice" width="90%"/>
 </p>
 
-**Hydrogel indentation, micro-CT, 306 x 1024 x 1024 voxels**
+**Hydrogel indentation, confocal microscopy, 1024 x 1024 x 306 voxels**
 
 <p align="center">
-  <img src="assets/videos/indentation_deformed_lattice_orbit_with_arrow.gif" alt="Hydrogel indentation: deformed lattice with displacement arrows, orbit" width="90%"/>
+  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/videos/indentation_deformed_lattice_orbit_with_arrow.gif" alt="Hydrogel indentation: deformed lattice with displacement arrows, orbit" width="90%"/>
 </p>
 <p align="center">
-  <img src="assets/videos/indentation_frame_smooth_animation.gif" alt="Hydrogel indentation: frames animation with smooth deformation" width="90%"/>
+  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/videos/indentation_frame_smooth_animation.gif" alt="Hydrogel indentation: frames animation with smooth deformation" width="90%"/>
 </p>
 <p align="center">
-  <img src="assets/videos/indentation_sweep_x.gif" alt="Slice sweep along x" width="90%"/>
+  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/videos/indentation_sweep_x.gif" alt="Slice sweep along x" width="90%"/>
 </p>
 <p align="center">
-  <img src="assets/videos/indentation_sweep_y.gif" alt="Slice sweep along y" width="90%"/>
+  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/videos/indentation_sweep_y.gif" alt="Slice sweep along y" width="90%"/>
 </p>
 <p align="center">
-  <img src="assets/videos/indentation_sweep_z.gif" alt="Slice sweep along z" width="90%"/>
+  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/videos/indentation_sweep_z.gif" alt="Slice sweep along z" width="90%"/>
 </p>
 
 ## Install
@@ -161,7 +161,7 @@ al-dvc                        # opens the application; al-dvc --help lists the c
 
 No Python? Every [release](https://github.com/zachtong/pyALDVC/releases) ships a portable Windows bundle: unzip, double-click `pyALDVC.exe`.
 
-Read the [user guide](docs/user_guide.md) to get started.
+Read the [user guide](https://github.com/zachtong/pyALDVC/blob/main/docs/user_guide.md) to get started.
 
 ## Citation
 

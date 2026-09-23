@@ -182,7 +182,7 @@ filled from the nearest finite one) to every node as the start of the full
 pass, which then begins within ~0.1 voxel with the local gradient already in
 place. This is pyALDIC's seed-propagation idea (solve few nodes, propagate
 U and F) in a parallel-friendly form: no sequential wave, every node still
-runs the full IC-GN. The NCC cost drops by k^3 (micro-CT example: initial
+runs the full IC-GN. The NCC cost drops by k^3 (confocal example: initial
 guess 50 -> 17 s, run 233 -> 206 s with the same result); on clean synthetic
 data the fine pass also needs fewer iterations (2.9 -> 1.8), on the noisy
 scan it does not. Frames that reuse a previous solution (`previous`) skip it.
@@ -240,7 +240,7 @@ full correction over-shoots there (steps oscillate, the 3-DOF passes take more
 iterations and the ADMM stops early on a worse answer), while the half cap
 gives the same agreement with the MATLAB result as no correction and 6.8 /
 4.1 / 4.0 / 3.9 IC-GN iterations per ADMM pass instead of 8.1 / 7.3 / 6.9 /
-6.5 on the micro-CT example. The fixed point `b = 0` does not depend on the Hessian,
+6.5 on the confocal example. The fixed point `b = 0` does not depend on the Hessian,
 so the solution is the same; `icgn_noise_hessian=False` restores the plain
 steps (the 3-DOF ADMM kernel corrects its translation block the same way).
 
@@ -404,7 +404,7 @@ CLI: `al-dvc run config.yaml`, `al-dvc synth ...`, `al-dvc info volume.tif`,
 | Phase | Content |
 |---|---|
 | **0.1 (this)** | core library, numba CPU backend, FEM/FD global step, pyramid NCC, masks, strain, exports (npz/mat/csv/vtk/pdf), CLI, synthetic validation reports |
-| 0.1.x | real-data hardening: node-wise cross-validation against the MATLAB ALDVC results shipped with the reference code (`scripts/compare_matlab.py`, `reports/matlab_crossval.pdf`), memory / throughput profile on a full 1024x1024x306 micro-CT pair, robustness on the `eyes` data set (where the MATLAB IC-GN does not converge), GitHub repository + CI |
+| 0.1.x | real-data hardening: node-wise cross-validation against the MATLAB ALDVC results shipped with the reference code (`scripts/compare_matlab.py`, `reports/matlab_crossval.pdf`), memory / throughput profile on a full 1024x1024x306 confocal pair, robustness on the `eyes` data set (where the MATLAB IC-GN does not converge), GitHub repository + CI |
 | 0.2 (released 2026-09-03) | "real-scan ready": deformed-frame masks in the kernel, per-node displacement uncertainty from the stored Hessian factors, per-frame checkpoints and resume, large-volume mode with on-the-fly gradients, tutorial notebook, PyPI publishing workflow (trusted publishing; the first upload needs the one-time PyPI setup described in `.github/workflows/publish.yml`). A coarse-to-fine IC-GN was considered and deferred: the current pipeline already converges at 100 % of the nodes for 30 degree rotations and 20 % strains on synthetic speckle, so the remaining hard cases (`eyes`) need larger subsets and a deformation-aware initial guess rather than resolution levels |
 | 0.3 (released 2026-09-03) | standalone PySide6 GUI in `al_dvc.gui` (see section 11): `AppState` + panels + worker thread + sessions + JSON-dictionary i18n + kernel warm-up + self-test, three-plane slice viewer with node-grid overlays; portable Windows bundle (PyInstaller spec, build script, frozen-bundle tests, release workflow attaching `pyALDVC-<version>-win64.zip` to each tag) |
 | 0.3.1 | GUI follow-ups: pyvista 3-D view, mask drawing on the slice viewer, batch runs over several sessions (dialog and `al-dvc batch`) |
@@ -420,7 +420,7 @@ pyALDIC.
 ## 10. Cross-validation against the MATLAB code
 
 `scripts/compare_matlab.py` runs pyALDVC on the data set shipped with the
-MATLAB code (`DVC_images/20190504_cut_01/02.mat`, micro-CT, 1024x1024x306
+MATLAB code (`DVC_images/20190504_cut_01/02.mat`, confocal, 1024x1024x306
 uint16) with the parameters of `results_ws32_st8.mat` (subset 32, step 8,
 finite-difference global step, cubic interpolation, `dual_update="reset"`,
 `beta` from the L-curve) on exactly the MATLAB node positions, and compares
