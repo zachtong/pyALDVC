@@ -4,7 +4,7 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.9.1] - 2026-09-23
 
 ### Changed
 - **The automatic mask no longer freezes the window.** The Otsu threshold, hole filling and
