@@ -4,7 +4,7 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.10.0] - 2026-09-23
 
 ### Added
 - **Statistics of results** (`al_dvc.analysis`, the *Analysis* tab, `al-dvc stats`), phase 1 of
