@@ -54,3 +54,6 @@ aldvc_results/
 # third-party reference material kept locally, never published
 reference/
 reports/*.json
+
+# owner's raw flyer media and an unpublished manuscript (processed copies are published)
+assets/pyALDVC_flyer_materials/
