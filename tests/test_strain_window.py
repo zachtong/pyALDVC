@@ -83,6 +83,8 @@ def test_strain_window_computes_and_publishes(qapp, pair):
     qapp.processEvents()
     res = window.state.results
     assert len(res.result_strain) == 1 and sw.field.currentData() == "exx"
+    listed = [sw.field.itemData(i) for i in range(sw.field.count())]
+    assert len(listed) == len(set(listed))  # det_F and rotation_deg were listed twice
     exx = res.result_strain[0].field("exx")
     assert abs(np.nanmedian(exx) - 0.01) < 2e-3  # the synthetic stretch is recovered
     assert window.results_panel.field.count() > len(fields)  # the main window sees the strain too

@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
-from ..core.data_structures import FrameResult, PipelineResult, StrainResult
+from ..core.data_structures import STATUS_CONVERGED, FrameResult, PipelineResult, StrainResult
 
 DISP_FIELDS = ("disp_u", "disp_v", "disp_w", "disp_magnitude")
 STD_FIELDS = ("disp_std_u", "disp_std_v", "disp_std_w", "disp_std")
@@ -29,6 +29,20 @@ STRAIN_FIELDS = (
     "rotation_deg",
 )
 ALL_FIELDS = DISP_FIELDS + STD_FIELDS + STRAIN_FIELDS
+
+
+def available_fields(result: PipelineResult) -> list[str]:
+    """The fields a result can show and export, in display order: displacement, its uncertainty when
+    estimated, strain when computed. The one list the results panel, the strain window and the export
+    dialog share."""
+    if result is None or not result.result_disp:
+        return []
+    fields = list(DISP_FIELDS)
+    if result.result_disp[0].U_std is not None:
+        fields += list(STD_FIELDS)
+    if result.result_strain:
+        fields += list(STRAIN_FIELDS)
+    return fields
 
 
 def ensure_dir(path: str | Path) -> Path:
@@ -88,6 +102,21 @@ def field_array(result: PipelineResult, frame: int, name: str, trimmed: bool = T
     return sr.field(name, trimmed=trimmed)
 
 
+def converged_fraction(result: PipelineResult, fr: FrameResult) -> float | None:
+    """Share of the reference's valid nodes whose local solve converged; ``None`` without a status.
+
+    Nodes outside the region of interest never had a subset to solve: counting them made a clean run
+    read as 60 % converged when 40 % of the node lattice lay outside the region.
+    """
+    if fr.status is None:
+        return None
+    status = np.asarray(fr.status)
+    valid = getattr(result.dvc_mesh, "node_valid", None)
+    if valid is not None and np.shape(valid) == status.shape:
+        status = status[np.asarray(valid, dtype=bool)]
+    return float(np.mean(status == STATUS_CONVERGED)) if status.size else None
+
+
 def result_summary(result: PipelineResult) -> dict:
     """Small JSON-friendly summary for reports."""
     mesh = result.dvc_mesh
@@ -107,7 +136,7 @@ def result_summary(result: PipelineResult) -> dict:
             z = np.asarray(fr.zncc)
             entry["median_zncc"] = float(np.nanmedian(z)) if np.isfinite(z).any() else None
         if fr.status is not None:
-            entry["frac_converged"] = float(np.mean(np.asarray(fr.status) == 0))
+            entry["frac_converged"] = converged_fraction(result, fr)
         if fr.admm is not None:
             entry["beta"] = fr.admm.beta
             entry["admm_steps"] = fr.admm.n_steps

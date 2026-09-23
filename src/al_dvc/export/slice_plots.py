@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
+from al_dvc.core.config import length_unit
 from al_dvc.core.data_structures import PipelineResult
 
 from .export_utils import field_array
@@ -245,8 +246,13 @@ def draw_field_planes(
     label_units: str | None = None,
     equal_scale: bool = False,
     bg_clim: tuple[float, float] | None = None,
+    values: NDArray | None = None,
+    label: str | None = None,
 ) -> dict:
     """Draw ``field`` of ``frame`` on the XY / XZ / YZ planes through ``indices`` (voxel positions).
+
+    ``values`` (per node) replaces the stored field -- a corrected field, a node selection -- and ``label``
+    the colour-bar label.
 
     ``background`` is an optional volume drawn in grey under the field. Without one the panes
     still span the full volume (``volume_shape``, else the result's) so the field sits where it
@@ -259,8 +265,9 @@ def draw_field_planes(
     if background is not None and tuple(background.shape) != shape:
         raise ValueError(f"background shape {background.shape} differs from the volume shape {shape}")
     iz, iy, ix = slice_indices(shape, indices)
-    values = field_array(result, frame, field)
-    grid = mesh.to_grid(values)
+    if values is None:
+        values = field_array(result, frame, field)
+    grid = mesh.to_grid(np.asarray(values, dtype=np.float64))
     lo, hi = ordered_limits(*clim) if clim is not None else auto_range(grid)
     x0, y0, z0 = mesh.x0, mesh.y0, mesh.z0
     hx, hy, hz = mesh.spacing
@@ -342,8 +349,8 @@ def draw_field_planes(
     fig = axes[0].figure
     cax.set_axes_locator(None)  # a reused colorbar axes: matplotlib would wrap the locator again on every draw
     cbar = fig.colorbar(mappable, cax=cax)
-    units = label_units if label_units is not None else getattr(result.dvc_para, "units", "voxel")
-    cbar.set_label(field_label(field, units), color=style.text, fontsize=8)
+    units = label_units if label_units is not None else length_unit(result.dvc_para)
+    cbar.set_label(label if label is not None else field_label(field, units), color=style.text, fontsize=8)
     cbar.ax.tick_params(colors=style.text, labelsize=7)
     return {"clim": (lo, hi), "indices": (iz, iy, ix), "mappable": mappable}
 

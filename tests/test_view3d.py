@@ -277,3 +277,20 @@ def test_warped_lattice_drops_the_cells_the_mask_separates(small_result):
         assert img.std() > 1.0  # the lattice is on screen, not a blank frame
         shots.append(img.astype(np.float64))
     assert np.abs(shots[0] - shots[1]).mean() > 0.1  # the dropped element is missing from the picture
+
+
+def test_node_grid_is_in_physical_units(small_result):
+    """The field lattice sits where the slices, the outline, the volume planes and the warp vectors are:
+    in physical units. It was in voxels, so with a voxel size other than 1 the field floated off the scene."""
+    from dataclasses import replace
+
+    from al_dvc.gui.view3d_scene import _slice_positions
+
+    res, _ = small_result
+    vs = (2.0, 1.0, 0.5)
+    scaled = replace(res, dvc_para=replace(res.dvc_para, voxel_size=vs, units="um"))
+    grid = node_grid(scaled, 0, ("disp_u",))
+    np.testing.assert_allclose(np.asarray(grid.points), res.dvc_mesh.coordinates * np.asarray(vs), atol=1e-9)
+    x, y, z = _slice_positions(scaled, {"x": None, "y": None, "z": None})
+    xmin, xmax, ymin, ymax, zmin, zmax = grid.bounds
+    assert xmin <= x <= xmax and ymin <= y <= ymax and zmin <= z <= zmax

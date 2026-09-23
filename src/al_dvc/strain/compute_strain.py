@@ -102,12 +102,26 @@ def compute_strain(
                 Fg[..., i, j] = smooth_grid_field(Fg[..., i, j], para.strain_smoothing, valid_grid)
         F_phys = Fg.reshape(N, 3, 3)
 
-    E = strain_tensor(F_phys, para.strain_type)
-    princ = principal_strains(E)
-    strain_valid = valid & np.all(np.isfinite(E), axis=(1, 2))
-    if para.strain_edge_trim:
-        strain_valid &= complete.ravel()
+    keep = valid & complete.ravel() if para.strain_edge_trim else valid
+    return strain_result_from_gradient(U_phys, F_phys, keep, para.strain_type, method)
 
+
+def strain_result_from_gradient(
+    U_phys: NDArray[np.float64],
+    F_phys: NDArray[np.float64],
+    valid: NDArray[np.bool_],
+    strain_type: str,
+    method: str,
+) -> StrainResult:
+    """Every strain quantity of a frame from its physical displacement ``(N, 3)`` and gradient ``(N, 3, 3)``.
+
+    ``valid`` is the node mask the strain is trusted on (edge trimming included); nodes whose strain is not
+    finite drop out of it. Shared by :func:`compute_strain` and by corrections that change the gradient
+    without refitting it (a rigid rotation removed: ``R^T (I + H) - I``).
+    """
+    E = strain_tensor(F_phys, strain_type)
+    princ = principal_strains(E)
+    strain_valid = np.asarray(valid, dtype=bool) & np.all(np.isfinite(E), axis=(1, 2))
     return StrainResult(
         disp_u=U_phys[:, 0],
         disp_v=U_phys[:, 1],
@@ -126,6 +140,6 @@ def compute_strain(
         det_F=det_deformation_gradient(F_phys),
         rotation_deg=polar_rotation_deg(F_phys),
         strain_valid=strain_valid,
-        strain_type=para.strain_type,
+        strain_type=strain_type,
         method=method,
     )

@@ -41,6 +41,8 @@ class FieldSliceCanvas(QWidget):
         self._layout = "grid"
         self._equal_scale = False
         self._indices: dict[str, int | None] = {"z": None, "y": None, "x": None}
+        self._override: tuple[np.ndarray, str] | None = None  # per-node values drawn instead of the stored field
+        self._decorator = None  # fn(axes, indices, volume shape) drawing on top of the planes (region outlines)
         self.last_clim: tuple[float, float] | None = None
         self._style = PlaneStyle(
             background=COLORS.BG_CANVAS, text=COLORS.TEXT_SECONDARY, border=COLORS.BORDER, cursor=COLORS.ACCENT
@@ -121,6 +123,18 @@ class FieldSliceCanvas(QWidget):
             self.axes, self.cax = build_axes(self.figure, layout)
         self.redraw()
 
+    def set_override(self, values: np.ndarray | None, label: str = "") -> None:
+        """Draw these per-node values (a corrected field, a node selection) instead of the stored field;
+        ``None`` goes back to the stored field."""
+        self._override = None if values is None else (np.asarray(values, dtype=np.float64), str(label))
+        self.redraw()
+
+    def set_decorator(self, fn) -> None:
+        """``fn(axes, indices, volume_shape)`` is called after every drawing of the planes, to draw on top of them
+        (``None`` removes it)."""
+        self._decorator = fn
+        self.redraw()
+
     def set_slices(self, iz: int | None = None, iy: int | None = None, ix: int | None = None) -> None:
         for axis, v in (("z", iz), ("y", iy), ("x", ix)):
             if v is not None:
@@ -161,6 +175,8 @@ class FieldSliceCanvas(QWidget):
         res = self._result
         if res is None or not res.result_disp:
             return False
+        if self._override is not None:
+            return self._override[0].shape == (res.dvc_mesh.n_nodes,)
         try:
             from al_dvc.export.export_utils import field_array
 
@@ -203,8 +219,16 @@ class FieldSliceCanvas(QWidget):
             volume_shape=self._shape,
             equal_scale=self._equal_scale,
             bg_clim=self._bg_clim,
+            values=None if self._override is None else self._override[0],
+            label=None if self._override is None else self._override[1],
         )
         self.last_clim = info["clim"]
+        if self._decorator is not None:
+            self._decorator(self.axes, (iz, iy, ix), self._shape)
+            nz, ny, nx = self._shape
+            for ax, (w, h) in zip(self.axes, ((nx, ny), (nx, nz), (ny, nz))):
+                ax.set_xlim(-0.5, w - 0.5)  # an outline must not zoom the pane to itself
+                ax.set_ylim(-0.5, h - 0.5)
         self.canvas.draw_idle()
 
     def save_png(self, path: str | Path, dpi: int = 150) -> Path:

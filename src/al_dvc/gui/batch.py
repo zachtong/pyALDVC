@@ -18,7 +18,7 @@ from typing import Callable
 
 import numpy as np
 
-from al_dvc.core.data_structures import STATUS_CONVERGED, PipelineResult
+from al_dvc.core.data_structures import PipelineResult
 from al_dvc.core.pipeline import run_aldvc
 
 from .session import SessionData, load_session
@@ -188,9 +188,12 @@ def run_session_file(
         )
         job.n_nodes = int(result.dvc_mesh.n_nodes)
         job.n_frames = int(result.n_frames)
-        statuses = [np.asarray(fr.status) for fr in result.result_disp if fr.status is not None]
-        if statuses:
-            job.converged = float(np.mean(np.concatenate(statuses) == STATUS_CONVERGED))
+        from al_dvc.export.export_utils import converged_fraction
+
+        fractions = [converged_fraction(result, fr) for fr in result.result_disp]
+        fractions = [f for f in fractions if f is not None]  # the reference's valid nodes only
+        if fractions:
+            job.converged = float(np.mean(fractions))
         job.outputs, export_errors = export_results_checked(result, out_dir, job.session.stem, exports)
         job.results_path = next((p for p in job.outputs if p.suffix == ".npz"), None)
         if export_errors:

@@ -47,6 +47,7 @@ sequence of 3-D scans into displacement and strain fields.
 - **Knows your data.** The texture analysis measures your scan and suggests the subset size and step.
 - **See it in 3-D.** Field slices, the deformed lattice, displacement arrows; animations recorded as GIF or MP4.
 - **Strain included.** Four gradient methods and four strain measures, computed after the run in their own window.
+- **Statistics built in.** Mean with its confidence interval, spread and noise floor of any field, in regions drawn on the slices, with the rigid-body motion removed exactly (fitted over a grip if needed, and shown in the main window); series over frames, profiles, a virtual extensometer, exports that state their definitions.
 - **Every format.** TIFF, MATLAB, NumPy, HDF5, NIfTI, NRRD, DICOM in; NumPy, MATLAB, CSV, ParaView and a PDF report out.
 
 ## Accuracy and speed
@@ -78,6 +79,7 @@ Micro-CT scan of the MATLAB example, 1024 x 1024 x 306 voxels, 79 200 nodes:
 | Subset size | by hand | texture analysis suggests it from the scan |
 | Cracks and holes | subsets and smoothing reach across them | subsets and smoothing stop at the boundary |
 | Strain | in the run | its own window, four methods, four measures, recomputed on demand |
+| Statistics | mean and std of uniform strain (script) | tables, histograms, regions, confidence intervals, series over frames, profiles, extensometer, noise floor, rigid-body motion removed |
 | 3-D view | - | slices, lattice, arrows, animations, GIF / MP4 recording |
 | Formats | MATLAB | TIFF, MATLAB, NumPy, HDF5, NIfTI, NRRD, DICOM; ParaView export |
 | Large scans | whole volume in memory | local steps over sub-boxes, streamed frames, gradients on the fly when they would not fit |

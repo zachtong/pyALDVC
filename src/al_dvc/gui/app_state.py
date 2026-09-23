@@ -228,6 +228,9 @@ class AppState(QObject):
     save_mask_state = Signal(str, str)  # ("started" | "finished" | "failed", path)
     shapes_changed = Signal()  # a volume's size became known
     shape_check_finished = Signal(object)  # the uids of a group of volumes whose sizes have all been read
+    regions_changed = Signal()  # the post-processing regions were added, edited or removed
+    correction_changed = Signal()  # the motion removed from what the views draw and the field exports write
+    analysis_restored = Signal()  # a session replaced the regions, the correction and the statistics settings
     _shape_read = Signal(int, str, object, float)  # (batch, uid, shape or None, seconds), from the reading thread
     _shape_batch_done = Signal(int)
 
@@ -274,6 +277,13 @@ class AppState(QObject):
         self.mask_target: str = "current"  # "current" | "all"
         self.show_mask: bool = True
         self.mask_alpha: float = 0.35
+        # post-processing: regions (reference configuration, voxels), the correction the views and the field
+        # exports apply (None: the result as measured) and the statistics controls, all kept with the session.
+        # The stored result never changes: a correction is a view of it (al_dvc.analysis.corrected).
+        self.regions: list = []  # al_dvc.analysis.Region
+        self.display_correction = None  # al_dvc.analysis.Correction | None
+        self.analysis_settings: dict = {}
+        self._display_cache: tuple | None = None
         # volume sizes, read from the file headers by background threads
         self._shape_batches: dict[int, list[str]] = {}
         self._shape_batch_seq = 0
@@ -1014,6 +1024,56 @@ class AppState(QObject):
         self.dirty = True
         self.output_dir_changed.emit(str(self.output_dir))
 
+    # ------------------------------------------------------------------ post-processing
+    def set_regions(self, regions) -> None:
+        """Replace the post-processing regions (a list of :class:`al_dvc.analysis.Region`)."""
+        self.regions = list(regions)
+        self.dirty = True
+        self.regions_changed.emit()
+
+    def set_display_correction(self, correction) -> None:
+        """Draw and export the fields with ``correction`` (an :class:`al_dvc.analysis.Correction`) applied;
+        ``None`` or a correction that removes nothing shows them as measured."""
+        if correction is not None and correction.motion == "none":
+            correction = None
+        if correction == self.display_correction:
+            return
+        self.display_correction = correction
+        self._display_cache = None
+        self.dirty = True
+        self.correction_changed.emit()
+        self.display_changed.emit()
+
+    def display_result(self) -> PipelineResult | None:
+        """What the views draw and the field exports (CSV, ParaView, images, report) write: ``results`` with
+        :attr:`display_correction` applied, computed frame by frame on first use and kept while neither changes.
+        The archives (npz, mat) always hold ``results`` as measured."""
+        res, corr = self.results, self.display_correction
+        if res is None or corr is None:
+            return res
+        cache = self._display_cache
+        if cache is not None and cache[0] is res and cache[1] == corr:
+            return cache[2]
+        from al_dvc.analysis.corrected import corrected_result
+
+        shown = corrected_result(res, corr)
+        self._display_cache = (res, corr, shown)
+        return shown
+
+    def correction_text(self) -> str:
+        """A short note for what the views show, "" when the fields are as measured."""
+        corr = self.display_correction
+        if corr is None or self.results is None:
+            return ""
+        what = {
+            "translation": self.tr("translation removed"),
+            "rigid": self.tr("rigid motion removed"),
+            "affine": self.tr("affine motion removed"),
+        }.get(corr.motion, corr.motion)
+        if corr.fit_region is not None:
+            what += " " + self.tr("(fitted over {region})").format(region=corr.fit_region.name)
+        return what
+
     # ------------------------------------------------------------------ display
     def set_display(self, **values: Any) -> None:
         for key, val in values.items():
@@ -1055,9 +1115,16 @@ class AppState(QObject):
         self.run_state = RunState.IDLE
         self.mask_editor = None
         self._mask_copy_backup = None
+        self.regions = []
+        self.display_correction = None
+        self.analysis_settings = {}
+        self._display_cache = None
         self.session_generation += 1
         self.mask_revision += 1
         self.dirty = False
+        self.analysis_restored.emit()
+        self.regions_changed.emit()
+        self.correction_changed.emit()
         self.volumes_changed.emit()
         self.mask_changed.emit()
         self.params_changed.emit()

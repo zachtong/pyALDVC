@@ -77,6 +77,14 @@ class RunPanel(QWidget):
         if len(entries) < 2:
             self._state.log(self.tr("At least two volumes are needed."), "warning")
             return
+        from al_dvc.core.config import units_problem
+
+        if units_problem(self._state.para):
+            self._state.log(
+                self.tr("Cannot run: the voxel size is set but its unit is not. Name the unit (e.g. um) in the parameters."),
+                "error",
+            )
+            return
         mismatches = self._state.shape_mismatches()
         if mismatches:  # sizes still being read are checked again by the provider, before the first frame
             self._state.log(

@@ -754,7 +754,11 @@ class View3DPanel(QWidget):
                 self._stack.setCurrentWidget(self._interactor)
             else:
                 img, info = render_image(
-                    res, opts, volume, window_size=STATIC_SIZE, camera=camera if camera is not None else self.camera_spec()
+                    self._state.display_result(),
+                    opts,
+                    volume,
+                    window_size=STATIC_SIZE,
+                    camera=camera if camera is not None else self.camera_spec(),
                 )
                 self._last_image = img
                 self._show_image(img)
@@ -789,7 +793,7 @@ class View3DPanel(QWidget):
 
     def _build_interactive(self, opts: SceneOptions, volume) -> SceneInfo:
         self._interactor.subplot(0, 0)
-        info = build_scene(self._interactor, self._state.results, opts, volume)
+        info = build_scene(self._interactor, self._state.display_result(), opts, volume)
         self._interactor.subplot(0, 0)
         self._last_options = opts
         return info
@@ -852,7 +856,9 @@ class View3DPanel(QWidget):
             )
         camera = self.base_camera() if shown is None else shown.camera
         try:
-            render_image(res, opts, self._volume_for_scene(), window_size=(1600, 1200), camera=camera, path=out)
+            render_image(
+                self._state.display_result(), opts, self._volume_for_scene(), window_size=(1600, 1200), camera=camera, path=out
+            )
         except Exception as exc:
             self._state.log(f"screenshot failed: {exc}", "error")
             return None
@@ -1016,7 +1022,11 @@ class View3DPanel(QWidget):
                 self._interactor.render()
             else:
                 img, _info = render_image(
-                    res, frame.options, self._volume_for_scene(), window_size=STATIC_SIZE, camera=frame.camera
+                    self._state.display_result(),
+                    frame.options,
+                    self._volume_for_scene(),
+                    window_size=STATIC_SIZE,
+                    camera=frame.camera,
                 )
                 self._last_image = img
                 self._show_image(img)
@@ -1045,7 +1055,8 @@ class View3DPanel(QWidget):
         volume = self._volume_for_scene()
         if spec.kind == "frames" and volume is not None:
             volume = self._volumes_per_result_frame(volume)  # every field on the volume it describes
-        self._recorder = _RecordWorker(res, volume, spec, base_cam, base_opts, Path(path), size, parent=self)
+        shown = self._state.display_result()
+        self._recorder = _RecordWorker(shown, volume, spec, base_cam, base_opts, Path(path), size, parent=self)
         self._recorder.progress.connect(self._on_record_progress)
         self._recorder.finished_record.connect(self._on_record_finished)
         self._recorder.failed.connect(self._on_record_failed)

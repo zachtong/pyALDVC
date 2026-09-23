@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib.backends.backend_pdf import PdfPages  # noqa: E402
 
-from ..core.config import para_to_dict  # noqa: E402
+from ..core.config import length_unit, para_to_dict  # noqa: E402
 from ..core.data_structures import STATUS_NAMES, PipelineResult  # noqa: E402
 from ..viz.slices import histogram_panel, plot_field_slices  # noqa: E402
 from .export_utils import ensure_dir, field_array, result_summary  # noqa: E402
@@ -57,7 +57,7 @@ def export_report(
     mesh = result.dvc_mesh
     para = result.dvc_para
     summary = result_summary(result)
-    units = para.units
+    units = length_unit(para)
     if fields is None:
         fields = ["disp_u", "disp_v", "disp_w"]
         if result.result_disp and result.result_disp[0].U_std is not None:
@@ -71,6 +71,9 @@ def export_report(
             f"spacing (x,y,z): {mesh.spacing}   valid nodes: {int(mesh.node_valid.sum())}",
             "",
         ]
+        correction = getattr(result, "correction", None)
+        if correction is not None:  # a corrected result (al_dvc.analysis.corrected): the fields are not as measured
+            lines[2:2] = [f"FIELDS SHOWN WITH MOTION REMOVED: {correction.describe()}"]
         lines.append("Parameters:")
         for k, v in para_to_dict(para).items():
             lines.append(f"  {k:<28} {v}")

@@ -151,3 +151,23 @@ def test_cli_synth_run_info_plot(tmp_path):
     )
     assert main(["-q", "run", str(cfg)]) == 0
     assert list((tmp_path / "out2" / "csv").glob("*.csv"))
+
+
+def test_converged_fraction_counts_the_valid_nodes_only(result):
+    """Nodes outside the region of interest never had a subset to converge; counting them made a clean
+    run read as 60 % converged."""
+    from dataclasses import replace
+
+    from al_dvc.export.export_utils import converged_fraction, result_summary
+
+    n = result.dvc_mesh.n_nodes
+    valid = np.ones(n, dtype=bool)
+    valid[: n // 2] = False
+    status = np.zeros(n, dtype=np.int8)
+    status[: n // 2] = 3  # invalid subsets outside the region
+    status[n // 2] = 1  # one valid node did not converge
+    fr = replace(result.result_disp[0], status=status)
+    res = replace(result, dvc_mesh=replace(result.dvc_mesh, node_valid=valid), result_disp=[fr])
+    expected = (valid.sum() - 1) / valid.sum()
+    assert converged_fraction(res, fr) == pytest.approx(expected)
+    assert result_summary(res)["frames"][0]["frac_converged"] == pytest.approx(expected)

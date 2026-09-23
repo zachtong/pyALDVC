@@ -12,6 +12,7 @@ from matplotlib.patches import Ellipse, Rectangle
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
+from al_dvc.core.config import length_unit
 from al_dvc.export.export_utils import field_array
 from al_dvc.export.slice_plots import (
     DISPLACEMENT_LIKE,
@@ -325,8 +326,9 @@ class SliceViewer(QWidget):
 
     # ------------------------------------------------------------------ drawing
     def _field_grid(self):
-        """``(grid (nz, ny, nx) over nodes, mesh, label)`` of the displayed field or ``None``."""
-        res = self._state.results
+        """``(grid (nz, ny, nx) over nodes, mesh, label)`` of the displayed field (the motion of the display
+        correction removed, if any) or ``None``."""
+        res = self._state.display_result()
         frame = self._state.result_frame()
         if res is None or frame is None or not self._state.show_overlay:
             return None
@@ -419,9 +421,12 @@ class SliceViewer(QWidget):
             self._cbar = self.figure.colorbar(bar_mappable, cax=self.cax)
             # the unit belongs to the result (its values were scaled with the result's voxel size), not to the
             # editable parameters of the next run
-            units = getattr(res.dvc_para, "units", None) or getattr(self._state.para, "units", "voxel")
+            units = length_unit(res.dvc_para)
             text = field_name(label) + (f" [{units}]" if label in DISPLACEMENT_LIKE else "")
-            self._cbar.set_label(text, color=COLORS.TEXT_SECONDARY, fontsize=8)
+            note = self._state.correction_text()
+            if note:
+                text += f"\n{note}"
+            self._cbar.set_label(text, color=COLORS.WARNING if note else COLORS.TEXT_SECONDARY, fontsize=8)
             self._cbar.ax.tick_params(colors=COLORS.TEXT_SECONDARY, labelsize=7)
         self._draw_lattice(iz, iy, ix)  # on top of the field, so the grid is legible either way
         # cursor lines showing the other two slice positions

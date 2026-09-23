@@ -1,10 +1,11 @@
-"""Strain post-processing window (pyALDIC's ``StrainWindow`` for volumes).
+"""Post-processing window (pyALDIC's ``StrainWindow`` for volumes): a Strain tab and an Analysis tab.
 
-An independent ``QMainWindow`` that takes the displacement results of the main window, computes
-strain on demand with its own parameters (method, measure, smoothing, plane-fit window) on a
-worker thread, shows displacement and strain fields on a private three-plane canvas, and writes
+An independent ``QMainWindow`` that takes the displacement results of the main window. The Strain
+tab computes strain on demand with its own parameters (method, measure, smoothing, plane-fit window)
+on a worker thread, shows displacement and strain fields on a private three-plane canvas, and writes
 the strain back into ``AppState.results`` through ``dataclasses.replace`` so the main viewer and
-the exports see it too. It never touches the main window's display settings.
+the exports see it too. The Analysis tab (:mod:`al_dvc.gui.analysis_tab`) takes statistics of the
+result. Neither touches the main window's display settings.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSlider,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -265,7 +267,14 @@ class StrainWindow(QMainWindow):
         scroll.setFixedWidth(SIDEBAR_WIDTH + 18)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         root.addWidget(scroll, 0)
-        self.setCentralWidget(central)
+        from .analysis_tab import AnalysisTab
+
+        self.analysis = AnalysisTab(state)
+        self.tabs = QTabWidget()
+        self.tabs.addTab(central, "")
+        self.tabs.addTab(self.analysis, "")
+        self.tabs.currentChanged.connect(self._on_tab)
+        self.setCentralWidget(self.tabs)
         guard_wheel(side)
 
         # ---- wiring
@@ -427,10 +436,22 @@ class StrainWindow(QMainWindow):
 
     def shutdown(self, timeout_ms: int = 30_000) -> bool:
         """Cancel a running computation and wait for its thread (application exit); True when settled."""
+        settled = self.analysis.shutdown(timeout_ms)
         if not self._is_running():
-            return True
+            return settled
         self._worker.cancel()
-        return self._worker.wait(timeout_ms)
+        return self._worker.wait(timeout_ms) and settled
+
+    def show_tab(self, name: str) -> None:
+        """Bring the ``"strain"`` or the ``"analysis"`` tab to the front."""
+        self.tabs.setCurrentIndex(1 if name == "analysis" else 0)
+
+    def _on_tab(self, index: int) -> None:
+        """The two tabs show the same frame: switching carries it over."""
+        if index == 1:
+            self.analysis.frame_slider.setValue(self.frame_slider.value())
+        else:
+            self.frame_slider.setValue(self.analysis.frame_slider.value())
 
     def closeEvent(self, event) -> None:  # noqa: N802
         """Closing the window while computing cancels the computation (asked first, unless headless)."""
@@ -443,6 +464,7 @@ class StrainWindow(QMainWindow):
                     event.ignore()
                     return
             self.cancel()
+        self.analysis.cancel()
         super().closeEvent(event)
 
     def _settle(self, progress: int | None = None) -> None:
@@ -514,7 +536,7 @@ class StrainWindow(QMainWindow):
         if res.result_disp[0].U_std is not None:
             fields += list(STD_FIELDS)
         if res.result_strain:
-            fields += list(STRAIN_FIELDS) + ["det_F", "rotation_deg"]
+            fields += list(STRAIN_FIELDS)  # det_F and rotation_deg are among them
         return fields
 
     def _on_results_changed(self) -> None:
@@ -630,7 +652,10 @@ class StrainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ misc
     def retranslate_ui(self) -> None:
-        self.setWindowTitle(self.tr("Strain post-processing"))
+        self.setWindowTitle(self.tr("Post-processing"))
+        self.tabs.setTabText(0, self.tr("Strain"))
+        self.tabs.setTabText(1, self.tr("Analysis"))
+        self.analysis.retranslate_ui()
         self.sections["params"].set_title(self.tr("Strain parameters"))
         self.sections["display"].set_title(self.tr("Display"))
         self.sections["export"].set_title(self.tr("Export"))

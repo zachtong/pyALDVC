@@ -85,7 +85,9 @@ def check_mini_run() -> str:
         if result is None:
             raise CheckFailed("no result came back from the worker")
         fr = result.result_disp[0]
-        conv = float(np.mean(fr.status == 0))
+        from al_dvc.export.export_utils import converged_fraction
+
+        conv = converged_fraction(result, fr) or 0.0
         if conv < 0.9:
             raise CheckFailed(f"only {100 * conv:.0f}% of the nodes converged")
         path = window.results_panel.export("report")

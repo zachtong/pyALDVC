@@ -73,6 +73,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         key, _, val = kv.partition("=")
         para_kwargs[key.strip()] = json.loads(val) if val.strip() else True
     para = dvcpara_default(**para_kwargs)
+    from .core.config import units_problem
+
+    if units_problem(para):
+        print(f"warning: {units_problem(para)}", file=sys.stderr)
 
     volumes = args.volumes or cfg.get("volumes")
     if not volumes:
@@ -383,6 +387,128 @@ def cmd_batch(args: argparse.Namespace) -> int:
     return 0 if all(job.status == "done" for job in jobs) else 1
 
 
+def _load_regions(path: str) -> list:
+    """Regions from a JSON file: a list of regions, a statistics summary (``regions``) or a session (``analysis``)."""
+    from .analysis.regions import regions_from_dicts
+
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"cannot read the regions in {path}: {exc}") from exc
+    if isinstance(doc, dict):
+        doc = (doc.get("analysis") or {}).get("regions", doc.get("regions")) if "analysis" in doc else doc.get("regions")
+    try:
+        return regions_from_dicts(doc if doc is not None else [])
+    except ValueError as exc:
+        raise SystemExit(f"invalid region in {path}: {exc}") from exc
+
+
+def _named_region(regions: list, name: str | None, what: str):
+    if name is None:
+        return None
+    for r in regions:
+        if r.name == name:
+            return r
+    known = ", ".join(r.name for r in regions) or "none (use --regions)"
+    raise SystemExit(f"{what}: no region named {name!r}; regions: {known}")
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    """Statistics of an exported result: one row per frame (CSV), and a JSON summary."""
+    from .analysis import MOTION_KINDS, NodeFilter, available_groups, frame_series, homogeneous, noise_floor
+    from .analysis.export_stats import stats_metadata, write_region_series_csv, write_series_csv, write_summary_json
+    from .analysis.fields import FIELD_GROUPS
+    from .export.export_npz import result_from_npz
+
+    if args.motion not in MOTION_KINDS:
+        raise SystemExit(f"--motion must be one of {MOTION_KINDS}")
+    result = result_from_npz(args.result)
+    groups = available_groups(result)
+    fields = list(args.fields) if args.fields else [f for g in ("displacement", "strain") if g in groups for f in FIELD_GROUPS[g]]
+    known = {f for g in groups for f in FIELD_GROUPS[g]}
+    unknown = [f for f in fields if f not in known]
+    if unknown:
+        raise SystemExit(f"not available in this result: {unknown} (available: {sorted(known)})")
+    n_frames = len(result.result_disp)
+    frames = [k - 1 for k in args.frames] if args.frames else list(range(n_frames))
+    if any(not 0 <= k < n_frames for k in frames):
+        raise SystemExit(f"frames are 1 to {n_frames}")
+    nf = NodeFilter(
+        converged_only=not args.all_nodes,
+        drop_outliers=not args.all_nodes,
+        min_zncc=args.min_zncc,
+        edge_layers=args.edge_layers,
+        drop_cut=args.drop_cut,
+    )
+    regions = _load_regions(args.regions) if args.regions else []
+    region = _named_region(regions, args.region, "--region")
+    fit_region = _named_region(regions, args.fit_region, "--fit-region")
+    if args.compare and not regions:
+        raise SystemExit("--compare needs regions (--regions FILE)")
+    mask = None if region is None else region.node_mask(result)
+    fit_mask = None if fit_region is None else fit_region.node_mask(result)
+    targets = [None, *regions] if args.compare else [region]
+    runs = []
+    for r in targets:
+        runs.append(
+            (
+                r,
+                frame_series(
+                    result,
+                    fields,
+                    nf,
+                    args.motion,
+                    frames,
+                    region=None if r is None else r.node_mask(result),
+                    fit_region=fit_mask,
+                    with_ci=args.ci,
+                ),
+            )
+        )
+    meta = stats_metadata(
+        result,
+        nf,
+        args.motion,
+        region="every region" if args.compare else ("whole" if region is None else region.name),
+        fit_region="whole" if fit_region is None else fit_region.name,
+    )
+    out = Path(args.out)
+    if args.compare:
+        named = [("All nodes" if r is None else r.name, s) for r, s in runs]
+        csv_path = write_region_series_csv(out / "statistics.csv", named, fields, meta)
+    else:
+        csv_path = write_series_csv(out / "statistics.csv", runs[0][1], fields, meta)
+    series = runs[0][1]
+    payload: dict = {"meta": meta, "regions": [r.as_dict() for r in regions]}
+    if args.compare:
+        payload["frames_by_region"] = {("All nodes" if r is None else r.name): s for r, s in runs}
+    else:
+        payload["frames"] = series
+    if args.noise_floor:
+        payload["noise_floor"] = noise_floor(result, frames[0], nf, nominal=args.nominal, region=mask)
+    fits = []
+    for k in frames:  # a frame without enough nodes for an affine fit loses its own fit, not the others'
+        try:
+            fits.append(homogeneous(result, k, nf, region=mask))
+        except ValueError as exc:
+            fits.append(None)
+            print(f"warning: frame {k + 1}: no homogeneous fit ({exc})", file=sys.stderr)
+    payload["homogeneous"] = fits
+    json_path = write_summary_json(out / "statistics.json", payload)
+    unit = meta["unit"]
+    for r, run in runs:
+        prefix = "" if len(runs) == 1 and r is None else f"{'All nodes' if r is None else r.name}, "
+        for fs in run:
+            cells = []
+            for name, st in fs.stats.items():
+                ci = f" +- {st.ci95:.2g}" if args.ci and st.ci95 == st.ci95 else ""
+                cells.append(f"{name} mean {st.mean:.4g}{ci} std {st.std:.4g}")
+            print(f"{prefix}frame {fs.frame + 1}: {fs.selection.n} nodes ({unit}); " + "; ".join(cells))
+    print(f"wrote {csv_path}")
+    print(f"wrote {json_path}")
+    return 0
+
+
 def _display_available() -> bool:
     """Whether a window can open here: not on Linux without X11 or Wayland (an SSH session on a cluster), where Qt
     would abort instead of starting."""
@@ -507,6 +633,24 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--quiet", action="store_true", help="no progress line")
     b.add_argument("--verbose", action="store_true", help="print tracebacks of failed jobs")
     b.set_defaults(func=cmd_batch)
+    st = sub.add_parser("stats", help="statistics of an exported result (.npz), frame by frame")
+    st.add_argument("result", help="result archive written by the npz export")
+    st.add_argument("--fields", nargs="+", help="fields (default: displacement, and the strain tensor when computed)")
+    st.add_argument("--frames", nargs="+", type=int, help="frames, 1-based (default: all)")
+    st.add_argument("--motion", default="none", help="remove a motion first: none, translation, rigid or affine")
+    st.add_argument("--all-nodes", action="store_true", help="also use nodes that did not converge or were rejected")
+    st.add_argument("--min-zncc", type=float, default=0.0, help="drop nodes below this ZNCC")
+    st.add_argument("--edge-layers", type=int, default=0, help="drop this many node layers at the edges")
+    st.add_argument("--drop-cut", action="store_true", help="drop nodes whose subset was cut at a boundary")
+    st.add_argument("--noise-floor", action="store_true", help="add the noise floor (static or known-translation pair)")
+    st.add_argument("--nominal", type=float, nargs=3, metavar=("DX", "DY", "DZ"), help="applied displacement for the bias")
+    st.add_argument("--regions", help="regions: a session (.aldvc), a statistics summary (.json) or a JSON list of regions")
+    st.add_argument("--region", help="take the statistics over this region (its name)")
+    st.add_argument("--fit-region", help="fit the removed motion over this region (its name), e.g. a grip")
+    st.add_argument("--compare", action="store_true", help="one series per region, and one for every node")
+    st.add_argument("--ci", action="store_true", help="add the 95 %% confidence interval of each mean (n_eff, ci95)")
+    st.add_argument("-o", "--out", default="statistics", help="output folder")
+    st.set_defaults(func=cmd_stats)
     g = sub.add_parser("gui", help="open the application (the same as al-dvc alone)")
     g.add_argument("session", nargs="?", help="session file (.aldvc) to open")
     g.set_defaults(func=cmd_gui)

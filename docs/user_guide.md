@@ -60,7 +60,95 @@ per-node array to the `(nz, ny, nx)` node grid.
 
 Status codes: 0 converged, 1 max iterations, 2 warped subset left the
 volume, 3 invalid subset (mask / texture), 4 singular update, 5 NaN,
-6 skipped.
+6 skipped, 7 stalled. `outlier` marks the nodes that converged but were
+rejected by the median test and replaced: their value is not a measurement.
+
+### Statistics of the results
+
+*Analysis > Statistics...* (Ctrl+Shift+T, or *Statistics...* in the results
+panel) opens the post-processing window on its **Analysis** tab:
+
+* **Statistics of** -- displacement, its uncertainty, the strain tensor,
+  principal or equivalent strains, the local rotation, det F or ZNCC. The
+  table gives, per component, the nodes used, mean, standard deviation
+  (population, divided by N, as the DVC Challenge 2.0 paper), median, robust
+  standard deviation (1.4826 x MAD), 5th/95th percentiles, min, max, RMS, and
+  the **95 % confidence interval of the mean** with the effective number of
+  independent nodes (see below). **Statistics over** restricts all of it to a
+  region.
+* **Regions** -- add a box, sphere, cylinder or slab (typed corners, centre,
+  radius, axis), or draw a rectangle, ellipse or polygon on one of the slices:
+  a drawn outline goes through the whole node grid along the slice's normal,
+  and its depth can be edited. Regions are in voxels of the reference volume,
+  bounds included; each has a name, a colour and a node count, and is outlined
+  on the slices (the selected one thicker). Esc cancels a drawing.
+* **Nodes used** -- by default only measured nodes: converged, and not
+  rejected by the median test. A ZNCC floor, edge layers and cut subsets can
+  be left out too; the line below says how many nodes each rule removed.
+* **Rigid-body motion** -- remove the translation (the mean displacement,
+  as the DVC Challenge 2.0 noise floor does), the rigid motion (translation
+  and rotation, fitted exactly in physical units) or the affine part
+  (leaving the non-affine displacement). The fitted translation, rotation
+  and residual are shown. Removing a rotation recomputes the strain from
+  `R^T (I + H) - I`: the Green-Lagrange strain does not change, the
+  infinitesimal strain loses the rotation's `cos(theta) - 1`. The stored
+  result never changes. **Fitted over** a region -- a grip, an undeformed
+  part -- fits the motion there and removes it from the whole field. **Also in
+  the main window and exports** shows the corrected field on the slices and in
+  the 3-D view and writes it to CSV, ParaView, the images and the report, with
+  a badge in the results panel (*As measured* turns it off) and a
+  `<basename>_correction.json` next to the files; npz and mat keep the result
+  as measured.
+* **Over frames** computes the statistics of every frame (mean ± std, mean
+  ± 95 % CI, median ± robust std, ...), of one region or of every region side
+  by side (*Compare regions*); a frame using fewer than the chosen share of a
+  region's nodes is left as a gap. **Regions** compares the field on the
+  slices across the regions for the current frame (mean with its interval).
+  **Profile** gives the mean and std of each node layer along x, y or z, for
+  the current frame or every frame. **Line** samples the field between two
+  points (typed, or picked on the slices) and, over all frames, gives the
+  field at the two ends and a **virtual extensometer**: the length between
+  the two material points, strain `L/L0 - 1`, which no rigid motion changes.
+  **Noise floor** gives, for a static or known-translation
+  pair, the bias and noise floor per component, `u_rms`, the same after a
+  rigid fit, the strain mean and standard deviation, MAER/SDER, the virtual
+  strain gauge and, with several static frames, the spatial and temporal
+  standard deviations of the iDICs Good Practices Guide; **Homogeneous**
+  gives the affine fit of the region (F, rotation, infinitesimal and
+  Green-Lagrange strain) beside the mean of the nodal strains.
+* *Save as CSV* writes the data of the tab on screen (the series, the
+  regions, the profile, the line and extensometer); the summary goes to JSON,
+  a chart to PNG, and the table to the clipboard. Every file records the node
+  rules, the region, the motion removed, where it was fitted, and the
+  definitions. Regions, the correction and these settings are saved with the
+  session.
+
+Node values are correlated (subsets overlap; the global step and the strain
+fit smooth), so `std/sqrt(N)` is far too small to be the uncertainty of a
+mean. The interval shown uses the effective number of independent nodes,
+estimated from the autocorrelation of the field after a plane is removed (a
+real gradient across the region is the field, not uncertainty). On simulated
+correlated noise it covers the true mean 91-95 % of the time, 85-90 % when the
+region spans only two or three correlation lengths: read it as a lower bound
+then. The same statistics from a script:
+
+```python
+from al_dvc.analysis import NodeFilter, frame_stats, noise_floor
+
+fs = frame_stats(result, 0, ("disp_u", "exx"), NodeFilter(min_zncc=0.8), motion="rigid")
+print(fs.stats["exx"].mean, fs.fit.rotation_deg)
+print(noise_floor(result, 0).displacement.noise)
+
+from al_dvc.analysis import Region, extensometer, mean_confidence
+
+grip = Region(1, "grip", "box", {"lo": [0, 0, 0], "hi": [40, 500, 500]})
+fs = frame_stats(result, 0, ("exx",), motion="rigid", fit_region=grip.node_mask(result), with_ci=True)
+print(fs.stats["exx"].mean, "+-", fs.stats["exx"].ci95)
+print(extensometer(result, (40, 60, 70), (120, 60, 70)).strain)
+```
+
+From the command line, `al-dvc stats run.npz --regions session.aldvc --region gauge
+--fit-region grip --motion rigid --ci` (or `--compare` for every region side by side).
 
 ## 4. Diagnosing problems
 
@@ -155,6 +243,7 @@ al-dvc texture scan/ref.tif                                            # correla
 al-dvc texture scan/ref.tif --sweep --rve-criterion cv-window          # RVE sweep with the DVC Challenge 2.0 test
 al-dvc texture scan/ref.tif --sweep --estimator window                 # the raw window estimator (geometric decay kept)
 al-dvc info scan/*.tif
+al-dvc stats results/aldvc.npz --motion rigid --noise-floor -o stats     # statistics per frame (CSV + JSON)
 ```
 
 ## 9. Scripting

@@ -91,7 +91,12 @@ def det_deformation_gradient(F_grad: NDArray[np.float64]) -> NDArray[np.float64]
 
 
 def polar_rotation_deg(F_grad: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Rotation angle (degrees) of ``R`` from the polar decomposition ``F = R U``."""
+    """Rotation angle (degrees) of ``R`` from the polar decomposition ``F = R U``.
+
+    ``atan2(sin, cos)`` with the sine from the axial vector of ``R - R^T``: ``arccos((tr R - 1) / 2)`` alone
+    loses half the digits near zero, and small angles are exactly what remains after a rigid rotation is
+    removed.
+    """
     Fm = deformation_gradient(F_grad)
     out = np.full(Fm.shape[0], np.nan)
     finite = np.all(np.isfinite(Fm), axis=(1, 2))
@@ -103,8 +108,9 @@ def polar_rotation_deg(F_grad: NDArray[np.float64]) -> NDArray[np.float64]:
     if neg.any():
         Uu[neg, :, -1] *= -1
         R = Uu @ Vt
-    cos_t = np.clip((np.trace(R, axis1=1, axis2=2) - 1.0) / 2.0, -1.0, 1.0)
-    out[finite] = np.degrees(np.arccos(cos_t))
+    cos_t = (np.trace(R, axis1=1, axis2=2) - 1.0) / 2.0
+    axial = 0.5 * np.stack([R[:, 2, 1] - R[:, 1, 2], R[:, 0, 2] - R[:, 2, 0], R[:, 1, 0] - R[:, 0, 1]], axis=1)
+    out[finite] = np.degrees(np.arctan2(np.linalg.norm(axial, axis=1), cos_t))
     return out
 
 

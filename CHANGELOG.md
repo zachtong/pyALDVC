@@ -4,6 +4,59 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Statistics of results** (`al_dvc.analysis`, the *Analysis* tab, `al-dvc stats`), phase 1 of
+  `docs/plans/2026-09-23-result-statistics.md`. Per field and frame: nodes used, mean, standard
+  deviation (population, as the DVC Challenge 2.0 paper), median, robust standard deviation, 5th/95th
+  percentiles, min, max, RMS. Nodes: measured ones by default (converged, not rejected by the median
+  test), with a ZNCC floor, edge layers and cut subsets as options and the count each rule removed.
+  Rigid-body motion: translation, rigid (exact weighted Kabsch in physical units, reflection-guarded) or
+  affine, removed as a view -- the stored result never changes -- with the strain recomputed from
+  `R^T (I + H) - I`, exact because the plane fit is linear. Noise floor of a static or known-translation
+  pair in the paper's definitions (bias, noise floor, `u_rms`), after a rigid fit too, strain precision
+  (mean, std, MAER/SDER), the virtual strain gauge size (iDICs GPG Eq. 7.3) and, with several static
+  frames, the spatial and temporal standard deviations. The homogeneous deformation of the region (affine
+  fit, polar decomposition) beside the mean of the nodal strains. Series over frames, histograms,
+  CSV/JSON/PNG exports that record their definitions. `reports/statistics.pdf`
+  (`scripts/make_statistics_report.py`).
+- **Regions, profiles, an extensometer and confidence intervals** (phase 2 of the statistics plan).
+  Regions -- box, sphere, cylinder, slab, or a rectangle, ellipse or polygon drawn on a slice and
+  extruded through the node grid -- named, coloured, outlined on the slices, compared in a table and a
+  chart, and saved with the session. The motion can be fitted over one region (a grip) and removed from
+  the whole field. The 95 % confidence interval of each mean from the effective number of independent
+  nodes (autocorrelation of the field minus its plane, corrected for the removed plane and summed with a
+  fitted tail; covers 91-95 % on simulated correlated noise). Series per region with a gap threshold;
+  layer profiles along x, y or z; a line sampled between two points in every frame, with the field at
+  its ends and a virtual extensometer (`L/L0 - 1`, blind to rigid motion). CSV files for each; `al-dvc
+  stats --regions --region --fit-region --compare --ci`.
+- **The corrected field in the main window and the exports.** *Also in the main window and exports*
+  shows the field with the motion removed on the slices and in the 3-D view and writes it to CSV,
+  ParaView, the images and the report, with a badge (*As measured* turns it off) and a
+  `<basename>_correction.json`; npz and mat keep the result as measured.
+- **Results record the median-test outliers** (`FrameResult.outlier`): nodes that converged but were
+  rejected and replaced. Saved in checkpoints, `.npz` and `.mat`. `result_from_npz` rebuilds a full
+  result from an archive.
+
+### Changed
+- **The strain window is the post-processing window**, with a *Strain* and an *Analysis* tab; the two
+  show the same frame.
+
+### Fixed
+- **Small rotations are measured to full precision.** The local rotation angle came from
+  `arccos((tr R - 1) / 2)`, which loses half the digits near zero (1e-4 deg read with a 4e-5 relative
+  error); it is `atan2` of the axial vector and the cosine now.
+- **The 3-D view placed the field in voxels and everything else in physical units**, so with a voxel
+  size other than 1 the field floated off the slices, the outline and the volume planes.
+- **The length unit belongs to the voxel size.** A voxel size with the unit still "voxel" labelled every
+  length in voxels; the parameter panel now asks for the unit, a run refuses to start without it, and
+  older results with that pair label their lengths "?".
+- **The converged fraction counts the region's nodes only.** Nodes outside the region of interest never
+  had a subset to converge; counting them made a clean run read as 60 % converged (run summary, results
+  panel, batch table, self-test).
+- **The strain window listed det F and the rotation twice.**
+
 ## [0.9.1] - 2026-09-23
 
 ### Changed

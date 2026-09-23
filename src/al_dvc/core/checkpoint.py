@@ -94,7 +94,7 @@ class Checkpoint:
             "boundary_nodes": np.asarray(mesh.boundary_nodes, dtype=np.int64),
             "edge_ok": np.asarray(mesh.edge_ok, dtype=bool),
         }
-        for name in ("U_accum", "U_local", "F_local", "U0", "zncc", "status", "U_std", "split_fraction"):
+        for name in ("U_accum", "U_local", "F_local", "U0", "zncc", "status", "U_std", "split_fraction", "outlier"):
             val = getattr(fr, name)
             if val is not None:
                 arrays[name] = np.asarray(val)
@@ -178,6 +178,7 @@ class Checkpoint:
             status=d.get("status"),
             admm=admm,
             split_fraction=d.get("split_fraction"),
+            outlier=None if d.get("outlier") is None else np.asarray(d["outlier"], dtype=bool),
         )
         return fr, mesh
 

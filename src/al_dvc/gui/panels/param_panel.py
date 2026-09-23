@@ -13,6 +13,7 @@ from typing import Any
 
 from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
 
+from al_dvc.core.config import units_problem
 from al_dvc.io.volume_ops import memory_model
 
 from ..app_state import AppState
@@ -95,7 +96,12 @@ class ParamPanel(QWidget):
             voxel_row.addWidget(w)
         self.units = QLineEdit()
         self.units.setFixedWidth(COMBO_WIDTH)
-        self._add_section("units", layout, [("voxel", voxel_widget), ("units", self.units)])
+        units_section = self._add_section("units", layout, [("voxel", voxel_widget), ("units", self.units)])
+        self.unit_hint = QLabel()  # a scaled voxel size with the unit still "voxel" would mislabel every length
+        self.unit_hint.setObjectName("hint")
+        self.unit_hint.setWordWrap(True)
+        self.unit_hint.setVisible(False)
+        units_section.add_widget(self.unit_hint)
 
         # ---- performance
         self.backend = self._choice("backend")
@@ -342,6 +348,7 @@ class ParamPanel(QWidget):
             self.checkpoint.setChecked(bool(self._state.write_checkpoints))
         finally:
             self._updating = False
+        self.unit_hint.setVisible(bool(units_problem(p)))
         self._update_memory()
 
     def _update_memory(self) -> None:
@@ -381,6 +388,10 @@ class ParamPanel(QWidget):
     def retranslate_ui(self) -> None:
         self.winsize_lock.setText(self.tr("Cube"))
         self.winsize_lock.setToolTip(self.tr("Keep the subset cubic: one size for x, y and z"))
+        self.units.setPlaceholderText(self.tr("e.g. um"))
+        self.unit_hint.setText(
+            self.tr("The voxel size is set: name its unit (e.g. um, mm), or every length would be labelled in voxels.")
+        )
         self.winstepsize_lock.setText(self.tr("Same"))
         self.winstepsize_lock.setToolTip(self.tr("Keep the same step along x, y and z"))
         texts = {

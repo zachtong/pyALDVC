@@ -183,8 +183,28 @@ def _write_format(step: str, result, cfg: ExportConfig, out: Path, fields: list[
     raise ValueError(f"unknown export format {step!r}")
 
 
-def export_formats(result: PipelineResult, cfg: ExportConfig, background=None, progress_fn=None, log_fn=None) -> ExportOutcome:
+def correction_note(shown) -> dict | None:
+    """What was removed from the fields of ``shown`` (a corrected result), for a file written next to them."""
+    corr = getattr(shown, "correction", None)
+    if corr is None:
+        return None
+    return {
+        "correction": corr.as_dict(),
+        "description": corr.describe(),
+        "note": "The fields in CSV, ParaView, the images and the report have this motion removed; the npz and mat "
+        "archives hold the result as measured.",
+        "uncorrected_frames": [k + 1 for k in shown.uncorrected_frames()],
+    }
+
+
+def export_formats(
+    result: PipelineResult, cfg: ExportConfig, background=None, progress_fn=None, log_fn=None, shown=None
+) -> ExportOutcome:
     """Write every selected format, going on after a failure; the outcome says what was written and what failed.
+
+    ``shown`` -- the result with a motion correction applied, as the views draw it -- is what the field formats
+    (CSV, ParaView, report, images) write; the archives (npz, mat) always hold ``result`` as measured. A
+    ``<basename>_correction.json`` next to them says what was removed.
 
     Raises ``ValueError`` before writing anything when nothing is selected or when a format that
     takes fields has none.
@@ -198,11 +218,13 @@ def export_formats(result: PipelineResult, cfg: ExportConfig, background=None, p
     out = Path(cfg.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     outcome = ExportOutcome()
+    corrected = shown is not None and shown is not result and any(s in FIELD_FORMATS for s in steps)
     for i, step in enumerate(steps):
         if progress_fn is not None:
             progress_fn(i / len(steps), step)
+        source = shown if corrected and step in FIELD_FORMATS else result
         try:
-            paths = _write_format(step, result, cfg, out, fields, background, progress_fn, i, len(steps))
+            paths = _write_format(step, source, cfg, out, fields, background, progress_fn, i, len(steps))
         except Exception as exc:
             logger.exception("export %s failed", step)
             outcome.errors[step] = f"{type(exc).__name__}: {exc}"
@@ -213,6 +235,15 @@ def export_formats(result: PipelineResult, cfg: ExportConfig, background=None, p
         outcome.written[step] = paths
         if log_fn is not None and paths:
             log_fn(f"exported {step}: {paths[-1]}")
+    if corrected and any(s in outcome.written for s in FIELD_FORMATS):
+        import json
+
+        note = out / f"{cfg.basename}_correction.json"
+        try:
+            note.write_text(json.dumps(correction_note(shown), indent=2) + "\n", encoding="utf-8")
+            outcome.written["correction"] = [note]
+        except OSError as exc:
+            outcome.errors["correction"] = f"{type(exc).__name__}: {exc}"
     if progress_fn is not None:
         progress_fn(1.0, "done")
     return outcome
@@ -236,9 +267,10 @@ class _ExportWorker(QThread):
     failed = Signal(str, str)  # nothing could be written: message, traceback
     log = Signal(str)
 
-    def __init__(self, result, cfg: ExportConfig, background, parent=None) -> None:
+    def __init__(self, result, cfg: ExportConfig, background, parent=None, shown=None) -> None:
         super().__init__(parent)
         self._result = result
+        self._shown = shown
         self._cfg = cfg
         self._background = background
 
@@ -250,6 +282,7 @@ class _ExportWorker(QThread):
                 self._background,
                 progress_fn=lambda f, m: self.progress.emit(float(f), str(m)),
                 log_fn=self.log.emit,
+                shown=self._shown,
             )
         except Exception as exc:
             logger.exception("Export failed")
@@ -390,6 +423,11 @@ class ExportDialog(QDialog):
         self._progress.setRange(0, 1000)
         self._progress.setTextVisible(False)
         layout.addWidget(self._progress)
+        self._correction = QLabel()  # the field formats are written with the motion the views remove
+        self._correction.setObjectName("badge")
+        self._correction.setWordWrap(True)
+        self._correction.hide()
+        layout.addWidget(self._correction)
         self._status = QLabel()
         self._status.setObjectName("hint")
         self._status.setWordWrap(True)
@@ -434,6 +472,7 @@ class ExportDialog(QDialog):
         self.checks["images"].toggled.connect(lambda v: self._image_group.setEnabled(v and not self._running()))
         self._image_group.setEnabled(False)
         self._state.results_changed.connect(self.refresh)
+        self._state.correction_changed.connect(self._show_correction)
         self.retranslate_ui()
         self.refresh()
         if preselect_strain:
@@ -479,12 +518,22 @@ class ExportDialog(QDialog):
             self.frame_from.setValue(1)
         self._btn_export.setEnabled(has and not self._running())
         self._btn_strain.setEnabled(has and bool(res.result_strain) and not self._running())
+        self._show_correction()
         if not has:
             self._status.setText(self.tr("No results to export yet."))
         elif not res.result_strain:
             self._status.setText(self.tr("Displacement only: compute strain in the strain window to export strain fields."))
         else:
             self._status.setText("")
+
+    def _show_correction(self) -> None:
+        note = self._state.correction_text()
+        self._correction.setVisible(bool(note))
+        if note:
+            text = self.tr(
+                "{note}: CSV, ParaView, the images and the report are written that way; npz and mat hold the result as measured."
+            )
+            self._correction.setText(text.format(note=note[:1].upper() + note[1:]))
 
     def _check_fields(self, predicate) -> None:
         for i in range(self.fields.count()):
@@ -611,7 +660,7 @@ class ExportDialog(QDialog):
                 self._state.log(f"export: cannot load the reference volume for the images: {exc}", "warning")
         self._state.set_output_dir(cfg.out_dir)
         self._job_cfg = cfg
-        self._worker = _ExportWorker(res, cfg, background, parent=self)
+        self._worker = _ExportWorker(res, cfg, background, parent=self, shown=self._state.display_result())
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_outcome.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)

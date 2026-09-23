@@ -6,7 +6,10 @@ application is written next to the session as a composed mask file
 (``<name>_masks/mask_<k>.npy``) so what was on screen is exactly what comes
 back; the drawing operations are only an in-memory undo history (older
 sessions that stored operations are still replayed). Results are not
-embedded: the session remembers the archive the user exported.
+embedded: the session remembers the archive the user exported. The
+post-processing regions, the motion correction shown in the views and the
+statistics settings are kept under ``analysis`` (optional: older sessions
+have none).
 """
 
 from __future__ import annotations
@@ -43,6 +46,7 @@ class SessionData:
     display: dict[str, Any] = field(default_factory=dict)
     results_path: str | None = None
     version: str = __version__
+    analysis: dict[str, Any] = field(default_factory=dict)  # {"regions", "correction", "settings"}
 
 
 def _relative(path: str | None, base: Path) -> str | None:
@@ -85,7 +89,32 @@ def build_session(state: AppState, results_path: str | None = None) -> SessionDa
             "current_frame": state.current_frame,
         },
         results_path=results_path,
+        analysis={
+            "regions": [r.as_dict() for r in state.regions],
+            "correction": None if state.display_correction is None else state.display_correction.as_dict(),
+            "settings": dict(state.analysis_settings),
+        },
     )
+
+
+def _analysis_from_doc(doc, p: Path) -> dict[str, Any]:
+    """The ``analysis`` entry of a session, checked: regions and the correction as objects, settings a mapping."""
+    from al_dvc.analysis.corrected import Correction
+    from al_dvc.analysis.regions import regions_from_dicts
+
+    raw = doc.get("analysis") or {}
+    if not isinstance(raw, dict):
+        raise SessionError(f"invalid statistics settings in {p}")
+    try:
+        regions = regions_from_dicts(raw.get("regions") or [])
+        corr = raw.get("correction")
+        correction = None if corr is None else Correction.from_dict(corr)
+    except (TypeError, ValueError) as exc:
+        raise SessionError(f"invalid regions or motion correction in {p}: {exc}") from exc
+    settings = raw.get("settings") or {}
+    if not isinstance(settings, dict):
+        raise SessionError(f"invalid statistics settings in {p}")
+    return {"regions": regions, "correction": correction, "settings": dict(settings)}
 
 
 def _drawn_mask_files(state: AppState, session: Path) -> list[str | None]:
@@ -141,6 +170,7 @@ def save_session(state: AppState, path: str | Path, results_path: str | None = N
         "output_dir": _relative(data.output_dir, base),
         "display": data.display,
         "results_path": _relative(data.results_path, base),
+        "analysis": data.analysis,
     }
     tmp = p.with_name(p.name + ".tmp")
     try:
@@ -209,6 +239,7 @@ def load_session(path: str | Path) -> SessionData:
     results_path = doc.get("results_path")
     if results_path is not None and not isinstance(results_path, str):
         raise SessionError(f"invalid results path in {p}")
+    analysis = _analysis_from_doc(doc, p)
     return SessionData(
         volumes=volumes,
         para=para,
@@ -216,6 +247,7 @@ def load_session(path: str | Path) -> SessionData:
         display=dict(display),
         results_path=_absolute(results_path, base),
         version=str(doc.get("pyaldvc", "")),
+        analysis=analysis,
     )
 
 
@@ -277,6 +309,7 @@ def apply_session(data: SessionData, state: AppState, path: str | Path | None = 
         "background_frame": _background_frame(d.get("background_frame"), len(volumes)),
     }
     output_dir = Path(data.output_dir)
+    analysis = data.analysis or {}
     # ---- commit
     state.volumes = volumes
     state.mask_editor = None
@@ -289,13 +322,22 @@ def apply_session(data: SessionData, state: AppState, path: str | Path | None = 
     state.output_dir = output_dir
     for key, val in values.items():
         setattr(state, key, val)
+    state.regions = list(analysis.get("regions") or [])
+    state.display_correction = analysis.get("correction")
+    state.analysis_settings = dict(analysis.get("settings") or {})
+    state._display_cache = None
     state.session_path = Path(path) if path else None
     state.session_generation += 1
     state.mask_revision += 1
     state.mark_clean()
+    # the statistics controls first: every later signal makes the Statistics tab save its controls, which
+    # must by then be the session's
+    state.analysis_restored.emit()
     state.volumes_changed.emit()
     state.params_changed.emit()
     state.results_changed.emit()
+    state.regions_changed.emit()
+    state.correction_changed.emit()
     state.display_changed.emit()
     state.output_dir_changed.emit(str(state.output_dir))
     state.start_shape_check()  # the files may have changed since the session was saved

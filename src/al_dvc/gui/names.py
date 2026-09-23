@@ -118,6 +118,7 @@ FIELDS: dict[str, str] = {
     "volumetric": tr_noop("Volumetric strain"),
     "det_F": tr_noop("Volume ratio det F"),
     "rotation_deg": tr_noop("Rotation angle [deg]"),
+    "zncc": tr_noop("Correlation ZNCC"),
 }
 
 STATUS: dict[str, str] = {  # keys: ``core.data_structures.STATUS_NAMES`` values

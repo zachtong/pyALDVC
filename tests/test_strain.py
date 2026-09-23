@@ -97,3 +97,17 @@ def test_compute_strain_linear_field(mesh, method):
     assert np.allclose(sr.disp_u, 2.0 * U[:, 0])
     assert sr.method == method
     assert np.allclose(sr.field("e1")[v], principal_strains(sym[None])[0][0], atol=1e-8)
+
+
+def test_small_rotations_are_measured_to_full_precision():
+    """The angle came from arccos((tr R - 1) / 2), which loses half the digits near zero: a residual rotation of
+    1e-4 deg -- what is left after removing a rigid rotation -- read with a 4e-5 relative error."""
+    from scipy.spatial.transform import Rotation
+
+    from al_dvc.strain.strain_types import polar_rotation_deg
+
+    for deg in (1e-4, 3e-3, 0.5, 30.0, 179.0):
+        R = Rotation.from_rotvec(np.radians(deg) * np.array([0.6, 0.0, 0.8])).as_matrix()
+        stretch = np.diag([1.01, 0.99, 1.0])
+        H = (R @ stretch - np.eye(3))[None]
+        assert polar_rotation_deg(H)[0] == pytest.approx(deg, rel=1e-9)

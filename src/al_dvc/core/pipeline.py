@@ -45,6 +45,7 @@ from ..utils.validation import validate_para_against_volume
 from .checkpoint import Checkpoint, CheckpointMismatch
 from .config import DVCPara
 from .data_structures import (
+    STATUS_CONVERGED,
     ADMMInfo,
     DVCMesh,
     FrameResult,
@@ -315,12 +316,13 @@ def run_aldvc(
 
                 # --- Section 6: ADMM iterations ---
                 n_steps = 1
+                bad_last = bad_local  # the rejected nodes of the pass that produced the final status
                 for step in range(2, para.admm_max_iter + 1):
                     if should_stop():
                         raise RunCancelled("Computation cancelled by user.")
                     n_steps = step
                     U1_prev = U1
-                    U1, info_s1, _ = subpb1_solver(ctx, source, g_prep, U2, F2, v, mu, para, mesh)
+                    U1, info_s1, bad_last = subpb1_solver(ctx, source, g_prep, U2, F2, v, mu, para, mesh)
                     F1 = F2
                     local_infos.append(info_s1)
                     timings["subpb1"] = timings.get("subpb1", 0.0) + info_s1.solve_time
@@ -368,6 +370,9 @@ def run_aldvc(
                 U_final, F_final = U1, F1
                 zncc = info_local.zncc
                 status = info_local.status
+                bad_last = bad_local
+            # converged, then rejected by the median test and replaced: not a measurement
+            outlier = np.asarray(bad_last, dtype=bool) & (np.asarray(status) == STATUS_CONVERGED)
 
             U_std = displacement_uncertainty(ctx, zncc, status)
             results[k - 1] = FrameResult(
@@ -382,6 +387,7 @@ def run_aldvc(
                 status=status,
                 admm=admm_info,
                 split_fraction=ctx.split_fraction,
+                outlier=outlier,
             )
             mesh_by_frame[k - 1] = mesh
             prev_ref, prev_U = ref_idx, U_final

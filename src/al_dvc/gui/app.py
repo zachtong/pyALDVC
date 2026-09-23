@@ -147,6 +147,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
         self.state.log_message.connect(self.console.append_log)
         self.results_panel.strain_requested.connect(self._on_strain)
+        self.results_panel.statistics_requested.connect(self._on_statistics)
         self.results_panel.texture_requested.connect(self._on_texture)
         self.results_panel.export_requested.connect(self._on_export_requested)
 
@@ -251,6 +252,7 @@ class MainWindow(QMainWindow):
             ("run", self.run_panel.start, "F5"),
             ("stop", self.run_panel.stop, "Esc"),
             ("strain", self._on_strain, "Ctrl+T"),
+            ("statistics", self._on_statistics, "Ctrl+Shift+T"),
             ("texture", self._on_texture, "Ctrl+X"),
             ("export", self._on_export_requested, "Ctrl+E"),
         ]:
@@ -447,6 +449,12 @@ class MainWindow(QMainWindow):
         settings.setValue("main/geometry", self.saveGeometry())
         settings.setValue("main/splitter", [int(s) for s in self._splitter.sizes()])
 
+    def open_statistics(self):
+        """The post-processing window on its Analysis tab (statistics of the result)."""
+        window = self.open_strain_window()
+        window.show_tab("analysis")
+        return window
+
     def open_strain_window(self):
         """The (single) strain post-processing window, created on first use and raised afterwards."""
         from .strain_window import StrainWindow
@@ -464,6 +472,9 @@ class MainWindow(QMainWindow):
 
     def _on_strain(self) -> None:
         self.open_strain_window()
+
+    def _on_statistics(self) -> None:
+        self.open_statistics()
 
     def open_texture_window(self):
         """The (single) texture analysis window, created on first use and raised afterwards."""
@@ -651,6 +662,9 @@ class MainWindow(QMainWindow):
             window = getattr(self, attr, None)
             if window is not None:
                 jobs.append((attr, window._is_running, window.cancel))
+        post = getattr(self, "strain_window", None)
+        if post is not None and hasattr(post, "analysis"):
+            jobs.append(("statistics", post.analysis.is_running, post.analysis.cancel))
         jobs.append(("automatic mask", self.state.auto_mask_thread_running, self.state.cancel_auto_mask))
         jobs.append(("saving the mask", self.state.save_mask_thread_running, lambda: None))  # a write finishes its file
         jobs.append(("recording", self.view3d.recording, self.view3d.cancel_recording))
@@ -731,6 +745,7 @@ class MainWindow(QMainWindow):
             "run": self.tr("Run AL-DVC"),
             "stop": self.tr("Stop"),
             "strain": self.tr("Strain post-processing..."),
+            "statistics": self.tr("Statistics..."),
             "texture": self.tr("Texture analysis..."),
             "export": self.tr("Export results..."),
             "texture_guide": self.tr("Texture analysis guide..."),

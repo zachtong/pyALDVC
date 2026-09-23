@@ -57,6 +57,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from al_dvc.core.config import length_unit
 from al_dvc.texture import (
     MAX_ANALYSIS_VOXELS,
     THRESHOLD_LABELS,
@@ -990,7 +991,7 @@ class TextureWindow(QMainWindow):
             "centre": self.region.centre,
             "box": self.analysis_box(),
             "spacing": tuple(float(v) for v in st.para.voxel_size),
-            "units": str(getattr(st.para, "units", "voxel") or "voxel"),
+            "units": length_unit(st.para),
         }
 
     def _sweep_input(self) -> dict | None:

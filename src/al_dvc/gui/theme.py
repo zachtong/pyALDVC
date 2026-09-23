@@ -123,6 +123,15 @@ QLabel#hint {{
     font-size: 11px;
 }}
 
+/* a state the user must not forget, e.g. the fields are shown with the rigid motion removed */
+QLabel#badge {{
+    color: {c.WARNING};
+    font-size: 11px;
+    border: 1px solid {c.WARNING};
+    border-radius: 4px;
+    padding: 2px 6px;
+}}
+
 /* Typography, three levels: sectionTitle and QGroupBox titles (level 1, 12 px bold primary), sectionHeader of the
    folding sub-sections (level 2, 11 px bold secondary), field labels 12 px regular, hints 11 px muted. */
 QLabel#sectionTitle {{

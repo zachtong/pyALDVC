@@ -44,6 +44,7 @@ class ResultsPanel(QWidget):
     """Field / frame / colour controls, a text summary, the strain window and export buttons."""
 
     strain_requested = Signal()
+    statistics_requested = Signal()
     texture_requested = Signal()
     export_requested = Signal()
 
@@ -69,8 +70,13 @@ class ResultsPanel(QWidget):
         self._btn_strain.setMinimumHeight(32)
         self._btn_strain.setEnabled(False)
         self._btn_strain.clicked.connect(self.strain_requested.emit)
+        self._btn_statistics = QPushButton()
+        self._btn_statistics.setMinimumHeight(32)
+        self._btn_statistics.setEnabled(False)
+        self._btn_statistics.clicked.connect(self.statistics_requested.emit)
         agrid.addWidget(self._btn_texture)
         agrid.addWidget(self._btn_strain)
+        agrid.addWidget(self._btn_statistics)
         self._analysis_hint = QLabel()
         self._analysis_hint.setObjectName("hint")
         self._analysis_hint.setWordWrap(True)
@@ -119,6 +125,20 @@ class ResultsPanel(QWidget):
         self._no_result.setWordWrap(True)
         self._no_result.hide()
         form.addRow(self._no_result)
+        # the fields are drawn with a motion removed (the Statistics window): a badge, and a way back
+        self._correction_row = QWidget()
+        crow = QHBoxLayout(self._correction_row)
+        crow.setContentsMargins(0, 0, 0, 0)
+        crow.setSpacing(4)
+        self._correction_badge = QLabel()
+        self._correction_badge.setObjectName("badge")
+        self._correction_badge.setWordWrap(True)
+        self._btn_as_measured = QPushButton()
+        self._btn_as_measured.clicked.connect(lambda: self._state.set_display_correction(None))
+        crow.addWidget(self._correction_badge, 1)
+        crow.addWidget(self._btn_as_measured)
+        self._correction_row.hide()
+        form.addRow(self._correction_row)
         self._labels: dict[str, QLabel] = {}
         for key, widget in [
             ("frame", frame_widget),
@@ -180,12 +200,18 @@ class ResultsPanel(QWidget):
         self._state.current_frame_changed.connect(lambda _i: self.refresh())
         self._state.volumes_changed.connect(self.refresh)
         self._state.display_changed.connect(self._sync_display)  # a loaded session, a change made elsewhere
+        self._state.correction_changed.connect(self._show_correction)
         self.retranslate_ui()
         self.refresh()
 
     def minimumSizeHint(self):  # noqa: N802
         """The scroll area must scroll rather than squeeze the rows into each other."""
         return self.sizeHint()
+
+    def _show_correction(self) -> None:
+        note = self._state.correction_text()
+        self._correction_row.setVisible(bool(note))
+        self._correction_badge.setText(self.tr("Shown: {note}").format(note=note) if note else "")
 
     # ------------------------------------------------------------------ binding
     def _set(self, **values) -> None:
@@ -270,6 +296,7 @@ class ResultsPanel(QWidget):
         self._display_group.setEnabled(has)
         self._export_group.setEnabled(has)
         self._btn_strain.setEnabled(has)
+        self._btn_statistics.setEnabled(has)
         self._btn_texture.setEnabled(bool(self._state.volumes))
         self._updating = True
         try:
@@ -312,7 +339,10 @@ class ResultsPanel(QWidget):
         head = self.tr("{n} nodes, {g} grid, step {s}").format(
             n=f"{mesh.n_nodes:,}", g=f"{nx} x {ny} x {nz}", s=" x ".join(f"{v:g}" for v in (sx, sy, sz))
         )
-        conv = [float(np.mean(fr.status == 0)) if fr.status is not None else float("nan") for fr in res.result_disp]
+        from al_dvc.export.export_utils import converged_fraction
+
+        conv = [converged_fraction(res, fr) for fr in res.result_disp]
+        conv = [float("nan") if c is None else c for c in conv]
         z = [
             float(np.nanmedian(fr.zncc)) if fr.zncc is not None and np.isfinite(fr.zncc).any() else float("nan")
             for fr in res.result_disp
@@ -395,6 +425,7 @@ class ResultsPanel(QWidget):
         if target is None:
             return None
         target.parent.mkdir(parents=True, exist_ok=True)
+        shown = self._state.display_result()  # the field formats hold what the views draw; the archives the measurement
         QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
         try:
             from al_dvc.export import export_csv, export_mat, export_npz, export_report, export_vtk
@@ -404,11 +435,11 @@ class ResultsPanel(QWidget):
             elif kind == "mat":
                 path = export_mat(res, target)
             elif kind == "csv":
-                path = export_csv(res, target)[0].parent
+                path = export_csv(shown, target)[0].parent
             elif kind == "vtk":
-                path = export_vtk(res, target)[0].parent
+                path = export_vtk(shown, target)[0].parent
             elif kind == "report":
-                path = export_report(res, target)
+                path = export_report(shown, target)
             else:
                 raise ValueError(kind)
         except Exception as exc:
@@ -434,6 +465,10 @@ class ResultsPanel(QWidget):
         )
         self._export_group.setTitle(self.tr("Export"))
         self._btn_strain.setText(self.tr("Strain post-processing..."))
+        self._btn_statistics.setText(self.tr("Statistics..."))
+        self._btn_statistics.setToolTip(
+            self.tr("Mean, standard deviation, rigid-body motion, noise floor and series over frames of the result")
+        )
         texts = {
             "frame": self.tr("Frame"),
             "field": self.tr("Field"),
@@ -447,6 +482,9 @@ class ResultsPanel(QWidget):
         for key, label in self._labels.items():
             label.setText(texts[key])
         self._no_result.setText(self.tr("No result for this volume"))
+        self._btn_as_measured.setText(self.tr("As measured"))
+        self._btn_as_measured.setToolTip(self.tr("Show and export the fields as measured again"))
+        self._show_correction()
         self._btn_export.setText(self.tr("Export results..."))
         self._export_status.setText(self.tr("npz, mat, CSV, ParaView, PDF report and slice images"))
         if self._state.results is None:

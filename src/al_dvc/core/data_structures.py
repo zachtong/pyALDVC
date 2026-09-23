@@ -400,6 +400,8 @@ class FrameResult:
         status: ``(N,)`` node status codes of the final local pass.
         split_fraction: ``(N,)`` share of a subset's in-mask voxels kept by subset splitting
             (1.0 when nothing was cut, NaN at rejected nodes); None when splitting was off.
+        outlier: ``(N,)`` bool, nodes of the final local pass that converged but were rejected by the
+            median test and replaced; their value is not a measurement. None in results from before 0.9.2.
         ref_frame: index of the reference frame of this pair.
         admm: ADMM diagnostics (None when the global step was disabled).
     """
@@ -416,6 +418,7 @@ class FrameResult:
     status: NDArray[np.int8] | None = None
     admm: ADMMInfo | None = None
     split_fraction: NDArray[np.float32] | None = None
+    outlier: NDArray[np.bool_] | None = None
 
 
 @dataclass(frozen=True)

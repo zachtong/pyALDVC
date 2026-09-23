@@ -190,6 +190,34 @@ def dvcpara_default(**overrides: Any) -> DVCPara:
     return DVCPara(**overrides)  # __post_init__ broadcasts and validates
 
 
+_VOXEL_LABELS = {"", "voxel", "voxels", "vx"}
+
+
+def _voxel_size_scaled(p: DVCPara) -> bool:
+    return any(abs(float(s) - 1.0) > 1e-9 for s in p.voxel_size)
+
+
+def length_unit(p: DVCPara) -> str:
+    """The unit of every length the results report: ``p.units``, ``"voxel"`` when nothing is scaled.
+
+    ``units`` is a free label and ``voxel_size`` scales the values; the two used to be independent,
+    so a voxel size with the label still "voxel" labelled micrometres as voxels. Such a pair (older
+    sessions and results) reads ``"?"``, never ``"voxel"``.
+    """
+    label = (p.units or "").strip()
+    if label.lower() in _VOXEL_LABELS:
+        return "?" if _voxel_size_scaled(p) else "voxel"
+    return label
+
+
+def units_problem(p: DVCPara) -> str:
+    """Why the length unit does not fit the voxel size ("" when it does)."""
+    if _voxel_size_scaled(p) and (p.units or "").strip().lower() in _VOXEL_LABELS:
+        size = ", ".join(f"{float(s):g}" for s in p.voxel_size)
+        return f"the voxel size is ({size}) but the length unit is '{p.units}': name the unit of the voxel size (e.g. um)"
+    return ""
+
+
 def validate_dvcpara(p: DVCPara) -> None:
     """Raise ``ValueError`` / ``TypeError`` on inconsistent parameters."""
     for k, w in zip("xyz", p.winsize):

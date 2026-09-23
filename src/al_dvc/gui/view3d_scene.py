@@ -1,9 +1,10 @@
 """Build pyvista scenes from DVC results (no Qt: usable for tests, reports and scripts).
 
 The node grid of a result is a regular lattice, so it maps one-to-one onto a
-``pyvista.ImageData`` with the node spacing as voxel spacing and the first
-node as origin. Node ordering ``n = iz*ny*nx + iy*nx + ix`` is exactly VTK's
-point ordering (x fastest), so per-node arrays attach without reordering.
+``pyvista.ImageData`` with the node spacing as spacing and the first node as
+origin, both in physical units (``voxel_size``) like the rest of the scene.
+Node ordering ``n = iz*ny*nx + iy*nx + ix`` is exactly VTK's point ordering
+(x fastest), so per-node arrays attach without reordering.
 
 ``pyvista`` is imported lazily: the module can be imported (and
 :func:`available` queried) on installations without it.
@@ -322,10 +323,13 @@ def node_grid(
 
     mesh = result.dvc_mesh
     nz, ny, nx = mesh.grid_shape
+    # physical units, like the slice positions, the outline, the volume planes and the warp vectors: in voxels
+    # the field floated off the rest of the scene as soon as the voxel size was not 1
+    vs = [float(v) for v in result.dvc_para.voxel_size]
     grid = pv.ImageData(
         dimensions=(nx, ny, nz),
-        spacing=tuple(float(s) for s in mesh.spacing),
-        origin=(float(mesh.x0[0]), float(mesh.y0[0]), float(mesh.z0[0])),
+        spacing=tuple(float(s) * v for s, v in zip(mesh.spacing, vs)),
+        origin=(float(mesh.x0[0]) * vs[0], float(mesh.y0[0]) * vs[1], float(mesh.z0[0]) * vs[2]),
     )
     if grid.n_points != mesh.n_nodes:
         raise ValueError(f"node grid {mesh.grid_shape} has {grid.n_points} lattice points but the mesh has {mesh.n_nodes} nodes")
