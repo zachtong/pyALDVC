@@ -8,10 +8,13 @@ read and write the state and react to its signals.
 
 from __future__ import annotations
 
+import contextlib
 import enum
 import logging
 import os
 import re
+import threading
+import time
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -19,7 +22,7 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QCoreApplication, QObject, Qt, QThread, Signal
 
 from al_dvc.core.config import DVCPara, dvcpara_default
 from al_dvc.core.data_structures import PipelineResult, VOIRange, voi_from_mask
@@ -39,6 +42,16 @@ def natural_key(path: str | Path) -> tuple:
 def lexical_key(path: str | Path) -> str:
     """Sort key that compares file names character by character (000, 001, ..., as the file system lists them)."""
     return Path(path).name.lower()
+
+
+SIZE_SEP = " \u00d7 "  # multiplication sign between the x, y and z sizes the window shows
+
+
+def size_text(shape) -> str:
+    """A ``(nz, ny, nx)`` shape as the window shows a volume's size: ``nx \u00d7 ny \u00d7 nz`` (x, y, z)."""
+    from al_dvc.io.volume_io import shape_text
+
+    return shape_text(shape, SIZE_SEP)
 
 
 class RunState(enum.Enum):
@@ -72,6 +85,15 @@ class VolumeEntry:
     label: str = ""
     mask_ops: dict | None = None  # drawing operations that produced ``mask`` (undo history; legacy sessions)
     uid: str = field(default_factory=lambda: uuid.uuid4().hex)  # identity, so results stay attached to their volumes
+    header_shape: tuple[int, int, int] | None = None  # the file's size, read from its header when it was added
+    shape_pending: bool = False  # the header is being read, off the UI thread
+
+    @property
+    def shape(self) -> tuple[int, int, int] | None:
+        """The frame's size ``(nz, ny, nx)``: the array's when it is in memory, else the file header's."""
+        if self.array is not None:
+            return tuple(int(s) for s in self.array.shape)  # type: ignore[return-value]
+        return self.header_shape
 
     def load(self) -> NDArray:
         if self.array is None:
@@ -81,6 +103,7 @@ class VolumeEntry:
 
             arr = load_volume(self.path)  # bind locally first: a release must not blank a live read
             self.array = arr
+            self.header_shape = tuple(int(s) for s in arr.shape)  # type: ignore[assignment]  # known after a release
             return arr
         return self.array
 
@@ -203,6 +226,10 @@ class AppState(QObject):
     mask_changed = Signal()
     auto_mask_state = Signal(str)  # "started" | "finished" | "cancelled" | "failed"
     save_mask_state = Signal(str, str)  # ("started" | "finished" | "failed", path)
+    shapes_changed = Signal()  # a volume's size became known
+    shape_check_finished = Signal(object)  # the uids of a group of volumes whose sizes have all been read
+    _shape_read = Signal(int, str, object, float)  # (batch, uid, shape or None, seconds), from the reading thread
+    _shape_batch_done = Signal(int)
 
     def __init__(self) -> None:
         super().__init__()
@@ -247,6 +274,11 @@ class AppState(QObject):
         self.mask_target: str = "current"  # "current" | "all"
         self.show_mask: bool = True
         self.mask_alpha: float = 0.35
+        # volume sizes, read from the file headers by background threads
+        self._shape_batches: dict[int, list[str]] = {}
+        self._shape_batch_seq = 0
+        self._shape_read.connect(self._on_shape_read, Qt.ConnectionType.QueuedConnection)
+        self._shape_batch_done.connect(self._on_shape_batch_done, Qt.ConnectionType.QueuedConnection)
 
     # ------------------------------------------------------------------ volumes
     @property
@@ -272,12 +304,13 @@ class AppState(QObject):
     def add_volume_paths(self, paths: list[str]) -> None:
         if not paths or self._locked("add volumes"):
             return
-        for p in paths:
-            self.volumes.append(VolumeEntry(path=str(p)))
+        added = [VolumeEntry(path=str(p)) for p in paths]
+        self.volumes.extend(added)
         self._sequence_changed()
         self.volumes_changed.emit()
         if self.results is not None:
             self.results_changed.emit()  # the new rows have no result; the views re-map
+        self.start_shape_check(added)
 
     def set_volume_arrays(self, arrays: list[NDArray], labels: list[str] | None = None) -> None:
         self.volumes = [
@@ -291,6 +324,7 @@ class AppState(QObject):
         self.volumes_changed.emit()
         self.results_changed.emit()
         self.mask_changed.emit()
+        self.start_shape_check(self.volumes)  # arrays are sized already: this only reports a mismatch
 
     def remove_volume(self, index: int) -> None:
         if not (0 <= index < len(self.volumes)) or self._locked("remove volume"):
@@ -353,8 +387,14 @@ class AppState(QObject):
         if self.results is not None:
             self.results_changed.emit()
 
-    def set_mask(self, index: int, path: str | None = None, mask: NDArray[np.bool_] | None = None) -> None:
+    def set_mask(self, index: int, path: str | None = None, mask: NDArray[np.bool_] | None = None) -> bool:
+        """Attach a mask file or array to frame ``index``. Returns False, attaching nothing and logging why,
+        when a mask file's size is not the volume's (an array is checked when a run starts)."""
         entry = self.volumes[index]
+        problem = self.mask_size_problem(index, path) if path is not None else ""
+        if problem:
+            self.log(problem, "error")
+            return False
         entry.mask_path = path
         entry.mask = None if mask is None else np.asarray(mask, dtype=bool)
         entry.mask_ops = None
@@ -363,6 +403,142 @@ class AppState(QObject):
         self._mask_changed()
         self.volumes_changed.emit()
         self.mask_changed.emit()
+        return True
+
+    # ------------------------------------------------------------------ volume sizes
+    def reference_shape(self) -> tuple[int, int, int] | None:
+        """The size of the reference volume (frame 0), ``None`` while it is not known."""
+        return self.volumes[0].shape if self.volumes else None
+
+    def shape_mismatches(self) -> list[tuple[int, tuple[int, int, int]]]:
+        """``(index, shape)`` of every frame whose size is known and is not the reference's.
+
+        A run needs every frame at the reference's size. Empty while the reference's size is not known.
+        """
+        ref = self.reference_shape()
+        if ref is None:
+            return []
+        out = []
+        for i, entry in enumerate(self.volumes[1:], start=1):
+            shape = entry.shape
+            if shape is not None and shape != ref:
+                out.append((i, shape))
+        return out
+
+    def mismatch_fields(self, mismatches: list[tuple[int, tuple[int, int, int]]], sep: str = "; ") -> dict:
+        """The ``n``, ``name``, ``size`` and ``files`` of a message that reports ``mismatches`` (``files`` joined by ``sep``)."""
+        ref = self.volumes[0]
+        return {
+            "n": len(mismatches),
+            "name": ref.name,
+            "size": size_text(ref.shape),
+            "files": sep.join(f"{self.volumes[i].name}: {size_text(shape)}" for i, shape in mismatches),
+        }
+
+    def mask_size_problem(self, index: int, path: str | os.PathLike) -> str:
+        """Why the mask file ``path`` cannot be the mask of frame ``index``; "" when it can (or a size is not known)."""
+        from al_dvc.io import volume_io
+
+        entry = self.volumes[index]
+        want = entry.shape
+        if want is None:
+            return ""
+        try:
+            got = volume_io.read_volume_shape(path)
+        except OSError:  # a missing file is reported when the mask is read
+            return ""
+        if got is None or got == want:
+            return ""
+        return self.tr("The mask {name} is {size} voxels but the volume {volume} is {ref}; the mask was not attached.").format(
+            name=Path(path).name, size=size_text(got), volume=entry.name, ref=size_text(want)
+        )
+
+    def start_shape_check(self, entries: list[VolumeEntry] | None = None) -> int:
+        """Read the size of every file among ``entries`` (default: all) from its header, on a background thread.
+
+        The header is a few kilobytes, but a cloud drive (Box Drive, OneDrive) downloads a file it has not synced
+        yet on the first read of any byte -- 26-45 s per 3.7-GB scan on Box Drive -- so the read never runs on the
+        UI thread. The thread is a daemon: it only reads, and a download still in progress must not keep the
+        application from closing. Each size arrives through :attr:`shapes_changed`; :attr:`shape_check_finished`
+        carries the uids of ``entries`` once all of theirs are in (at once when every size is known already).
+        Returns the id of the batch.
+        """
+        entries = list(self.volumes if entries is None else entries)
+        self._shape_batch_seq += 1
+        batch = self._shape_batch_seq
+        uids = [e.uid for e in entries]
+        todo = [(e.uid, str(e.path)) for e in entries if e.path and e.shape is None]
+        if not todo:
+            self.shape_check_finished.emit(uids)
+            return batch
+        for e in entries:
+            if e.path and e.shape is None:
+                e.shape_pending = True
+        self.shapes_changed.emit()  # the rows say the sizes are being read
+        self._shape_batches[batch] = uids
+        threading.Thread(target=self._read_shapes, args=(batch, todo), name=f"pyaldvc-sizes-{batch}", daemon=True).start()
+        return batch
+
+    def _read_shapes(self, batch: int, todo: list[tuple[str, str]]) -> None:
+        """Thread body: one header after another; the results are queued to the UI thread. The batch always
+        ends, so no row is left waiting whatever happens here."""
+        from al_dvc.io import volume_io
+
+        try:
+            for uid, path in todo:
+                t0 = time.perf_counter()
+                try:
+                    shape = volume_io.read_volume_shape(path)
+                except Exception as exc:  # a missing or unreadable file: the size stays unknown, the load says why
+                    logger.debug("size of %s not read: %s", path, exc)
+                    shape = None
+                self._shape_read.emit(batch, uid, shape, time.perf_counter() - t0)
+        except RuntimeError:  # the window, and this state with it, went away during a download
+            return
+        except Exception:
+            logger.exception("reading the volume sizes failed")
+        with contextlib.suppress(RuntimeError):
+            self._shape_batch_done.emit(batch)
+
+    def _on_shape_read(self, _batch: int, uid: str, shape, seconds: float) -> None:
+        from al_dvc.io import volume_io
+
+        entry = next((e for e in self.volumes if e.uid == uid), None)
+        if entry is None:
+            return  # removed while its size was being read
+        entry.shape_pending = False
+        if shape is not None:
+            entry.header_shape = tuple(int(s) for s in shape)  # type: ignore[assignment]
+        if seconds >= volume_io.SLOW_HEADER_READ_S:  # the "..." stayed that long: say why
+            self.log(
+                self.tr(
+                    "Reading the size of {name} took {s:.0f} s: a cloud or network drive probably downloaded the whole file."
+                ).format(name=entry.name, s=seconds)
+            )
+        self.shapes_changed.emit()
+
+    def _on_shape_batch_done(self, batch: int) -> None:
+        uids = self._shape_batches.pop(batch, None)
+        if uids is None:
+            return
+        for entry in self.volumes:
+            if entry.uid in uids:
+                entry.shape_pending = False
+        self.shape_check_finished.emit(list(uids))
+
+    def shape_check_pending(self) -> bool:
+        return bool(self._shape_batches)
+
+    def wait_for_shapes(self, timeout_ms: int = 10_000) -> bool:
+        """Process events until every size being read has been reported (tests, scripts); False on a timeout."""
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        while self._shape_batches:
+            if time.monotonic() > deadline:
+                return False
+            QCoreApplication.processEvents()
+            QThread.msleep(5)
+        QCoreApplication.processEvents()
+        return True
 
     def _mask_changed(self) -> None:
         self.mask_revision += 1

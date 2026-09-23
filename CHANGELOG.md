@@ -47,6 +47,20 @@ All notable changes to pyALDVC are documented here. The format follows
 - **The GPU occupancy warning is silenced again.** numba-cuda raises its own `NumbaPerformanceWarning`
   class, so the filter on numba's class let "Grid size 1 will likely result in GPU under-utilization"
   through onto the console of every small run and of the self-test. The message itself is filtered now.
+- **Volumes of different sizes are caught when they are added, not when the run reaches them.** The
+  window recorded only the file paths, and the streaming provider checked a frame when the run read
+  it: on a micro-CT sequence of 1856-slice scans with one of 1857, the run failed 2 min 25 s in, after
+  the first frame had been solved. `read_volume_shape()` now sizes a volume from its file header alone
+  (TIFF, NumPy, HDF5, MATLAB v5 and v7.3, NIfTI, NRRD, slice folders; `None` where only the voxels can
+  tell, such as DICOM), and every entry point uses it: the Shape column shows every size as soon as a
+  volume is added (x × y × z), the volumes that differ from the reference are marked and reported in a
+  dialog, *Run* refuses the sequence and names them, a mask file of another size is not attached, and
+  `FileVolumeProvider` -- behind GUI runs, `al-dvc run` and batch sessions -- raises `VolumeShapeError`
+  naming every volume that differs before a voxel is read (a missing file is reported then too, as a
+  missing reference always was). The window reads the headers on a background thread: a cloud drive
+  downloads a file it has not synced on the first read of any byte, 26-45 s per 3.7-GB scan on Box
+  Drive, and a read that slow is explained in the console. `reports/volume_size.pdf`
+  (`scripts/make_volume_size_report.py`).
 
 ## [0.9.0] - 2026-09-21
 

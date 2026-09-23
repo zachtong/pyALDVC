@@ -77,6 +77,15 @@ class RunPanel(QWidget):
         if len(entries) < 2:
             self._state.log(self.tr("At least two volumes are needed."), "warning")
             return
+        mismatches = self._state.shape_mismatches()
+        if mismatches:  # sizes still being read are checked again by the provider, before the first frame
+            self._state.log(
+                self.tr("Cannot run: {n} volume(s) differ in size from the reference {name} ({size}): {files}").format(
+                    **self._state.mismatch_fields(mismatches)
+                ),
+                "error",
+            )
+            return
         shape = self._state.volume_shape()
         if shape is None:
             self._state.log(self.tr("Cannot load the volumes: {error}").format(error=entries[0].name), "error")

@@ -298,6 +298,7 @@ def apply_session(data: SessionData, state: AppState, path: str | Path | None = 
     state.results_changed.emit()
     state.display_changed.emit()
     state.output_dir_changed.emit(str(state.output_dir))
+    state.start_shape_check()  # the files may have changed since the session was saved
     state.mask_changed.emit()
     if data.results_path:
         if Path(data.results_path).exists():

@@ -4,6 +4,10 @@ A table (frame, name, shape, region) like pyALDIC's image list: the reference fr
 the region of interest of the analysis, a mask on a deformed frame only excludes its own voxels.
 Files and folders can be dropped on the panel; rows can be reordered; a context menu offers the
 per-frame actions.
+
+The Shape column shows every volume's size as soon as it is added, read from the file header off the UI
+thread. A volume whose size is not the reference's is marked, the user is told at once, and the run refuses
+to start: it used to fail only when it reached that frame.
 """
 
 from __future__ import annotations
@@ -11,8 +15,8 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -21,6 +25,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMenu,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -28,14 +33,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..app_state import AppState, lexical_key, natural_key
+from ..app_state import AppState, lexical_key, natural_key, size_text
 from ..mask_editor import mask_coverage as _coverage
+from ..theme import COLORS
+from ..widgets import headless
 
 VOLUME_FILTER = "Volumes (*.tif *.tiff *.mat *.npy *.npz *.h5 *.hdf5 *.nii *.nii.gz *.nrrd);;All files (*)"
 COLUMNS = ("thumb", "index", "name", "shape", "region")
 THUMB_SIZE = 44  # px, middle XY slice of a loaded volume
 SETTINGS_ORG, SETTINGS_APP = "pyALDVC", "gui"
 NATURAL_SORT_KEY = "ui/natural_sort"
+FLAG = "\u26a0"  # warning sign in front of a size that is not the reference's
+PENDING = "\u2026"  # the size is being read
 
 __all__ = ["VolumePanel", "natural_key", "lexical_key", "select_single_type", "thumbnail_pixmap"]
 
@@ -124,6 +133,11 @@ class VolumePanel(QWidget):
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self._list.verticalHeader().setDefaultSectionSize(THUMB_SIZE + 6)
         self._thumbs: dict[int, QPixmap] = {}
+        # sizes arrive one file at a time from the reading thread; one refresh serves all that are queued
+        self._size_refresh = QTimer(self)
+        self._size_refresh.setSingleShot(True)
+        self._size_refresh.setInterval(0)
+        self._size_refresh.timeout.connect(self.refresh)
         header.setHighlightSections(False)
         self._btn_add = QPushButton()
         self._btn_folder = QPushButton()
@@ -180,6 +194,8 @@ class VolumePanel(QWidget):
         self._list.customContextMenuRequested.connect(self._on_context_menu)
         self._state.volumes_changed.connect(self.refresh)
         self._state.mask_changed.connect(self.refresh)
+        self._state.shapes_changed.connect(self._size_refresh.start)
+        self._state.shape_check_finished.connect(self._report_sizes)
         self._state.current_frame_changed.connect(self._select_row)
         self.retranslate_ui()
         self.refresh()
@@ -290,8 +306,15 @@ class VolumePanel(QWidget):
         if row < 0:
             return
         path, _ = QFileDialog.getOpenFileName(self, self.tr("Mask volume (True = material)"), "", VOLUME_FILTER)
-        if path:
-            self._state.set_mask(row, path=path)
+        if not path:
+            return
+        problem = self._state.mask_size_problem(row, path)
+        if problem:
+            self._state.log(problem, "error")
+            if not headless():
+                QMessageBox.warning(self, self.tr("Mask not attached"), problem)
+            return
+        self._state.set_mask(row, path=path)
 
     def _on_remove(self) -> None:
         row = self._list.currentRow()
@@ -352,18 +375,35 @@ class VolumePanel(QWidget):
             return self.tr("ROI {pct:.0f}%").format(pct=100.0 * _coverage(mask)) if mask is not None else self.tr("ROI")
         return self.tr("own mask") if has_mask else "-"
 
+    def _size_cell(self, entry, differs: bool, ref) -> tuple[str, str]:
+        """Text and tooltip of the Shape column."""
+        shape = entry.shape
+        if shape is None:
+            if entry.shape_pending:
+                return PENDING, self.tr("Reading the size from the file header...")
+            return "?", self.tr("The size is known once the volume is read")
+        if differs:
+            return f"{FLAG} {size_text(shape)}", self.tr(
+                "Differs from the reference volume ({size} voxels, x \u00d7 y \u00d7 z)"
+            ).format(size=size_text(ref))
+        return size_text(shape), self.tr("Size in voxels (x \u00d7 y \u00d7 z)")
+
     def refresh(self) -> None:
+        differs = {i for i, _shape in self._state.shape_mismatches()}
+        ref = self._state.reference_shape()
         self._list.blockSignals(True)
         self._list.setRowCount(len(self._state.volumes))
         for i, entry in enumerate(self._state.volumes):
             name = Path(entry.path).name if entry.path else entry.name
-            shape = f"{tuple(entry.array.shape)}" if entry.array is not None else ""
-            cells = ["", str(i), name, shape, self._region_text(i, entry)]
+            size, size_tip = self._size_cell(entry, i in differs, ref)
+            cells = ["", str(i), name, size, self._region_text(i, entry)]
             for c, text in enumerate(cells):
                 item = QTableWidgetItem(text)
-                item.setToolTip(entry.path or self.tr("in-memory array"))
+                item.setToolTip(size_tip if c == 3 else (entry.path or self.tr("in-memory array")))
                 if c in (1, 3, 4):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if i in differs and c in (2, 3):
+                    item.setForeground(QColor(COLORS.DANGER))
                 self._list.setItem(i, c, item)
             self._list.setCellWidget(i, 0, self._thumbnail_label(entry))
         self._list.blockSignals(False)
@@ -397,12 +437,45 @@ class VolumePanel(QWidget):
         parts = [self.tr("{n} frames").format(n=n)]
         if 0 <= row < n:
             entry = self._state.volumes[row]
+            text = Path(entry.path).name if entry.path else entry.name
+            if entry.shape is not None:
+                text += f": {size_text(entry.shape)}"
             if entry.array is not None:
-                a = entry.array
-                parts.append(f"{Path(entry.path).name if entry.path else entry.name}: {tuple(a.shape)} {a.dtype}")
-            elif entry.path:
-                parts.append(Path(entry.path).name)
+                text += f" {entry.array.dtype}"
+            parts.append(text)
+        differ = len(self._state.shape_mismatches())
+        if differ:
+            parts.append(FLAG + " " + self.tr("{n} volume(s) differ in size from the reference").format(n=differ))
         self._info.setText("   ".join(parts))
+
+    def _report_sizes(self, uids: list[str]) -> None:
+        """Tell the user, once for each group of volumes added, which of them do not have the reference's size."""
+        volumes = self._state.volumes
+        mismatches = self._state.shape_mismatches()
+        if not mismatches:
+            return
+        batch = set(uids)
+        if volumes[0].uid not in batch:  # a new reference concerns every volume; otherwise only the ones just added
+            mismatches = [(i, shape) for i, shape in mismatches if volumes[i].uid in batch]
+        if not mismatches:
+            return
+        self._state.log(
+            self.tr("{n} volume(s) differ in size from the reference {name} ({size}): {files}").format(
+                **self._state.mismatch_fields(mismatches)
+            ),
+            "error",
+        )
+        if headless():
+            return
+        QMessageBox.warning(
+            self,
+            self.tr("Volumes of different sizes"),
+            self.tr(
+                "Every volume must have the size of the reference volume (frame 0, {name}): {size} voxels "
+                "(x \u00d7 y \u00d7 z).\n\nThese volumes differ:\n{files}\n\nRemove them from the list, or replace "
+                "them with volumes of the reference size, before running."
+            ).format(**self._state.mismatch_fields(mismatches, sep="\n")),
+        )
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
         super().resizeEvent(event)
@@ -440,6 +513,7 @@ class VolumePanel(QWidget):
         self._btn_up.setToolTip(self.tr("Move the frame up (frame 0 is the reference)"))
         self._btn_down.setToolTip(self.tr("Move the frame down"))
         self._list.setHorizontalHeaderLabels(["", self.tr("#"), self.tr("Volume"), self.tr("Shape"), self.tr("ROI")])
+        self._list.horizontalHeaderItem(3).setToolTip(self.tr("Size in voxels (x \u00d7 y \u00d7 z)"))
         self._placeholder.setText(self.tr("Drop volume files or a folder here\n(TIFF, npy, npz, mat)"))
         self._update_roi_hint()
         self.refresh()
