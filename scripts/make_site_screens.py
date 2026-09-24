@@ -10,6 +10,9 @@ region of interest with the Rectangle tool, runs the analysis from the Run butto
     app-strain.jpg      post-processing window, Strain tab, after computing the strain
     app-statistics.jpg  post-processing window, Statistics tab: two drawn regions, the Regions page
     app-texture.jpg     texture analysis window on the reference volume (RVE sweep, autocorrelation)
+    app-setup.jpg       main window before the run: region of interest and node-grid preview on the slices;
+                        written to --raw (not to the site) with app-setup.json, the panels' rectangles in
+                        device pixels of the capture, for annotated figures
 
 The website's captures use the hydrogel indentation pair of the DVC Challenge 2.0 dataset (confocal,
 1024 x 1024 x 306 voxels). The region of interest stops at z = 215: above it, next to the contact
@@ -49,7 +52,7 @@ MAIN_SIZE = (2120, 1325)  # logical px (16:10): the Slices tab's control row nee
 POST_SIZE = (1680, 1050)  # the post-processing and texture windows
 LEFT_EXTRA = 50  # px beyond the left column's minimum: room for the longest combo text (tracking mode)
 RIGHT_WIDTH = 360  # px of the right column (run, results, console)
-SHOTS = ("slices", "3d", "strain", "statistics", "texture")
+SHOTS = ("setup", "slices", "3d", "strain", "statistics", "texture")
 # the 3-D view: the deformed lattice, opaque (a translucent lattice blends the colours of its inside into its
 # faces), with arrows every third node
 VIEW3D = {
@@ -379,6 +382,55 @@ def dimple(res) -> tuple[float, float, int]:
 
 
 # --------------------------------------------------------------------------- scenes
+SETUP_PANELS = {  # attribute paths on the main window whose rectangles app-setup.json records
+    "volumes": "volume_panel",
+    "parameters": "param_panel",
+    "left_column": "_left_column",
+    "viewer": "center_tabs",
+    "right_column": "_right_column",
+    "run": "run_panel",
+    "results": "results_panel",
+    "console": "console",
+    "roi_tools": "viewer.mask_tools",
+    "grid_toggle": "viewer.show_mesh",
+    "post_processing": "results_panel._analysis_group",
+}
+
+
+def panel_rects(window, scale: float) -> dict:
+    """Rectangles [x, y, w, h] of SETUP_PANELS in device pixels of a grab of ``window``."""
+    from PySide6.QtCore import QPoint
+
+    rects = {}
+    for name, path in SETUP_PANELS.items():
+        widget = window
+        for attr in path.split("."):
+            widget = getattr(widget, attr, None)
+            if widget is None:
+                break
+        if widget is None or not widget.isVisible():
+            continue
+        top_left = widget.mapTo(window, QPoint(0, 0))
+        rects[name] = [round(v * scale) for v in (top_left.x(), top_left.y(), widget.width(), widget.height())]
+    return rects
+
+
+def shot_setup(window, shoot, scale: float) -> None:
+    """Before the run: the reference volume on the Slices tab, the region of interest and the node grid the
+    parameters would place (the preview), as a user sees them just before pressing Run."""
+    window.viewer.show_mesh.setChecked(True)
+    window.param_panel.sections["units"].set_expanded(False)  # voxel units: nothing to read there
+    window.center_tabs.setCurrentIndex(0)
+    arrange(window)
+    work_around_layout_bugs(window)
+    tidy_console(window)
+    path = shoot(window, "app-setup" + shoot.suffix)
+    rects = panel_rects(window, scale)
+    target = path.with_suffix(".json")
+    target.write_text(json.dumps({"scale": scale, "panels": rects}, indent=1), encoding="utf-8")
+    print(f"  {target.name}: {len(rects)} panel rectangles")
+
+
 def arrange(window) -> None:
     """Column widths: the left one a little wider than its minimum (the longest combo text fits), the right one
     fixed, the view in the middle takes the rest (the splitter keeps the view at its own minimum)."""
@@ -597,6 +649,11 @@ def main(argv=None) -> int:
     draw_roi(window, ref.shape, args.margin, depth)
     set_parameters(window, args)
 
+    shoot = Shooter(out, args.width, args.max_kb, raw, args.suffix)
+    if "setup" in wanted:  # before any result exists; a figure source, so it goes to --raw, not the site
+        folder = raw if raw is not None else out
+        shot_setup(window, Shooter(folder, args.width, args.max_kb, raw, args.suffix), args.scale)
+
     cache = Path(args.result) if args.result else None
     if cache is not None and cache.is_file():
         with cache.open("rb") as fh:
@@ -619,7 +676,6 @@ def main(argv=None) -> int:
     print(f"indentation centre x {x:.0f}, y {y:.0f}; slices at z {z}")
     clim = (float(np.floor(info["w_p0.5"])), float(np.ceil(max(info["w_p99.5"], 0.5))))
 
-    shoot = Shooter(out, args.width, args.max_kb, raw, args.suffix)
     if "slices" in wanted:
         shot_slices(window, (x, y, z), clim, shoot)
     if "3d" in wanted:

@@ -46,7 +46,7 @@
     "codeRepository": "https://github.com/zachtong/pyALDVC",
     "programmingLanguage": "Python",
     "license": "https://opensource.org/licenses/BSD-3-Clause",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "identifier": "https://doi.org/10.5281/zenodo.22883767",
     "author": [
       {"@type": "Person", "name": "Zixiang Tong"},
@@ -108,7 +108,7 @@
         <code id="install-line">pip install al-dvc</code>
         <button class="copy-btn" type="button" data-copy-target="#install-line">Copy</button>
       </div>
-      <p class="fine-print"><span class="fp"><span>Version 1.0.0</span> <span>BSD 3-Clause</span> <span>tested on Python 3.10–3.12</span> <span>portable Windows bundle</span></span></p>
+      <p class="fine-print"><span class="fp"><span>Version 1.0.1</span> <span>BSD 3-Clause</span> <span>tested on Python 3.10–3.12</span> <span>portable Windows bundle</span></span></p>
     </div>
 
     <figure class="hero-media">
@@ -151,7 +151,7 @@
       </div>
       <div class="stat">
         <dt class="stat-value">14<span class="unit">GB</span></dt>
-        <dd>peak volume memory of a masked 1024³ run (was 53&#8239;GB)</dd>
+        <dd>volume memory of a masked 1024³ pair, from the memory model (was 53&#8239;GB)</dd>
       </div>
       <div class="stat">
         <dt class="stat-value">1.2<span class="unit">s</span></dt>
@@ -387,7 +387,7 @@
       </li>
       <li>
         <h3>Large volumes</h3>
-        <p>Local steps over sub-boxes, streamed frames and gradients computed on the fly let a masked 1024³ run peak at 14&#8239;GB of volume memory.</p>
+        <p>Streamed frames, gradients computed on the fly and local steps over sub-boxes keep the volume memory of a masked 1024³ pair at about 14&#8239;GB (memory model).</p>
       </li>
       <li>
         <h3>Texture analysis</h3>
@@ -845,8 +845,8 @@
           </div>
         </div>
         <div class="bars">
-          <p class="bars-k">Peak volume memory, masked 1024³ run</p>
-          <p class="bars-sub">local steps over sub-boxes, gradients on the fly</p>
+          <p class="bars-k">Volume memory, masked 1024³ pair</p>
+          <p class="bars-sub">memory model; gradients computed on the fly</p>
           <div class="bar" style="--w: 26.4%">
             <div class="bar-row"><span class="bar-name">Now</span><span class="bar-val">14&#8239;GB</span></div>
             <div class="bar-track"><div class="bar-fill"></div></div>

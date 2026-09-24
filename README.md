@@ -42,7 +42,7 @@
 </p>
 
 <p align="center">
-  <a href="https://zachtong.github.io/pyALDVC/#accuracy"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/readme/stats.png" alt="Key numbers: 34 s on one NVIDIA RTX 5090 for a 1024 × 1024 × 306 confocal pair with 79,200 nodes (5.0 min on a 24-core CPU); 0.001 to 0.006 voxel displacement error on synthetic translation, rotation and 2 % strain; 0.005 to 0.020 voxel median difference from the MATLAB ALDVC code on the same scan; 14 GB peak volume memory of a masked 1024³ run (was 53 GB); texture analysis of a 256³ volume in 1.2 s; 7 interface languages" width="800"></a>
+  <a href="https://zachtong.github.io/pyALDVC/#accuracy"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/readme/stats.png" alt="Key numbers: 34 s on one NVIDIA RTX 5090 for a 1024 × 1024 × 306 confocal pair with 79,200 nodes (5.0 min on a 24-core CPU); 0.001 to 0.006 voxel displacement error on synthetic translation, rotation and 2 % strain; 0.005 to 0.020 voxel median difference from the MATLAB ALDVC code on the same scan; about 14 GB of volume memory for a masked 1024³ pair, from the memory model (was 53 GB); texture analysis of a 256³ volume in 1.2 s; 7 interface languages" width="800"></a>
 </p>
 
 **pyALDVC** measures full-field displacement and strain inside a material from a sequence of 3-D scans. It is the
@@ -96,7 +96,7 @@ Foam data courtesy of NIST (Landauer et al., *Sci. Data* 10, 356, 2023).</sub>
   </tr>
   <tr>
     <td valign="top"><b>NVIDIA GPU</b><br><code>pip install "al-dvc[gpu]"</code> runs the local solvers as CUDA kernels, typically within 10<sup>−5</sup> voxel of the CPU.</td>
-    <td valign="top"><b>Large volumes</b><br>Sub-box local steps, streamed frames and on-the-fly gradients: a masked 1024³ run peaks at 14&nbsp;GB.</td>
+    <td valign="top"><b>Large volumes</b><br>Streamed frames, on-the-fly gradients and sub-box local steps: a masked 1024³ pair needs about 14&nbsp;GB (memory model).</td>
   </tr>
   <tr>
     <td valign="top"><b>Texture analysis</b><br>Measures the correlation length of your scan and suggests the subset size and step.</td>
@@ -144,12 +144,12 @@ rotation reads as false strain. A closed-form rigid fit removes it and reveals t
 | Test | Result |
 |---|---|
 | Synthetic rigid translation or 2 % strain | 0.003–0.006 voxel error |
-| Synthetic 5° rotation, up to 8 voxels of motion | 0.001 voxel error |
+| Synthetic 5° rotation about the z axis | 0.001 voxel error |
 | Synthetic translation (12.3, −9.6, 7.4) + 1 % strain | 0.004–0.005 voxel error |
 | Synthetic 2 % strain with noise (SNR 6) | 0.011–0.012 voxel error |
 | Confocal pair, 1024 × 1024 × 306, 79,200 nodes | 34 s on one RTX 5090 (5.0 min on a 24-core CPU) |
 | Same pair, against MATLAB ALDVC (u, v, w) | median difference 0.005 / 0.006 / 0.020 voxel |
-| Masked 1024³ run | 14 GB peak volume memory (was 53 GB) |
+| Masked 1024³ pair | about 14 GB of volume memory, from the memory model (was 53 GB) |
 
 <sub>Synthetic rows: RMS error of each displacement component at the interior nodes, subset 16, step 8 voxels, default
 settings. Confocal rows: subset 32, step 8 voxels, with the settings of the MATLAB example run. Tested on Python 3.10,
@@ -186,8 +186,8 @@ CUDA Toolkit. The last command opens the application, and `al-dvc --self-test` c
 `nibabel`, `pynrrd` and `pydicom` read NIfTI, NRRD and DICOM; `imageio` with `imageio-ffmpeg` records MP4.
 
 **No Python?** Every [release](https://github.com/zachtong/pyALDVC/releases/latest) ships a portable Windows bundle
-(CPU only): unzip it and double-click `pyALDVC.exe`. Then read the
-[user guide](https://github.com/zachtong/pyALDVC/blob/main/docs/user_guide.md).
+(CPU only; for NVIDIA GPU acceleration, install with pip as above): unzip it and double-click `pyALDVC.exe`. Then
+read the [user guide](https://github.com/zachtong/pyALDVC/blob/main/docs/user_guide.md).
 
 ## Citation
 
