@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +47,7 @@ class SessionData:
     results_path: str | None = None
     version: str = __version__
     analysis: dict[str, Any] = field(default_factory=dict)  # {"regions", "correction", "settings"}
+    notes: list[str] = field(default_factory=list)  # what loading changed (older parameter defaults)
 
 
 def _relative(path: str | None, base: Path) -> str | None:
@@ -95,6 +96,23 @@ def build_session(state: AppState, results_path: str | None = None) -> SessionDa
             "settings": dict(state.analysis_settings),
         },
     )
+
+
+# Revision of the parameter defaults a session was saved with, written into every session. Sessions without it
+# (1) come from the time when the noise-corrected IC-GN steps were on by default and could not be switched in the
+# application: their "true" is the old default, not a choice.
+PARA_REVISION = 2
+NOISE_HESSIAN_NOTE = (
+    "This session was saved when the noise-corrected steps were on by default; they are off now. Tick Advanced > "
+    "Noise-corrected steps to reproduce the earlier results (and to resume checkpoints written then)."
+)
+
+
+def _migrate_para(para: DVCPara, revision: int) -> tuple[DVCPara, list[str]]:
+    """``para`` as the current defaults would read it, and a note for every change made."""
+    if para.icgn_noise_hessian and revision < 2:
+        return replace(para, icgn_noise_hessian=False), [NOISE_HESSIAN_NOTE]
+    return para, []
 
 
 def _analysis_from_doc(doc, p: Path) -> dict[str, Any]:
@@ -157,6 +175,7 @@ def save_session(state: AppState, path: str | Path, results_path: str | None = N
     doc = {
         "format": FORMAT_VERSION,
         "pyaldvc": data.version,
+        "para_revision": PARA_REVISION,
         "volumes": [
             {
                 "path": _relative(v["path"], base),
@@ -240,6 +259,11 @@ def load_session(path: str | Path) -> SessionData:
     if results_path is not None and not isinstance(results_path, str):
         raise SessionError(f"invalid results path in {p}")
     analysis = _analysis_from_doc(doc, p)
+    try:
+        revision = int(doc.get("para_revision", 1))
+    except (TypeError, ValueError) as exc:
+        raise SessionError(f"invalid parameter revision in {p}") from exc
+    para, notes = _migrate_para(para, revision)
     return SessionData(
         volumes=volumes,
         para=para,
@@ -248,6 +272,7 @@ def load_session(path: str | Path) -> SessionData:
         results_path=_absolute(results_path, base),
         version=str(doc.get("pyaldvc", "")),
         analysis=analysis,
+        notes=notes,
     )
 
 
@@ -342,6 +367,8 @@ def apply_session(data: SessionData, state: AppState, path: str | Path | None = 
     state.output_dir_changed.emit(str(state.output_dir))
     state.start_shape_check()  # the files may have changed since the session was saved
     state.mask_changed.emit()
+    for note in data.notes:
+        state.log(note, "warning")
     if data.results_path:
         if Path(data.results_path).exists():
             state.log(

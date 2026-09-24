@@ -342,3 +342,46 @@ def test_the_tile_control_reaches_the_parameters(qapp, small_pair):
     _pump()
     assert panel.tile_local.value() == 0 and "256" not in panel._memory.text()
     window.close()
+
+
+def test_the_noise_corrected_steps_are_an_advanced_option_off_by_default(qapp, tmp_path):
+    """Before 0.10.1 they were on and could not be switched in the application; they are an advanced option now,
+    and a session of that time holds the old default, not a choice, so it opens with them off."""
+    import json
+
+    from al_dvc.core.config import dvcpara_default, para_to_dict
+    from al_dvc.gui.app import MainWindow
+
+    w = MainWindow()
+    try:
+        panel = w.param_panel
+        assert w.state.para.icgn_noise_hessian is False and not panel.noise_hessian.isChecked()
+        assert not panel.sections["advanced"].expanded  # folded away with the other advanced settings
+        assert "comparable noise" in panel.noise_hessian.toolTip()
+        panel.noise_hessian.setChecked(True)
+        assert w.state.para.icgn_noise_hessian is True
+        panel.noise_hessian.setChecked(False)
+        assert w.state.para.icgn_noise_hessian is False
+    finally:
+        w.state.dirty = False
+        w.close()
+    # a session of the old defaults (no parameter revision) holds the old default: it opens with the option off
+    # and says so; one saved now keeps what the user chose, whatever the version number says (review)
+    doc = {"format": 2, "pyaldvc": "0.10.0", "volumes": [], "para": para_to_dict(dvcpara_default(icgn_noise_hessian=True))}
+    old = tmp_path / "old.aldvc"
+    old.write_text(json.dumps(doc), encoding="utf-8")
+    data = load_session(old)
+    assert data.para.icgn_noise_hessian is False and "Noise-corrected steps" in data.notes[0]
+    doc["para_revision"] = 2
+    old.write_text(json.dumps(doc), encoding="utf-8")
+    assert load_session(old).para.icgn_noise_hessian is True and load_session(old).notes == []
+    from al_dvc.gui.app_state import AppState
+
+    vol = tmp_path / "v.npy"
+    np.save(vol, np.zeros((8, 8, 8), dtype=np.uint8))
+    state = AppState()
+    state.add_volume_paths([str(vol), str(vol)])
+    state.set_params(icgn_noise_hessian=True)
+    saved = save_session(state, tmp_path / "chosen.aldvc")
+    assert json.loads(saved.read_text(encoding="utf-8"))["para_revision"] == 2
+    assert load_session(saved).para.icgn_noise_hessian is True  # a deliberate choice survives save and reopen

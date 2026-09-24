@@ -185,3 +185,22 @@ def test_the_batch_streams_the_frames_instead_of_holding_the_sequence(sessions, 
     assert provider.has_masks  # the drawn mask reached the run through the provider
     assert len(provider._cache) <= provider._cache_size  # never the whole sequence
     assert provider._cache_size == 2
+
+
+def test_a_batch_says_how_to_start_over_after_a_checkpoint_mismatch(tmp_path, monkeypatch):
+    """Checkpoints written with other parameters (e.g. before the noise-corrected steps became an option) make the
+    job fail; the message says how to get going again (review)."""
+    from al_dvc.core.checkpoint import CheckpointMismatch
+    from al_dvc.gui import batch
+
+    def boom(*_a, **_k):
+        raise CheckpointMismatch("checkpoint directory x was written by a different run (para.icgn_noise_hessian)")
+
+    session = tmp_path / "s.aldvc"
+    session.write_text("{}", encoding="utf-8")
+    stub = type("D", (), {"notes": [], "output_dir": str(tmp_path), "para": None})
+    monkeypatch.setattr(batch, "load_session", lambda _p: stub())
+    monkeypatch.setattr(batch, "session_provider", lambda _d: None)
+    monkeypatch.setattr(batch, "run_aldvc", boom)
+    job = batch.run_session_file(session)
+    assert job.status == "failed" and "start over" in job.message and "icgn_noise_hessian" in job.message

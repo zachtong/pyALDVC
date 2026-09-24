@@ -60,6 +60,7 @@ def _case(n, ws, st, noise=0.0, interp="cubic", stride=1, gradient_mode="stored"
         subset_stride=stride,
         gradient_mode=gradient_mode,
         backend="numba",
+        icgn_noise_hessian=noise > 0,  # the noisy case shows the parity of the noise-corrected steps (an option)
     )
     f, g = normalize_volume(ref), normalize_volume(dfm)
     rmask = dmask = None

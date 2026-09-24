@@ -204,9 +204,18 @@ def run_session_file(
         else:
             job.status = "done"
             job.message = f"{result.n_frames} frame(s), {job.n_nodes} nodes"
+        if data.notes:
+            job.message += " -- " + " ".join(data.notes)
     except Exception as exc:  # recorded per job; the batch goes on
+        from al_dvc.core.checkpoint import CheckpointMismatch
+
         job.status = "failed"
         job.message = f"{type(exc).__name__}: {exc}"
+        if isinstance(exc, CheckpointMismatch):
+            job.message += (
+                " -- the checkpoints were written with other parameters: delete that folder, or run the batch "
+                "without checkpoints, to start over"
+            )
         job.traceback = traceback.format_exc()
     job.elapsed = time.perf_counter() - t0
     return job

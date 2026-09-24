@@ -78,7 +78,10 @@ class DVCPara:
     icgn_max_iter: int = 100
     interp_method: Literal["cubic", "bspline", "linear"] = "cubic"
     subset_stride: int = 1  # sample every k-th subset voxel along each axis (k^3 fewer voxels per iteration)
-    icgn_noise_hessian: bool = True  # Gauss-Newton steps with the noise-corrected Hessian (fewer iterations on noisy data)
+    # Gauss-Newton steps with the noise-corrected Hessian: about half the iterations on noisy scans, same answer.
+    # It assumes both scans carry comparable noise; with a clearly cleaner reference (an averaged scan, synthetic
+    # noise added to a copy of it) it over-corrects and many subsets stall. Not in the MATLAB ALDVC: off by default.
+    icgn_noise_hessian: bool = False
     icgn_predictive_stop: bool = (
         True  # stop one iteration early when the contracting steps predict the next one below icgn_dp_tol
     )

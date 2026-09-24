@@ -152,6 +152,7 @@ class ParamPanel(QWidget):
         self.hessian_cond = dspin(1.0, 1e15, 0)
         self.min_valid_ratio = dspin(0.05, 1.0, 2)
         self.subset_split = QCheckBox()
+        self.noise_hessian = QCheckBox()  # an acceleration with a condition (see its tooltip): off by default
         self.checkpoint = QCheckBox()
         self.checkpoint.setChecked(bool(state.write_checkpoints))
         advanced = self._add_section(
@@ -174,6 +175,7 @@ class ParamPanel(QWidget):
                 ("hessian_cond", self.hessian_cond),
                 ("min_valid_ratio", self.min_valid_ratio),
                 ("subset_split", self.subset_split),
+                ("noise_hessian", self.noise_hessian),
             ],
             expanded=False,
         )
@@ -246,6 +248,7 @@ class ParamPanel(QWidget):
         self.hessian_cond.valueChanged.connect(lambda v: self._set("hessian_cond_max", float(v)))
         self.min_valid_ratio.valueChanged.connect(lambda v: self._set("min_valid_ratio", float(v)))
         self.subset_split.toggled.connect(lambda v: self._set("subset_split", bool(v)))
+        self.noise_hessian.toggled.connect(lambda v: self._set("icgn_noise_hessian", bool(v)))
         self.checkpoint.toggled.connect(lambda v: setattr(self._state, "write_checkpoints", bool(v)))
 
     def _set(self, name: str, value: Any) -> None:
@@ -345,6 +348,7 @@ class ParamPanel(QWidget):
             self.hessian_cond.setValue(float(p.hessian_cond_max))
             self.min_valid_ratio.setValue(float(p.min_valid_ratio))
             self.subset_split.setChecked(bool(getattr(p, "subset_split", False)))
+            self.noise_hessian.setChecked(bool(getattr(p, "icgn_noise_hessian", False)))
             self.checkpoint.setChecked(bool(self._state.write_checkpoints))
         finally:
             self._updating = False
@@ -423,6 +427,7 @@ class ParamPanel(QWidget):
             "init_outlier": self.tr("Initial-guess outlier threshold"),
             "hessian_cond": self.tr("Max Hessian condition"),
             "min_valid_ratio": self.tr("Min valid subset fraction"),
+            "noise_hessian": self.tr("Noise-corrected steps"),
             "subset_split": self.tr("Split at boundaries"),
         }
         for key, label in self.labels.items():
@@ -496,6 +501,15 @@ class ParamPanel(QWidget):
                 "is split. Off: the whole in-mask subset is used and the grid stays connected."
             ),
         }
+        tips["noise_hessian"] = self.tr(
+            "Faster subset iterations on noisy scans: about half the Gauss-Newton iterations, the same converged "
+            "answer. It assumes both scans carry comparable noise, e.g. repeated scans with the same settings. Leave "
+            "it off when the reference is clearly cleaner than the deformed scans -- an averaged or longer-exposed "
+            "reference scan, or synthetic noise added to a copy of the reference (the noise-floor test of the DVC "
+            "Challenge): many subsets then stop without converging (about half with AL-DVC, most with Local DVC alone). "
+            "Not part of the MATLAB ALDVC; off by default."
+        )
+        self.noise_hessian.setToolTip(tips["noise_hessian"])
         for key, tip in tips.items():
             self.labels[key].setToolTip(tip)
         for combo, group in self.combos.items():

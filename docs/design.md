@@ -244,6 +244,27 @@ gives the same agreement with the MATLAB result as no correction and 6.8 /
 so the solution is the same; `icgn_noise_hessian=False` restores the plain
 steps (the 3-DOF ADMM kernel corrects its translation block the same way).
 
+Since 0.10.1 the correction is **off by default** and sits in the application's
+advanced settings. The MATLAB ALDVC has no such step, and the correction rests
+on an assumption the data do not always meet: `s^2` is taken from the residual,
+`1 - ZNCC`, which measures the noise of both volumes together and is split
+evenly between them. With a clearly cleaner reference (an averaged scan, or
+synthetic noise added to a copy of it -- the DVC Challenge noise-floor protocol)
+the reference Hessian is barely inflated, the correction removes up to half of
+its diagonal anyway, the steps overshoot by up to 2x and oscillate, and the
+patience test stops the node as stalled. Measured on a static 96^3 speckle pair
+with 2 % Gaussian noise in the deformed volume only (subset 16, step 8, 729
+nodes): 52 % of the nodes converged with AL-DVC and 10 % with the local solver
+alone when the correction was on, 100 % without it; with the same noise in both
+volumes every setting converged. A node that does not converge is filled from
+its converged neighbours (local pass) or takes the global estimate (ADMM
+passes); in a static test that smooth fill is close to zero, so the noise floor
+measured that way looked better than it was. `U_std` uses the same equal-noise
+model and overestimates the error of a clean-reference pair whichever setting is
+used: about 5-7x at the median, more than 25x at the 90th percentile, and up to
+tens of voxels at a few nodes (same test; with the noise in both volumes it
+tracks the error).
+
 ## 4. Coordinate and layout contracts
 
 These are the rules every module follows. Violations are bugs.
@@ -481,11 +502,20 @@ Other findings from the same run:
   89 s with the noise-corrected Hessian and the look-ahead stop (4.4 / 4.1 /
   3.9 iterations per pass instead of 7.3 / 6.9 / 6.5); on the RTX 5090 with the
   CUDA backend 23 s (initial guess 9.9 s, precompute 2.7 s, local IC-GN 2.6 s,
-  three 3-DOF passes 6.2 s) with the same node-wise agreement
-  (initial guess 58 s, 12-DOF pass 218 s, three 3-DOF passes 471 s, global
-  steps < 1 s) plus 3.9 min for the equivalence check on 18,108 sampled
-  nodes. Before the stall rule and the block-cyclic schedule the 12-DOF pass
-  alone took 688 s.
+  three 3-DOF passes 6.2 s) with the same node-wise agreement. Those runs had
+  the noise-corrected steps on, the default then. Measured again on 2026-09-23
+  (automatic beta, `scripts/compare_matlab.py --beta auto`): with the steps off,
+  the new default, 300 s on the CPU and 33.9 s on the GPU on an idle machine
+  (309 s and 34.0 s under load); with them on, 240 s and 32.5 s (under load).
+  With them off the first pass converged 72,069 nodes instead of 69,464
+  (61,724 instead of 59,327 converged in both codes) and the interior agreement
+  with MATLAB was 0.0048 / 0.0055 / 0.0202 voxel instead of 0.0050 / 0.0057 /
+  0.0206. Even with the steps on, these runs are slower than the 0.3.x figures
+  above (not investigated yet). The first cross-validation, before
+  the 0.3.2 work, took 12.5 min (initial guess 58 s, 12-DOF pass 218 s, three
+  3-DOF passes 471 s, global steps < 1 s) plus 3.9 min for the equivalence
+  check on 18,108 sampled nodes. Before the stall rule and the block-cyclic
+  schedule the 12-DOF pass alone took 688 s.
 
 The second MATLAB result file, `results_ws30_st30.mat` (`eyes_0/1`, OCT
 volumes of an optic nerve head with a large, non-affine deformation; subset

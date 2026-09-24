@@ -182,7 +182,16 @@ def _fmt_vec(v, fmt="{:.4f}") -> str:
 
 
 # --------------------------------------------------------------------------- pyALDVC run
-def make_para(res: MatlabResults, voi: VOIRange, beta, n_threads: int, verbose: bool, init_coarse: int = 1):
+def make_para(
+    res: MatlabResults,
+    voi: VOIRange,
+    beta,
+    n_threads: int,
+    verbose: bool,
+    init_coarse: int = 1,
+    backend: str = "auto",
+    noise_hessian: bool = False,
+):
     fr0 = res.frames[0]
     para_m = res.para
     subpb2 = "fd" if str(para_m.get("Subpb2FDOrFEM", "finiteDifference")).lower().startswith("finited") else "fem"
@@ -205,6 +214,8 @@ def make_para(res: MatlabResults, voi: VOIRange, beta, n_threads: int, verbose: 
         n_threads=n_threads,
         verbose=verbose,
         init_coarse_factor=int(init_coarse),
+        backend=backend,
+        icgn_noise_hessian=bool(noise_hessian),
     )
 
 
@@ -810,6 +821,10 @@ def main(argv=None) -> int:
     )
     ap.add_argument("--no-crop", action="store_true", help="keep the full volumes instead of cropping to the VOI")
     ap.add_argument("--threads", type=int, default=0)
+    ap.add_argument("--backend", default="auto", help="compute backend: auto (GPU when present), numba (CPU) or cuda")
+    ap.add_argument(
+        "--noise-hessian", action="store_true", help="icgn_noise_hessian=True: the noise-corrected Gauss-Newton steps"
+    )
     ap.add_argument("--init-coarse", type=int, default=1, help="init_coarse_factor: NCC + IC-GN on every k-th node, interpolated")
     ap.add_argument(
         "--refine-max", type=int, default=REFINE_MAX_NODES, help="nodes refined in the solver-equivalence check (random sample)"
@@ -845,7 +860,7 @@ def main(argv=None) -> int:
     runs = {}
 
     def do_run(key, beta):
-        para = make_para(res_c, voi, beta, args.threads, not args.quiet, args.init_coarse)
+        para = make_para(res_c, voi, beta, args.threads, not args.quiet, args.init_coarse, args.backend, args.noise_hessian)
         t1 = time.perf_counter()
         result = run_aldvc(para, [fc, gc], compute_strain=False, progress_fn=_progress)
         dt = time.perf_counter() - t1

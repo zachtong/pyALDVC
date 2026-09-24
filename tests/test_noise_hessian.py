@@ -5,7 +5,9 @@ Gauss-Newton steps too short on noisy data (linear convergence, ~16 iterations
 per node at SNR ~ 5). Subtracting the expected inflation once the node is in its
 fine-convergence phase keeps the fixed point and shortens the path. Checks:
 Numba == NumPy reference with the correction, fewer iterations and the same
-solution on noisy data, no change at all on clean data, pipeline default on.
+solution on noisy data, no change at all on clean data. The correction assumes
+both volumes carry comparable noise; with a clean reference it over-corrects, so
+it is an option, off by default (the MATLAB ALDVC has no such step).
 """
 
 from __future__ import annotations
@@ -38,7 +40,7 @@ def _case(noise: float):
         rng = np.random.default_rng(5)
         ref = ref + rng.normal(0, noise, ref.shape)
         dfm = dfm + rng.normal(0, noise, dfm.shape)
-    para = dvcpara_default(winsize=24, winstepsize=12, verbose=False)
+    para = dvcpara_default(winsize=24, winstepsize=12, verbose=False, icgn_noise_hessian=True)
     f, g = normalize_volume(ref), normalize_volume(dfm)
     bundle = build_reference_bundle(f, None)
     mesh = mesh_setup(*build_grid_axes(para.voi, SHAPE, para.winsize, para.winstepsize))
@@ -131,11 +133,12 @@ def test_3dof_numba_matches_reference_with_the_correction(noisy):
     assert np.max(np.abs(U[ok] - U0[ok])) < 2e-2
 
 
-def test_pipeline_default_and_switch(noisy):
-    para_on = dvcpara_default(winsize=24, winstepsize=12, search_radius=4, admm_max_iter=2, verbose=False)
-    assert para_on.icgn_noise_hessian is True
+def test_pipeline_default_off_and_the_switch(noisy):
+    para_off = dvcpara_default(winsize=24, winstepsize=12, search_radius=4, admm_max_iter=2, verbose=False)
+    assert para_off.icgn_noise_hessian is False  # an acceleration with a condition, not in the MATLAB ALDVC
+    para_on = dvcpara_default(**{**para_off.__dict__, "icgn_noise_hessian": True})
     res_on = run_aldvc(para_on, [noisy["ref"], noisy["dfm"]])
-    res_off = run_aldvc(dvcpara_default(**{**para_on.__dict__, "icgn_noise_hessian": False}), [noisy["ref"], noisy["dfm"]])
+    res_off = run_aldvc(para_off, [noisy["ref"], noisy["dfm"]])
     fr_on, fr_off = res_on.result_disp[0], res_off.result_disp[0]
     assert np.mean(fr_on.status == STATUS_CONVERGED) > 0.9
     it_on = fr_on.admm.local_info[0].n_iter
@@ -143,3 +146,41 @@ def test_pipeline_default_and_switch(noisy):
     assert it_on.mean() < it_off.mean()
     ok = (fr_on.status == STATUS_CONVERGED) & (fr_off.status == STATUS_CONVERGED)
     assert np.median(np.linalg.norm(fr_on.U[ok] - fr_off.U[ok], axis=1)) < 5e-3
+
+
+def test_a_clean_reference_converges_with_the_default():
+    """Noise in the deformed volume only -- a clean or averaged reference, or the DVC Challenge noise-floor test
+    (noise added to a copy of the reference). The correction takes the residual for noise shared by both volumes
+    and shortens the Hessian of a clean reference: the steps overshoot and most subsets stalled. The default
+    plain steps converge everywhere; the option still stalls many subsets, which is why it is off."""
+    ref = generate_speckle_volume(SHAPE, sigma=2.0, seed=23).astype(np.float64)
+    ref = 255.0 * (ref - ref.min()) / (ref.max() - ref.min())
+    rng = np.random.default_rng(11)
+    dfm = np.clip(ref + rng.normal(0.0, 0.02 * 255.0, ref.shape), 0, 255)  # a static pair, true displacement 0
+    ref = np.clip(ref, 0, 255)
+    base = dict(winsize=16, winstepsize=8, search_radius=4, backend="numba", verbose=False)
+    for global_step in (False, True):  # Local DVC, and AL-DVC with its 3-DOF ADMM passes
+        para = dvcpara_default(**base, use_global_step=global_step)
+        fr = run_aldvc(para, [ref, dfm], compute_strain=False).result_disp[0]
+        on = dvcpara_default(**base, use_global_step=global_step, icgn_noise_hessian=True)
+        fr_on = run_aldvc(on, [ref, dfm], compute_strain=False).result_disp[0]
+        assert np.mean(fr.status == STATUS_CONVERGED) > 0.97, global_step
+        assert np.mean(fr_on.status == STATUS_CONVERGED) < 0.8, global_step
+        assert np.median(np.linalg.norm(fr.U, axis=1)) < 0.06  # the noise floor of a 2 % one-sided noise
+
+
+def test_the_default_is_the_plain_step_in_every_pass(noisy):
+    """Every pass -- the 12-DOF local pass and the 3-DOF ADMM passes -- runs the plain steps by default: the same
+    iterations as an explicit icgn_noise_hessian=False (review: only the first pass was checked)."""
+    base = dict(winsize=24, winstepsize=12, search_radius=4, admm_max_iter=3, backend="numba", verbose=False)
+    a = run_aldvc(dvcpara_default(**base), [noisy["ref"], noisy["dfm"]], compute_strain=False).result_disp[0]
+    b = run_aldvc(
+        dvcpara_default(**base, icgn_noise_hessian=False), [noisy["ref"], noisy["dfm"]], compute_strain=False
+    ).result_disp[0]
+    c = run_aldvc(
+        dvcpara_default(**base, icgn_noise_hessian=True), [noisy["ref"], noisy["dfm"]], compute_strain=False
+    ).result_disp[0]
+    assert len(a.admm.local_info) >= 2
+    for info_a, info_b in zip(a.admm.local_info, b.admm.local_info):
+        np.testing.assert_array_equal(info_a.n_iter, info_b.n_iter)
+    assert any(not np.array_equal(x.n_iter, y.n_iter) for x, y in zip(a.admm.local_info, c.admm.local_info))

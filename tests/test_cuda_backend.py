@@ -31,12 +31,18 @@ def _case(noise=0.0, ref_mask=False, def_mask=False, gradient_mode="stored", int
     ref = generate_speckle_volume(SHAPE, sigma=2.0, seed=37)
     fn = affine_displacement(F_TRUE, T_TRUE, centre)
     dfm = warp_volume_lagrangian(ref, fn)
-    if noise > 0:
+    if noise > 0:  # the noisy case also checks the noise-corrected steps, an option (off by default)
         rng = np.random.default_rng(7)
         ref = ref + rng.normal(0, noise, ref.shape)
         dfm = dfm + rng.normal(0, noise, dfm.shape)
     para = dvcpara_default(
-        winsize=winsize, winstepsize=12, verbose=False, gradient_mode=gradient_mode, interp_method=interp, subset_stride=stride
+        winsize=winsize,
+        winstepsize=12,
+        verbose=False,
+        gradient_mode=gradient_mode,
+        interp_method=interp,
+        subset_stride=stride,
+        icgn_noise_hessian=noise > 0,
     )
     f, g = normalize_volume(ref), normalize_volume(dfm)
     rmask = None

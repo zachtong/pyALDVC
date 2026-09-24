@@ -64,7 +64,7 @@ class LocalContext:
         from .uncertainty import STENCIL_NOISE_GAIN, noise_hessian_pattern
 
         pattern = self.noise_pattern if self.noise_pattern is not None else noise_hessian_pattern(self.half, self.stride)
-        gain = float(STENCIL_NOISE_GAIN) if getattr(para, "icgn_noise_hessian", True) else 0.0
+        gain = float(STENCIL_NOISE_GAIN) if getattr(para, "icgn_noise_hessian", False) else 0.0
         return np.ascontiguousarray(pattern, dtype=np.float64), gain
 
     @property
