@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "al-dvc"
-version = "0.10.0"
+version = "1.0.0"
 description = "AL-DVC: Augmented Lagrangian Digital Volume Correlation (3D) in Python"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,7 +23,7 @@ keywords = [
     "micro-CT",
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: BSD License",
     "Programming Language :: Python :: 3",
@@ -52,9 +52,12 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/zachtong/pyALDVC"
+Homepage = "https://zachtong.github.io/pyALDVC/"
+Documentation = "https://github.com/zachtong/pyALDVC/blob/main/docs/user_guide.md"
 Repository = "https://github.com/zachtong/pyALDVC"
 Issues = "https://github.com/zachtong/pyALDVC/issues"
+Changelog = "https://github.com/zachtong/pyALDVC/blob/main/CHANGELOG.md"
+DOI = "https://doi.org/10.5281/zenodo.22883767"
 
 [project.scripts]
 al-dvc = "al_dvc.cli:main"
