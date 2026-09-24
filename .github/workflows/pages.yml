@@ -1,0 +1,89 @@
+name: Pages
+
+# Publishes the project website in site/ to GitHub Pages:
+#   https://zachtong.github.io/pyALDVC/
+# The site is plain HTML, CSS and JavaScript with its media checked in, so there
+# is no build step: the folder is checked for missing local files and for caption
+# numbers that no longer match site/figures/numbers.json, then uploaded as is.
+#
+# One-time setup, before the first run: Settings -> Pages -> Build and deployment
+# -> Source = "GitHub Actions" (REST: POST /repos/zachtong/pyALDVC/pages with
+# {"build_type": "workflow"}). Without it deploy-pages fails with "Not Found".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "scripts/sync_site_numbers.py"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write        # deploy-pages publishes the artifact
+  id-token: write     # deploy-pages proves the run's identity with OIDC
+
+# One deployment at a time. A newer push queues behind a running deployment
+# instead of cancelling it half-way.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy site/ to GitHub Pages
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            site
+            scripts
+
+      - name: Check that the caption numbers match the figures
+        run: python3 scripts/sync_site_numbers.py --check
+
+      - name: Check that every local link and media file exists
+        shell: python
+        run: |
+          import pathlib, re, sys
+          from urllib.parse import unquote, urlsplit
+          root = pathlib.Path("site").resolve()
+          attr = re.compile(r'''(?:src|href|poster|data-src)\s*=\s*["']([^"']+)["']|srcset\s*=\s*["']([^"']+)["']''', re.I)
+          missing = []
+          for page in root.rglob("*.html"):
+              for m in attr.finditer(page.read_text(encoding="utf-8")):
+                  refs = [m.group(1)] if m.group(1) else [s.split()[0] for s in m.group(2).split(",") if s.strip()]
+                  for ref in refs:
+                      parts = urlsplit(ref)
+                      if parts.scheme or ref.startswith(("#", "//", "mailto:", "data:")) or not parts.path:
+                          continue
+                      if parts.path.startswith("/"):  # the site lives under /pyALDVC/, so /x points at zachtong.github.io/x
+                          missing.append(f"{page.relative_to(root)} -> {ref} (root-absolute path; make it relative)")
+                          continue
+                      target = page.parent / unquote(parts.path)
+                      if target.is_dir():
+                          target = target / "index.html"
+                      if not target.exists():
+                          missing.append(f"{page.relative_to(root)} -> {ref}")
+          big = [f"{p.relative_to(root)} ({p.stat().st_size / 1e6:.1f} MB)" for p in root.rglob("*") if p.is_file() and p.stat().st_size > 25e6]
+          print(f"checked {sum(1 for _ in root.rglob('*.html'))} pages")
+          for line in missing:
+              print(f"::error::missing file: {line}")
+          for line in big:
+              print(f"::warning::large file on the site: {line}")
+          sys.exit(1 if missing else 0)
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5

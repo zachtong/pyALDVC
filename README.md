@@ -1,192 +1,234 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/banner.png" alt="pyALDVC banner" width="100%"/>
+  <a href="https://zachtong.github.io/pyALDVC/"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/readme/banner.png" alt="pyALDVC: augmented Lagrangian digital volume correlation in Python" width="800"></a>
+</p>
+
+<h2 align="center">3-D displacement and strain, <i>inside the material</i></h2>
+
+<p align="center">
+  Open-source digital volume correlation for micro-CT, confocal and other 3-D scans:<br>
+  a desktop application, a command line and a Python library, with optional GPU acceleration.
 </p>
 
 <p align="center">
-  Full-field 3-D displacement and strain from volumetric images (micro-CT, confocal, MRI, OCT).
+  <a href="https://zachtong.github.io/pyALDVC/"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/readme/button-website.png" alt="Visit the website" width="256"></a>
+</p>
+<p align="center">
+  <b>Website: <a href="https://zachtong.github.io/pyALDVC/">zachtong.github.io/pyALDVC</a></b><br>
+  <sub>cases, how it works, accuracy and speed, all in one page</sub>
 </p>
 
 <p align="center">
-  <a href="https://github.com/zachtong/pyALDVC/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/zachtong/pyALDVC/ci.yml?style=flat-square&label=CI" alt="CI"/></a>
-  <img src="https://img.shields.io/badge/Python-3.10+-3776ab?style=flat-square&logo=python&logoColor=white" alt="Python"/>
-  <img src="https://img.shields.io/badge/GUI-PySide6-41cd52?style=flat-square" alt="PySide6"/>
-  <img src="https://img.shields.io/badge/GPU-CUDA%20optional-76b900?style=flat-square&logo=nvidia&logoColor=white" alt="CUDA"/>
-  <img src="https://img.shields.io/badge/License-BSD--3--Clause-22c55e?style=flat-square" alt="License"/>
-  <a href="https://pypi.org/project/al-dvc/"><img src="https://img.shields.io/pypi/v/al-dvc?style=flat-square&label=PyPI" alt="PyPI"/></a>
+  <a href="https://zachtong.github.io/pyALDVC/#start"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/readme/button-start.png" alt="Get started" width="138"></a>
+  <a href="https://github.com/zachtong/pyALDVC/releases/latest"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/readme/button-download.png" alt="Windows download" width="203"></a>
+  <a href="https://github.com/zachtong/pyALDVC/blob/main/docs/user_guide.md"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/readme/button-guide.png" alt="User guide" width="133"></a>
 </p>
 
 <p align="center">
-  <strong>Available in 7 languages</strong><br/>
-  <img src="https://img.shields.io/badge/English-✓-22c55e?style=flat-square" alt="English"/>
-  <img src="https://img.shields.io/badge/简体中文-✓-22c55e?style=flat-square" alt="Simplified Chinese"/>
-  <img src="https://img.shields.io/badge/繁體中文-✓-22c55e?style=flat-square" alt="Traditional Chinese"/>
-  <img src="https://img.shields.io/badge/日本語-✓-22c55e?style=flat-square" alt="Japanese"/>
-  <img src="https://img.shields.io/badge/Deutsch-✓-22c55e?style=flat-square" alt="German"/>
-  <img src="https://img.shields.io/badge/Français-✓-22c55e?style=flat-square" alt="French"/>
-  <img src="https://img.shields.io/badge/Español-✓-22c55e?style=flat-square" alt="Spanish"/>
+  <a href="https://pypi.org/project/al-dvc/"><img src="https://img.shields.io/pypi/v/al-dvc?style=flat-square&label=PyPI&color=4f46e5" alt="PyPI version"></a>
+  <a href="https://github.com/zachtong/pyALDVC/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/zachtong/pyALDVC/ci.yml?branch=main&style=flat-square&label=tested%20on%20Python%203.10%E2%80%933.12&logo=python&logoColor=white" alt="CI status: tested on Python 3.10 to 3.12"></a>
+  <img src="https://img.shields.io/badge/interface-7%20languages-7c3aed?style=flat-square" alt="Interface in 7 languages">
+  <a href="https://doi.org/10.5281/zenodo.22883767"><img src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22883767-0b7285?style=flat-square" alt="Zenodo DOI 10.5281/zenodo.22883767"></a>
+  <a href="https://github.com/zachtong/pyALDVC/blob/main/LICENSE"><img src="https://img.shields.io/badge/licence-BSD--3--Clause-16a34a?style=flat-square" alt="BSD 3-Clause licence"></a>
 </p>
-
----
-
-pyALDVC is the Python version of the MATLAB [ALDVC](https://github.com/FranckLab/ALDVC)
-code (Yang, Hazlett, Landauer, Franck, *Exp. Mech.* 2020) and the volumetric sibling of
-[pyALDIC](https://github.com/zachtong/pyALDIC): a desktop application that turns a
-sequence of 3-D scans into displacement and strain fields.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/pyALDVC_demo.gif" alt="pyALDVC workflow: load volumes, draw a region of interest, run, strain post-processing, 3-D view" width="90%"/>
+  <a href="https://zachtong.github.io/pyALDVC/#hydrogel"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/readme/hydrogel-orbit.gif" alt="Orbiting 3-D view of a hydrogel block with a circular dimple of downward displacement and arrows around it" width="720"></a>
+  <br>
+  <sub>Sphere indentation of a hydrogel, confocal scan of 1024&nbsp;×&nbsp;1024&nbsp;×&nbsp;306 voxels: vertical displacement
+  on the deformed node grid, down to −10.5&nbsp;voxels (−4.5&nbsp;µm) under the sphere; 144,342 nodes in 71&nbsp;s on
+  one GPU. Measured with pyALDVC (local subset solver).</sub>
 </p>
 
-## Why pyALDVC
+<p align="center">
+  <a href="https://zachtong.github.io/pyALDVC/#accuracy"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/readme/stats.png" alt="Key numbers: 34 s on one NVIDIA RTX 5090 for a 1024 × 1024 × 306 confocal pair with 79,200 nodes (5.0 min on a 24-core CPU); 0.001 to 0.006 voxel displacement error on synthetic translation, rotation and 2 % strain; 0.005 to 0.020 voxel median difference from the MATLAB ALDVC code on the same scan; 14 GB peak volume memory of a masked 1024³ run (was 53 GB); texture analysis of a 256³ volume in 1.2 s; 7 interface languages" width="800"></a>
+</p>
 
-- **Accurate where subset DVC breaks down.** Local subsets are coupled to a global smoothness step, so steep gradients, boundaries and noisy scans stay sub-voxel accurate.
-- **Cracks and holes stay sharp.** A subset that meets a boundary keeps only the material on its own side of it, and the smoothing never crosses it, so a displacement jump survives instead of being averaged away.
-- **Fast.** A 1024 x 1024 x 306 confocal scan with 79 200 nodes takes 23 s on an NVIDIA GPU, 3.6 min on a 24-core CPU.
-- **Big scans fit.** A masked 1024^3 run peaks at 14 GB of volume memory instead of 53, so it runs on a 32 GB workstation; drawing and browsing stay responsive because a local change no longer costs a pass over the whole volume.
-- **Point and click.** Load the scans, draw the region of interest on the slices, run, look, export. No code.
-- **Knows your data.** The texture analysis measures your scan and suggests the subset size and step.
-- **See it in 3-D.** Field slices, the deformed lattice, displacement arrows; animations recorded as GIF or MP4.
-- **Strain included.** Four gradient methods and four strain measures, computed after the run in their own window.
-- **Statistics built in.** Mean with its confidence interval, spread and noise floor of any field, in regions drawn on the slices, with the rigid-body motion removed exactly (fitted over a grip if needed, and shown in the main window); series over frames, profiles, a virtual extensometer, exports that state their definitions.
-- **Every format.** TIFF, MATLAB, NumPy, HDF5, NIfTI, NRRD, DICOM in; NumPy, MATLAB, CSV, ParaView and a PDF report out.
+**pyALDVC** measures full-field displacement and strain inside a material from a sequence of 3-D scans. It is the
+Python version of the MATLAB [ALDVC](https://github.com/FranckLab/ALDVC) code (Yang, Hazlett, Landauer, Franck,
+*Exp. Mech.* 2020) and the volumetric sibling of [pyALDIC](https://github.com/zachtong/pyALDIC): free, open source,
+and usable without writing a line of code.
+
+## Cases
+
+<table align="center">
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <a href="https://zachtong.github.io/pyALDVC/#foam"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/readme/foam-slice-sweep.gif" alt="Foam cylinder with orthogonal micro-CT slices; a colour map of displacement magnitude sweeps through it" width="320"></a>
+      <br><b>Foam under compression</b>
+      <br><sub>Micro-CT slices, 987 × 1009 × 1856 voxels</sub>
+    </td>
+    <td align="center" valign="top" width="50%">
+      <a href="https://zachtong.github.io/pyALDVC/#foam"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/readme/foam-lattice.gif" alt="Foam cylinder drawn as a node grid coloured by displacement, with arrows along the compression axis" width="320"></a>
+      <br><b>Foam: displacement on the node grid</b>
+      <br><sub>48,720 nodes in about 3&nbsp;min; deformation exaggerated 2×</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <a href="https://zachtong.github.io/pyALDVC/#rotation"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/readme/rigid-rotation.gif" alt="A cube of synthetic beads, coloured by horizontal displacement, rotating step by step" width="360"></a>
+      <br><b>Rigid-body rotation</b>
+      <br><sub>Synthetic, six 5° steps to 30° (looped forward and back); tracked in 34&nbsp;s</sub>
+    </td>
+    <td align="center" valign="top" width="50%">
+      <a href="https://zachtong.github.io/pyALDVC/#cavitation"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/readme/lic-strain.gif" alt="Residual von Mises strain left by laser-induced cavitation" width="360"></a>
+      <br><b>Laser-induced cavitation</b>
+      <br><sub>Residual von Mises strain (unpublished data)</sub>
+    </td>
+  </tr>
+</table>
+
+<p align="center"><a href="https://zachtong.github.io/pyALDVC/#cases"><b>The full cases, with the experiments behind them, on the website →</b></a></p>
+
+<sub>The foam, hydrogel and rotation fields were measured with pyALDVC (local subset solver) on one GPU. Their data are
+part of the DVC Challenge 2.0 dataset, [doi:10.18434/mds2-4129](https://doi.org/10.18434/mds2-4129), described in
+Tong, Z. et al. Digital Volume Correlation Challenge 2.0: A Comprehensive Dataset for Digital Volume Correlation
+Benchmarking. Research Square preprint (2026). [https://doi.org/10.21203/rs.3.rs-9683321/v1](https://doi.org/10.21203/rs.3.rs-9683321/v1).
+Foam data courtesy of NIST (Landauer et al., *Sci. Data* 10, 356, 2023).</sub>
+
+## What it does
+
+<table>
+  <tr>
+    <td width="50%" valign="top"><b>Point and click</b><br>Load the scans, draw the region of interest on the slices, run and export, in seven languages. No code.</td>
+    <td width="50%" valign="top"><b>AL-DVC solver</b><br>Local subset fits coupled to one smooth, compatible field: cleaner gradients, and masked cracks and holes stay sharp.</td>
+  </tr>
+  <tr>
+    <td valign="top"><b>NVIDIA GPU</b><br><code>pip install "al-dvc[gpu]"</code> runs the local solvers as CUDA kernels, typically within 10<sup>−5</sup> voxel of the CPU.</td>
+    <td valign="top"><b>Large volumes</b><br>Sub-box local steps, streamed frames and on-the-fly gradients: a masked 1024³ run peaks at 14&nbsp;GB.</td>
+  </tr>
+  <tr>
+    <td valign="top"><b>Texture analysis</b><br>Measures the correlation length of your scan and suggests the subset size and step.</td>
+    <td valign="top"><b>Strain</b><br>Four gradient methods × four measures (infinitesimal, Green–Lagrange, Euler–Almansi, Hencky).</td>
+  </tr>
+  <tr>
+    <td valign="top"><b>Statistics and rigid-body motion</b><br>Means with 95&nbsp;% confidence intervals, the noise floor, regions, profiles, a virtual extensometer.</td>
+    <td valign="top"><b>3-D view and animations</b><br>Field slices, the deformed node grid and arrows; orbits and sweeps recorded as GIF or MP4.</td>
+  </tr>
+  <tr>
+    <td valign="top"><b>Formats</b><br>TIFF, MATLAB, NumPy, HDF5, NIfTI, NRRD, DICOM in; NumPy, MATLAB, CSV, ParaView, PDF out.</td>
+    <td valign="top"><b>Sessions, batch, command line</b><br>Save sessions, queue batches, resume from checkpoints, or script it with <code>al-dvc</code> and <code>al_dvc.run_aldvc</code>.</td>
+  </tr>
+</table>
+
+## How it works
+
+The method, and the tools that tell you how far to trust a result. Every figure is computed from synthetic volumes
+with a known answer, by a script in this repository. The [website](https://zachtong.github.io/pyALDVC/#how) explains
+each one in full, with the AL-DVC method itself.
+
+**Tracking a sequence.** Accumulative tracking (the default) correlates every scan with the first, so errors do not
+add up; incremental tracking correlates each scan with the one before and chains the steps, and follows motion too
+large for one step.
+
+<p align="center"><a href="https://zachtong.github.io/pyALDVC/#tracking"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/site/figures/tracking_modes.png" alt="Median error and converged nodes of accumulative and incremental tracking of a cylinder turning 5 degrees between scans, up to 45 degrees" width="800"></a></p>
+
+**Texture analysis.** How far the grey values stay correlated sets the subset size: four correlation lengths per axis,
+past which a larger subset barely lowers the error.
+
+<p align="center"><a href="https://zachtong.github.io/pyALDVC/#texture"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/site/figures/texture_subset.png" alt="A synthetic sphere texture with subsets of 1, 2 and 4 correlation lengths, and the displacement error against subset size" width="800"></a></p>
+
+**How precise is the result?** A noise floor from static scans, the predicted error of every node, and confidence
+intervals that account for correlated neighbours.
+
+<p align="center"><a href="https://zachtong.github.io/pyALDVC/#errors"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/site/figures/uncertainty_map.png" alt="Predicted displacement uncertainty, actual error and their calibration where the texture contrast fades" width="800"></a></p>
+
+**Removing rigid-body motion.** A specimen that shifts or turns adds displacement that is not deformation, and a
+rotation reads as false strain. A closed-form rigid fit removes it and reveals the deformation underneath.
+
+<p align="center"><a href="https://zachtong.github.io/pyALDVC/#rigid"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/site/figures/rigid_removal.png" alt="Displacement arrows as measured and with the rigid motion removed, and the mean normal strains" width="800"></a></p>
 
 ## Accuracy and speed
 
-Synthetic volumes with a known deformation (subset 16, step 8), displacement error at the interior nodes:
-
-| case | error (voxel) |
+| Test | Result |
 |---|---|
-| rigid translation | 0.003 - 0.006 |
-| 2 % strain | 0.004 |
-| 5 deg rotation with 12 voxel motion | 0.001 - 0.006 |
-| 2 % strain, noisy scan (SNR 6) | 0.012 |
+| Synthetic rigid translation or 2 % strain | 0.003–0.006 voxel error |
+| Synthetic 5° rotation, up to 8 voxels of motion | 0.001 voxel error |
+| Synthetic translation (12.3, −9.6, 7.4) + 1 % strain | 0.004–0.005 voxel error |
+| Synthetic 2 % strain with noise (SNR 6) | 0.011–0.012 voxel error |
+| Confocal pair, 1024 × 1024 × 306, 79,200 nodes | 34 s on one RTX 5090 (5.0 min on a 24-core CPU) |
+| Same pair, against MATLAB ALDVC (u, v, w) | median difference 0.005 / 0.006 / 0.020 voxel |
+| Masked 1024³ run | 14 GB peak volume memory (was 53 GB) |
 
-Confocal scan of the MATLAB example (hydrogel indentation), 1024 x 1024 x 306 voxels, 79 200 nodes:
+<sub>Synthetic rows: RMS error of each displacement component at the interior nodes, subset 16, step 8 voxels, default
+settings. Confocal rows: subset 32, step 8 voxels, with the settings of the MATLAB example run. Tested on Python 3.10,
+3.11 and 3.12 on every push to main.</sub>
 
-| | time | agreement with the MATLAB code |
-|---|---|---|
-| NVIDIA RTX 5090 | 23 s | median 0.005 / 0.006 / 0.020 voxel (u, v, w) |
-| 24-core CPU | 3.6 min | the same field |
-
-## Compared with the MATLAB code
+<details>
+<summary><b>Coming from the MATLAB ALDVC code?</b></summary>
+<br>
 
 | | MATLAB ALDVC | pyALDVC |
 |---|---|---|
-| Method | augmented Lagrangian DVC | the same, results within 0.01 voxel |
-| Interface | scripts | desktop application, 7 languages, command line |
-| GPU | - | NVIDIA CUDA, one install flag |
-| Region of interest | box | masks drawn on the slices, auto-segmentation, per-frame masks |
-| Subset size | by hand | texture analysis suggests it from the scan |
-| Cracks and holes | subsets and smoothing reach across them | subsets and smoothing stop at the boundary |
-| Strain | in the run | its own window, four methods, four measures, recomputed on demand |
-| Statistics | mean and std of uniform strain (script) | tables, histograms, regions, confidence intervals, series over frames, profiles, extensometer, noise floor, rigid-body motion removed |
-| 3-D view | - | slices, lattice, arrows, animations, GIF / MP4 recording |
-| Formats | MATLAB | TIFF, MATLAB, NumPy, HDF5, NIfTI, NRRD, DICOM; ParaView export |
-| Large scans | whole volume in memory | local steps over sub-boxes, streamed frames, gradients on the fly when they would not fit |
-| Long sequences | - | checkpoints, resume, batch runs, sessions |
+| Interface | scripts | desktop application in 7 languages, command line, Python library |
+| GPU | – | NVIDIA CUDA, one install flag |
+| Region of interest | box | masks drawn on the slices, automatic masks, per-frame masks |
+| Subset size | by hand | suggested by texture analysis of the scan |
+| Cracks and holes | subsets and smoothing reach across them | masked cracks and holes split the subsets and the node grid |
+| Strain and statistics | in the run; mean and std of uniform strain | own window: 4 methods × 4 measures, regions, confidence intervals, series over frames, profiles, extensometer, noise floor, rigid-body motion removed |
+| Large scans, long sequences | whole volume in memory | local steps over sub-boxes, streamed frames, gradients on the fly; checkpoints, resume, batch runs, sessions |
 | Install | MATLAB licence | `pip install al-dvc`, or a portable Windows bundle |
 
-## Texture analysis
-
-A subset too small drifts, a subset too large blurs the field. pyALDVC measures the texture of
-your scan and tells you what to use. The same guide is built into the application, under Help.
-
-**1. Compare a box with a shifted copy of itself, and divide out the overlap.** The shift at which
-the similarity has fallen to 1/e is the correlation length: the size of your features. Shifting makes
-the two overlap less, which would pull the curve down on its own, so every lag is divided by the
-number of voxel pairs that still contribute.
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/src/al_dvc/gui/assets/guide/overlap_correction.gif" alt="A box and its shifted copy; the overlap shrinks with the shift, and the raw curve falls below the corrected one" width="90%"/>
-</p>
-
-**2. Grow the box until that length stops changing.** Pick a centre, analyse concentric cubes around
-it, each on its own voxels alone. Below the representative volume element the measurement is noise;
-above it, every size agrees.
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/src/al_dvc/gui/assets/guide/rve_sweep.gif" alt="Concentric boxes of growing size about one centre; the correlation length settles once the box is large enough" width="90%"/>
-</p>
-
-**3. The subset follows.** Four correlation lengths per axis, stepped by half a subset: a recommended
-start, not a guarantee. One click writes it into the run.
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/src/al_dvc/gui/assets/guide/subset.png" alt="From the 1/e correlation length to the subset size and the step" width="75%"/>
-</p>
-
-## Case studies
-
-**Synthetic rotation**
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/videos/rotation_frame_animation.gif" alt="Synthetic rotation: frames animation with smooth deformation on the deformed lattice" width="90%"/>
-</p>
-
-**Hydrogel indentation, confocal microscopy, 1024 x 1024 x 306 voxels**
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/videos/indentation_deformed_lattice_orbit_with_arrow.gif" alt="Hydrogel indentation: deformed lattice with displacement arrows, orbit" width="90%"/>
-</p>
-<p align="center">
-  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/videos/indentation_frame_smooth_animation.gif" alt="Hydrogel indentation: frames animation with smooth deformation" width="90%"/>
-</p>
-<p align="center">
-  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/videos/indentation_sweep_x.gif" alt="Slice sweep along x" width="90%"/>
-</p>
-<p align="center">
-  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/videos/indentation_sweep_y.gif" alt="Slice sweep along y" width="90%"/>
-</p>
-<p align="center">
-  <img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/videos/indentation_sweep_z.gif" alt="Slice sweep along z" width="90%"/>
-</p>
+</details>
 
 ## Install
-
-With conda ([Miniforge](https://github.com/conda-forge/miniforge) if the machine has none yet):
 
 ```bash
 conda create -n pyaldvc python=3.12 -y
 conda activate pyaldvc
-pip install al-dvc            # NVIDIA GPU: pip install "al-dvc[gpu]"
-al-dvc                        # opens the application; al-dvc --help lists the commands
+pip install al-dvc
+al-dvc
 ```
 
-- conda only provides Python; al-dvc and its dependencies come from PyPI, so do not `conda install` numpy, scipy and the like into this environment afterwards. Python 3.10 to 3.12 are tested in CI.
-- `pip install al-dvc` is the complete application: GUI, 3-D view and command line.
-- `[gpu]` installs the CUDA 12 libraries as pip packages: the machine needs an NVIDIA driver, not the CUDA Toolkit.
-- Check the install with `al-dvc --self-test`: six checks, each `[ok]` or `[FAIL]`, saved to `pyaldvc_self_test.txt`. The compute-backend line names the GPU when one is used.
-- Optional: `pip install nibabel pynrrd pydicom` reads NIfTI, NRRD and DICOM; `pip install imageio imageio-ffmpeg` exports 3-D animations as MP4 (GIF needs nothing). Without them the application says what to install when you need it.
-- Update with `pip install -U al-dvc`.
+`pip install "al-dvc[gpu]"` in place of the third line adds NVIDIA GPU support; it needs the NVIDIA driver, not the
+CUDA Toolkit. The last command opens the application, and `al-dvc --self-test` checks the install. Optional:
+`nibabel`, `pynrrd` and `pydicom` read NIfTI, NRRD and DICOM; `imageio` with `imageio-ffmpeg` records MP4.
 
-No Python? Every [release](https://github.com/zachtong/pyALDVC/releases) ships a portable Windows bundle: unzip, double-click `pyALDVC.exe`.
-
-Read the [user guide](https://github.com/zachtong/pyALDVC/blob/main/docs/user_guide.md) to get started.
+**No Python?** Every [release](https://github.com/zachtong/pyALDVC/releases/latest) ships a portable Windows bundle
+(CPU only): unzip it and double-click `pyALDVC.exe`. Then read the
+[user guide](https://github.com/zachtong/pyALDVC/blob/main/docs/user_guide.md).
 
 ## Citation
 
-Software (concept DOI, always the latest version; each release also has its own):
+If pyALDVC helps your research, please cite the software (the concept DOI always resolves to the latest release) and
+the method:
 
-> Tong, Z., Yang, J. pyALDVC: Augmented Lagrangian Digital Volume Correlation in Python.
-> Zenodo. https://doi.org/10.5281/zenodo.22883767
+> Tong, Z., Yang, J. pyALDVC: Augmented Lagrangian Digital Volume Correlation in Python. Zenodo (2026).
+> https://doi.org/10.5281/zenodo.22883767
+>
+> Yang, J., Hazlett, L., Landauer, A. K., Franck, C. Augmented Lagrangian Digital Volume Correlation (ALDVC).
+> *Experimental Mechanics* 60, 1205–1223 (2020). https://doi.org/10.1007/s11340-020-00607-3
+
+<details>
+<summary>BibTeX</summary>
 
 ```bibtex
 @software{tong_pyaldvc,
   author    = {Tong, Zixiang and Yang, Jin},
   title     = {{pyALDVC}: Augmented Lagrangian Digital Volume Correlation in Python},
   publisher = {Zenodo},
+  year      = {2026},
   doi       = {10.5281/zenodo.22883767},
   url       = {https://github.com/zachtong/pyALDVC}
 }
+
+@article{yang_aldvc_2020,
+  author  = {Yang, Jin and Hazlett, Lauren and Landauer, Alexander K. and Franck, Christian},
+  title   = {Augmented {Lagrangian} Digital Volume Correlation ({ALDVC})},
+  journal = {Experimental Mechanics},
+  volume  = {60},
+  number  = {9},
+  pages   = {1205--1223},
+  year    = {2020},
+  doi     = {10.1007/s11340-020-00607-3}
+}
 ```
 
-The method:
+</details>
 
-> J. Yang, L. Hazlett, A. K. Landauer, C. Franck. Augmented Lagrangian
-> Digital Volume Correlation (ALDVC). *Experimental Mechanics* 60, 1205-1223
-> (2020). https://doi.org/10.1007/s11340-020-00607-3
+## Licence
 
-## License
+BSD 3-Clause. Developed by Zixiang Tong and Jin Yang in Dr. Jin Yang's group at The University of Texas at Austin.
 
-BSD 3-Clause. Developed in Dr. Jin Yang's group at The University of Texas
-at Austin.
+<p align="center">
+  <a href="https://zachtong.github.io/pyALDVC/"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/readme/button-website.png" alt="Visit the website" width="256"></a>
+</p>

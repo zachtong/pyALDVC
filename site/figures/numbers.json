@@ -1,0 +1,481 @@
+{
+  "_about": "Written by scripts/make_site_figures.py; regenerate, never edit. Lengths in voxels.",
+  "al_dvc_version": "1.0.0",
+  "backend": "numba",
+  "figure_dpi": 200,
+  "figures": {
+    "aldvc_local_vs_global": {
+      "file": "aldvc_local_vs_global.png",
+      "width_px": 1822,
+      "height_px": 649,
+      "bytes": 71217,
+      "setup": {
+        "volume_voxels": [
+          96,
+          96,
+          96
+        ],
+        "texture": "Gaussian-filtered speckle (sigma 2 voxel)",
+        "displacement": "smooth Gaussian bump about the centre (u: a local stretch along x; v: a bulge)",
+        "peak_abs_displacement_uvw_voxel": [
+          0.722,
+          0.749,
+          0.0
+        ],
+        "noise_std_both_volumes": 0.03,
+        "snr": 2.0,
+        "subset_voxel": 12,
+        "step_voxel": 4,
+        "search_radius_voxel": 4,
+        "n_nodes": 6859,
+        "n_valid_nodes": 6859,
+        "shown": "middle node layer (z), seed set 1",
+        "seed_sets": [
+          [
+            2,
+            1,
+            2
+          ],
+          [
+            3,
+            3,
+            4
+          ],
+          [
+            4,
+            5,
+            6
+          ]
+        ]
+      },
+      "drawn_case": {
+        "rms_dudx_local": 0.02243,
+        "rms_dudx_aldvc": 0.01018,
+        "rms_gradient_all9_local": 0.02055,
+        "rms_gradient_all9_aldvc": 0.008459,
+        "rms_displacement_local_voxel": 0.1387,
+        "rms_displacement_aldvc_voxel": 0.1206,
+        "max_abs_dudx_imposed": 0.1089,
+        "beta": 0.00506,
+        "admm_steps": 3
+      },
+      "over_seed_sets_mean_sd": {
+        "rms_dudx_local": [
+          0.02308,
+          0.006264
+        ],
+        "rms_dudx_aldvc": [
+          0.0099,
+          0.002262
+        ],
+        "rms_gradient_all9_local": [
+          0.02125,
+          0.005182
+        ],
+        "rms_gradient_all9_aldvc": [
+          0.008646,
+          0.002077
+        ],
+        "rms_displacement_local_voxel": [
+          0.1399,
+          0.03389
+        ],
+        "rms_displacement_aldvc_voxel": [
+          0.121,
+          0.02918
+        ],
+        "dudx_error_ratio_local_over_aldvc_range": [
+          2.2,
+          2.47
+        ],
+        "gradient_error_ratio_local_over_aldvc_range": [
+          2.43,
+          2.47
+        ],
+        "displacement_error_reduction_percent_range": [
+          13.0,
+          13.8
+        ]
+      }
+    },
+    "tracking_modes": {
+      "file": "tracking_modes.png",
+      "width_px": 1823,
+      "height_px": 678,
+      "bytes": 110050,
+      "setup": {
+        "volume_voxels": [
+          112,
+          112,
+          56
+        ],
+        "specimen": "speckled cylinder, radius 0.46 x 112 voxel, masked",
+        "rotation_about": "z (cylinder axis)",
+        "step_deg": 5.0,
+        "n_scans": 10,
+        "subset_voxel": 16,
+        "step_voxel": 8,
+        "search_radius_voxel": 12,
+        "nodes_evaluated": 316,
+        "evaluated": "nodes within 0.36 x 112 voxel of the axis"
+      },
+      "angles_deg": [
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0,
+        45.0
+      ],
+      "accumulative": {
+        "median_error_voxel": [
+          0.00205,
+          0.00202,
+          0.00283,
+          0.00391,
+          0.0206,
+          0.215,
+          6.51,
+          16.0,
+          21.4
+        ],
+        "converged_percent": [
+          100.0,
+          100.0,
+          100.0,
+          100.0,
+          100.0,
+          88.6,
+          52.8,
+          28.8,
+          25.6
+        ]
+      },
+      "incremental": {
+        "median_error_voxel": [
+          0.00205,
+          0.00403,
+          0.00527,
+          0.00681,
+          0.00786,
+          0.00927,
+          0.0106,
+          0.0115,
+          0.0123
+        ],
+        "converged_percent": [
+          100.0,
+          100.0,
+          100.0,
+          100.0,
+          100.0,
+          100.0,
+          100.0,
+          100.0,
+          100.0
+        ]
+      }
+    },
+    "noise_floor": {
+      "file": "noise_floor.png",
+      "width_px": 1823,
+      "height_px": 618,
+      "bytes": 71535,
+      "setup": {
+        "volume_voxels": [
+          96,
+          96,
+          96
+        ],
+        "scans": "two 8-bit scans of one static speckle volume",
+        "noise": "independent Gaussian, std 2% of 255, in each scan",
+        "snr": 2.86,
+        "subset_voxel": 16,
+        "step_voxel": 8,
+        "search_radius_voxel": 4
+      },
+      "n_nodes": 729,
+      "n_converged": 729,
+      "bias_voxel": [
+        0.00239,
+        0.00266,
+        0.000313
+      ],
+      "noise_floor_voxel": [
+        0.0258,
+        0.0279,
+        0.0313
+      ],
+      "u_rms_voxel": 0.0493,
+      "ci95_half_width_voxel": [
+        0.00461,
+        0.00488,
+        0.0069
+      ],
+      "naive_ci95_half_width_voxel": [
+        0.00188,
+        0.00203,
+        0.00227
+      ],
+      "ci_widening_factor": [
+        2.45,
+        2.4,
+        3.03
+      ],
+      "n_eff": [
+        124.0,
+        127.0,
+        82.2
+      ],
+      "rigid_fit_rotation_deg": 0.00713,
+      "maer_strain": 0.00094,
+      "sder_strain": 0.000306,
+      "vsg_voxel": [
+        33.0,
+        33.0,
+        33.0
+      ]
+    },
+    "uncertainty_map": {
+      "file": "uncertainty_map.png",
+      "width_px": 1823,
+      "height_px": 638,
+      "bytes": 102014,
+      "setup": {
+        "volume_voxels": [
+          96,
+          96,
+          96
+        ],
+        "texture": "speckle whose contrast falls linearly from 1 to 0.25 along x",
+        "displacement": "affine: 1 % stretch in x, -0.4 % in y, translation (0.4, -0.3, 0.2) voxel",
+        "noise_std_both_volumes": 0.01,
+        "subset_voxel": 16,
+        "step_voxel": 4,
+        "search_radius_voxel": 4,
+        "compared": "|U_std| against the error of the local (IC-GN) displacement",
+        "n_nodes": 5832
+      },
+      "rms_prediction_over_rms_error": 0.742,
+      "per_decile_prediction_over_error_range": [
+        0.684,
+        0.796
+      ],
+      "spearman_rank_correlation": 0.502,
+      "rms_error_high_contrast_third_voxel": 0.0273,
+      "rms_error_low_contrast_third_voxel": 0.0503,
+      "rms_ustd_high_contrast_third_voxel": 0.0203,
+      "rms_ustd_low_contrast_third_voxel": 0.037
+    },
+    "rigid_removal": {
+      "file": "rigid_removal.png",
+      "width_px": 1823,
+      "height_px": 674,
+      "bytes": 125047,
+      "setup": {
+        "volume_voxels": [
+          96,
+          96,
+          96
+        ],
+        "rotation_deg": 4.0,
+        "rotation_axis": [
+          0.301,
+          0.201,
+          0.932
+        ],
+        "translation_voxel": [
+          2.5,
+          -1.5,
+          3.0
+        ],
+        "imposed_strain_percent": [
+          -0.4,
+          0.12,
+          0.12
+        ],
+        "noise_std_both_volumes": 0.005,
+        "subset_voxel": 16,
+        "step_voxel": 8,
+        "search_radius_voxel": 6,
+        "strain": "infinitesimal, plane fit (defaults)",
+        "shown": "middle node layer (z)",
+        "arrow_gain_panel_b": 40.0
+      },
+      "fitted_rotation_deg": 3.999,
+      "fitted_translation_voxel": [
+        2.527,
+        -1.522,
+        2.996
+      ],
+      "fit_residual_rms_voxel": 0.0895,
+      "strain_as_measured_percent": [
+        -0.618,
+        -0.118,
+        0.0875
+      ],
+      "strain_removed_percent": [
+        -0.397,
+        0.116,
+        0.119
+      ],
+      "strain_imposed_percent": [
+        -0.4,
+        0.12,
+        0.12
+      ],
+      "false_strain_from_rotation_percent": [
+        -0.218,
+        -0.238,
+        -0.0325
+      ],
+      "n_nodes": 729
+    },
+    "texture_subset": {
+      "file": "texture_subset.png",
+      "width_px": 1760,
+      "height_px": 703,
+      "bytes": 95436,
+      "setup": {
+        "volume_voxels": [
+          112,
+          104,
+          96
+        ],
+        "texture": "Boolean spheres, radius 5 voxel, volume fraction 0.3, blurred",
+        "noise": "grain noise std 0.02 shared by both scans (no independent noise)",
+        "displacement": "affine, gradient up to 0.8 %, translation (0.35, -0.25, 0.4) voxel",
+        "step_voxel": 8,
+        "search_radius_voxel": 4,
+        "evaluated": "interior nodes",
+        "seed_sets": [
+          [
+            21,
+            3
+          ],
+          [
+            22,
+            4
+          ],
+          [
+            23,
+            5
+          ]
+        ],
+        "subsets_voxel": [
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          28,
+          32
+        ]
+      },
+      "correlation_length_1e_voxel": [
+        5.08,
+        5.09,
+        5.06
+      ],
+      "suggested_subset_voxel": [
+        [
+          22,
+          22,
+          22
+        ],
+        [
+          22,
+          20,
+          22
+        ],
+        [
+          22,
+          22,
+          22
+        ]
+      ],
+      "rms_error_mean_voxel": [
+        0.0283,
+        0.0208,
+        0.0173,
+        0.0153,
+        0.0145,
+        0.0139,
+        0.0137,
+        0.0137,
+        0.0136,
+        0.0133,
+        0.0133
+      ],
+      "rms_error_sd_voxel": [
+        0.00156,
+        0.00143,
+        0.000892,
+        0.000347,
+        0.000355,
+        0.000339,
+        0.000238,
+        0.000123,
+        0.000268,
+        0.000137,
+        0.000189
+      ],
+      "converged_fraction_mean": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "error_at_suggested_subset_voxel": 0.0137,
+      "error_at_smallest_subset_voxel": 0.0283,
+      "error_at_largest_subset_voxel": 0.0133
+    },
+    "guide": {
+      "dpi": 180,
+      "source": "scripts/make_guide_animations.py (module globals OUT, DPI, FACE overridden; notes recoloured); step 3 drawn by make_site_figures.py with recommend_parameters()",
+      "overlap_correction": {
+        "gif_bytes": 251185,
+        "file": "guide_overlap_correction.mp4",
+        "poster": "guide_overlap_correction.png",
+        "width_px": 1332,
+        "height_px": 558,
+        "bytes": 85269,
+        "poster_bytes": 53484,
+        "fps": 5
+      },
+      "rve_sweep": {
+        "gif_bytes": 1201341,
+        "file": "guide_rve_sweep.mp4",
+        "poster": "guide_rve_sweep.png",
+        "width_px": 1332,
+        "height_px": 558,
+        "bytes": 171544,
+        "poster_bytes": 96830,
+        "fps": 5
+      },
+      "subset": {
+        "file": "guide_subset.png",
+        "width_px": 1332,
+        "height_px": 558,
+        "bytes": 44248,
+        "length_1e_voxel": 4.18,
+        "subset_voxel": 18,
+        "step_voxel": 10
+      }
+    }
+  }
+}

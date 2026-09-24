@@ -1,0 +1,1015 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pyALDVC: digital volume correlation in Python</title>
+  <meta name="description" content="Open-source digital volume correlation: 3-D displacement and strain from micro-CT, confocal and other volume scans, in a desktop application, a command line and a Python library.">
+  <link rel="canonical" href="https://zachtong.github.io/pyALDVC/">
+  <meta name="theme-color" content="#0b0f1a">
+  <meta name="color-scheme" content="dark">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="pyALDVC">
+  <meta property="og:locale" content="en_GB">
+  <meta property="og:url" content="https://zachtong.github.io/pyALDVC/">
+  <meta property="og:title" content="pyALDVC: digital volume correlation in Python">
+  <meta property="og:description" content="3-D displacement and strain from micro-CT, confocal and other volume scans: a desktop application, a command line and a Python library, with optional GPU acceleration.">
+  <meta property="og:image" content="https://zachtong.github.io/pyALDVC/img/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="pyALDVC: augmented Lagrangian digital volume correlation">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="pyALDVC: digital volume correlation in Python">
+  <meta name="twitter:description" content="3-D displacement and strain from micro-CT, confocal and other volume scans: a desktop application, a command line and a Python library.">
+  <meta name="twitter:image" content="https://zachtong.github.io/pyALDVC/img/og.png">
+  <meta name="twitter:image:alt" content="pyALDVC: augmented Lagrangian digital volume correlation">
+
+  <link rel="icon" type="image/png" sizes="32x32" href="img/favicon.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- One static instance per style keeps the fonts near 100 kB: Newsreader text cut (opsz 28) and display italic (opsz 60). -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;family=Newsreader:ital,opsz,wght@0,28,400;1,60,400&amp;display=swap">
+  <link rel="preload" as="image" href="media/hydrogel-orbit.jpg" fetchpriority="high">
+  <link rel="stylesheet" href="css/style.css">
+  <script>document.documentElement.classList.add("js");</script>
+  <script src="js/main.js" defer></script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareSourceCode",
+    "name": "pyALDVC",
+    "description": "Augmented Lagrangian digital volume correlation in Python: 3-D displacement and strain from volumetric images, as a desktop application, a command line and a library.",
+    "url": "https://zachtong.github.io/pyALDVC/",
+    "codeRepository": "https://github.com/zachtong/pyALDVC",
+    "programmingLanguage": "Python",
+    "license": "https://opensource.org/licenses/BSD-3-Clause",
+    "version": "1.0.0",
+    "identifier": "https://doi.org/10.5281/zenodo.22883767",
+    "author": [
+      {"@type": "Person", "name": "Zixiang Tong"},
+      {"@type": "Person", "name": "Jin Yang"}
+    ]
+  }
+  </script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<svg class="sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-check" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3.2 8.4l3 3 6.6-6.8"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M3 8h10M9 4l4 4-4 4"/></symbol>
+  <symbol id="i-play" viewBox="0 0 16 16"><path fill="currentColor" d="M5 3.2v9.6a.5.5 0 0 0 .76.43l7.6-4.8a.5.5 0 0 0 0-.86l-7.6-4.8A.5.5 0 0 0 5 3.2z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 16 16"><path fill="currentColor" d="M4.5 3h2.2a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5H4.5a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5zm4.8 0h2.2a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5H9.3a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5z"/></symbol>
+</svg>
+
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="#top" aria-label="pyALDVC, back to the top">
+      <img src="img/logo.png" width="30" height="30" alt="">
+      <span>pyALDVC</span>
+    </a>
+    <button class="menu-button" type="button" aria-expanded="false" aria-controls="site-nav">
+      <span class="menu-icon" aria-hidden="true"></span>Menu
+    </button>
+    <nav id="site-nav" class="site-nav" aria-label="Main">
+      <ul>
+        <li><a href="#cases">Cases</a></li>
+        <li><a href="#features">Features</a></li>
+        <li><a href="#how">How it works</a></li>
+        <li><a href="#accuracy">Accuracy</a></li>
+        <li><a href="#start">Get started</a></li>
+        <li><a href="#cite">Cite</a></li>
+        <li class="nav-github"><a href="https://github.com/zachtong/pyALDVC">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ============================================================ HERO -->
+<section class="hero" id="top" aria-labelledby="hero-title">
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <p class="eyebrow">Augmented Lagrangian digital volume correlation</p>
+      <h1 id="hero-title"><span class="nw">3-D</span> displacement and strain, <em class="h1-line">inside the material</em></h1>
+      <p class="hero-sub">Open-source digital volume correlation for micro-CT, confocal and other <span class="nw">3-D</span> scans: a desktop application, a command line and a Python library, with optional GPU acceleration.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="#start">Get started</a>
+        <a class="btn btn-ghost" href="https://github.com/zachtong/pyALDVC">View on GitHub</a>
+      </div>
+      <div class="install">
+        <span class="install-prompt" aria-hidden="true">$</span>
+        <code id="install-line">pip install al-dvc</code>
+        <button class="copy-btn" type="button" data-copy-target="#install-line">Copy</button>
+      </div>
+      <p class="fine-print"><span class="fp"><span>Version 1.0.0</span> <span>BSD 3-Clause</span> <span>tested on Python 3.10–3.12</span> <span>portable Windows bundle</span></span></p>
+    </div>
+
+    <figure class="hero-media">
+      <div class="hero-stage" data-clip data-btn="hero">
+        <div class="hero-frame">
+          <video class="hero-video" autoplay muted loop playsinline preload="auto" poster="media/hydrogel-orbit.jpg" width="1272" height="786" data-auto
+                 data-desc="orbiting 3-D view of the indented hydrogel">
+            <source src="media/hydrogel-orbit.webm" type="video/webm">
+            <source src="media/hydrogel-orbit.mp4" type="video/mp4">
+          </video>
+        </div>
+      </div>
+      <figcaption class="hero-caption">
+        <span class="hero-caption-text">Sphere indentation of a hydrogel, confocal scan of 1024&#8239;×&#8239;1024&#8239;×&#8239;306 voxels. Colour: the vertical displacement w on the deformed node grid, with <span class="nw">3-D</span> arrows; under the sphere w reaches −10.5 voxels. The node layers are drawn translucent, so colours blend where layers overlap.</span>
+        <span class="hero-caption-row">
+          <span class="ckey"><span class="ckey-k">w</span><span class="visually-hidden">, colour scale from purple to dark red:</span><span class="ckey-v">−10.5</span><span class="ckey-bar" aria-hidden="true"></span><span class="visually-hidden">to</span><span class="ckey-v">+1.2 voxels</span></span>
+          <span class="measured"><svg aria-hidden="true"><use href="#i-check"/></svg>Measured with pyALDVC, local subset solver</span>
+          <a class="more" href="#hydrogel">The case</a>
+        </span>
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============================================================ STATS -->
+<section class="stats" aria-label="Key numbers">
+  <div class="wrap">
+    <dl class="stats-grid">
+      <div class="stat">
+        <dt class="stat-value">34<span class="unit">s</span></dt>
+        <dd>on one NVIDIA RTX 5090 for a 1024&#8239;×&#8239;1024&#8239;×&#8239;306 confocal pair with 79,200 nodes (5.0&#8239;min on a 24-core CPU)</dd>
+      </div>
+      <div class="stat">
+        <dt class="stat-value">0.001–0.006<span class="unit">voxel</span></dt>
+        <dd>displacement error on synthetic translation, rotation and 2&#8239;% strain</dd>
+      </div>
+      <div class="stat">
+        <dt class="stat-value">0.005–0.020<span class="unit">voxel</span></dt>
+        <dd>median difference from the MATLAB ALDVC code on the same scan: 0.005 in u, 0.006 in v, 0.020 in w</dd>
+      </div>
+      <div class="stat">
+        <dt class="stat-value">14<span class="unit">GB</span></dt>
+        <dd>peak volume memory of a masked 1024³ run (was 53&#8239;GB)</dd>
+      </div>
+      <div class="stat">
+        <dt class="stat-value">1.2<span class="unit">s</span></dt>
+        <dd>texture analysis of a 256³ volume</dd>
+      </div>
+      <div class="stat">
+        <dt class="stat-value">7</dt>
+        <dd>interface languages</dd>
+      </div>
+    </dl>
+  </div>
+</section>
+
+<!-- ============================================================ CASES -->
+<!-- Media sizes follow the pixels: no image or clip is drawn wider than its file, and the text inside each is
+     drawn at or below the caption size (see "media sizes" in css/style.css). -->
+<section class="section" id="cases" aria-labelledby="cases-title">
+  <div class="wrap">
+    <header class="sec-head">
+      <p class="sec-num" aria-hidden="true">01</p>
+      <h2 id="cases-title">Cases</h2>
+      <p class="lede">Three data sets from the DVC Challenge 2.0 benchmark and one unpublished study. The foam, hydrogel and rotation animations were measured with pyALDVC and recorded in its <span class="nw">3-D</span> view.</p>
+    </header>
+
+    <nav class="case-index" aria-label="Cases on this page">
+      <ol>
+        <li><a href="#foam"><img src="img/thumb-foam.webp" width="120" height="80" loading="lazy" decoding="async" alt=""><span class="ci-text"><span class="ci-no">Case 1</span><span class="ci-title">Foam under compression</span><span class="ci-tag">In-situ X-ray micro-CT</span></span></a></li>
+        <li><a href="#hydrogel"><img src="img/thumb-hydrogel.webp" width="120" height="80" loading="lazy" decoding="async" alt=""><span class="ci-text"><span class="ci-no">Case 2</span><span class="ci-title">Hydrogel indentation</span><span class="ci-tag">Confocal microscopy</span></span></a></li>
+        <li><a href="#rotation"><img src="img/thumb-rotation.webp" width="120" height="80" loading="lazy" decoding="async" alt=""><span class="ci-text"><span class="ci-no">Case 3</span><span class="ci-title">Rigid-body rotation</span><span class="ci-tag">Synthetic volumes</span></span></a></li>
+        <li><a href="#cavitation"><img src="img/thumb-cavitation.webp" width="120" height="80" loading="lazy" decoding="async" alt=""><span class="ci-text"><span class="ci-no">Case 4</span><span class="ci-title">Laser-induced cavitation</span><span class="ci-tag">Unpublished data</span></span></a></li>
+      </ol>
+    </nav>
+
+    <!-- Case 1: foam. Text beside the two portrait clips, then the settings, then the set-up figures. -->
+    <article class="case" id="foam" aria-labelledby="foam-title">
+      <div class="case-top case-top--pair">
+        <div class="case-text">
+          <p class="case-tag"><span class="case-no">Case 1</span>In-situ X-ray micro-CT</p>
+          <h3 id="foam-title">Foam under compression</h3>
+          <p class="case-desc">No speckle and no markers: pyALDVC follows the cell walls of an elastomeric closed-cell foam through 16-bit micro-CT volumes of 987&#8239;×&#8239;1009&#8239;×&#8239;1856 voxels. For the first compression step it measures the <span class="nw">3-D</span> displacement on a 29&#8239;×&#8239;30&#8239;×&#8239;56 grid of 48,720 nodes, in a cylindrical region drawn on the slices. The field changes smoothly along the compression axis, and the slice sweep shows it on the cell walls themselves.</p>
+          <ul class="metrics">
+            <li><b>1.8&#8239;billion</b><span>voxels per scan, 3.7&#8239;GB</span></li>
+            <li><b>48,720</b><span>grid nodes</span></li>
+            <li><b>≈&#8239;3&#8239;min</b><span>on one&nbsp;GPU</span></li>
+          </ul>
+        </div>
+        <div class="case-media clip-pair">
+          <figure class="clip clip--sweep">
+            <div class="clip-frame" style="aspect-ratio: 540 / 670" data-clip>
+              <img class="poster" src="media/foam-slice-sweep.jpg" width="540" height="670" loading="lazy" decoding="async" alt="">
+              <video autoplay muted loop playsinline preload="none" width="540" height="670" data-auto data-src="media/foam-slice-sweep.mp4"
+                     data-desc="micro-CT slices of the foam sweeping through a colour map of displacement magnitude"></video>
+              <noscript><video autoplay controls muted loop playsinline poster="media/foam-slice-sweep.jpg" width="540" height="670" aria-label="Cylindrical foam specimen with orthogonal micro-CT slices; a translucent colour map of displacement magnitude moves through it."><source src="media/foam-slice-sweep.mp4" type="video/mp4"></video></noscript>
+            </div>
+            <figcaption>Displacement magnitude in voxels over the micro-CT slices, swept through the specimen.</figcaption>
+          </figure>
+          <figure class="clip clip--lattice">
+            <div class="clip-frame" style="aspect-ratio: 530 / 640" data-clip>
+              <img class="poster" src="media/foam-lattice.jpg" width="530" height="640" loading="lazy" decoding="async" alt="">
+              <video autoplay muted loop playsinline preload="none" width="530" height="640" data-auto data-src="media/foam-lattice.mp4"
+                     data-desc="the deformed node grid of the foam, coloured by displacement, with arrows"></video>
+              <noscript><video autoplay controls muted loop playsinline poster="media/foam-lattice.jpg" width="530" height="640" aria-label="Foam cylinder drawn as a node grid coloured by displacement, with arrows pointing along the compression axis."><source src="media/foam-lattice.mp4" type="video/mp4"></video></noscript>
+            </div>
+            <figcaption>Displacement magnitude in voxels on the deformed node grid, with arrows; deformation exaggerated 2×, colour scale fitted to each frame.</figcaption>
+          </figure>
+          <p class="clip-note">First compression step. <span class="measured"><svg aria-hidden="true"><use href="#i-check"/></svg>Measured with pyALDVC</span></p>
+        </div>
+      </div>
+
+      <dl class="spec">
+        <div><dt>Scan</dt><dd>4&#8239;µm voxels, 16-bit</dd></div>
+        <div><dt>Nodes</dt><dd>48,720 (29&#8239;×&#8239;30&#8239;×&#8239;56)</dd></div>
+        <div><dt>Subset / step</dt><dd>57 / 32 voxels</dd></div>
+        <div><dt>Solver</dt><dd>local subset</dd></div>
+        <div><dt>Frames</dt><dd>reference and first step</dd></div>
+        <div><dt>Hardware</dt><dd>one NVIDIA RTX 5090</dd></div>
+      </dl>
+
+      <div class="plates">
+        <figure class="plate plate--dark">
+          <a class="zoom" href="img/foam-mesh-grid.webp"><img src="img/foam-mesh-grid.webp" width="1042" height="625" loading="lazy" decoding="async" alt="Two orthogonal grey-scale foam slices with a regular grid of blue node markers."></a>
+          <figcaption>The node grid on the x–y and y–z micro-CT slices, inside the cylindrical region of interest (axes in voxels).</figcaption>
+        </figure>
+        <figure class="plate plate--paper">
+          <a class="zoom" href="img/foam-xct-setup.webp"><img src="img/foam-xct-setup.webp" width="1200" height="783" loading="lazy" decoding="async" alt="Figure: an X-ray CT loading stage, a 3-D rendering of the foam, and orthogonal grey-scale slices with a close-up of the cell walls."></a>
+          <figcaption>The experiment: (a) loading stage between X-ray source and detector; (b) <span class="nw">3-D</span> rendering; (c) orthogonal slices, 4&#8239;µm voxels, with a cell-wall close-up. <span class="credit">Adapted from Tong et al. (2026, preprint); panel (b) after Landauer et al., Sci. Data (2023).</span></figcaption>
+        </figure>
+        <figure class="plate plate--paper plate--lone">
+          <a class="zoom" href="img/foam-compression-steps.webp"><img src="img/foam-compression-steps.webp" width="1081" height="728" loading="lazy" decoding="async" alt="Figure: relative density plotted against axial strain, and seven vertical foam slices that are increasingly compressed."></a>
+          <figcaption>Seven load steps from 0 to 60&#8239;% nominal compression: (a) relative density rises from about 0.15 to 0.28; (b) the central vertical slice at each step. <span class="credit">Adapted from Tong et al. (2026, preprint), after Landauer et al., Sci. Data (2023).</span> <span class="credit-data">Data: NIST foam materials data framework, A. K. Landauer, O. L. Kafka, N. H. Moser and A. M. Forster (Landauer et al., Sci. Data 10, 356, 2023, <a href="https://doi.org/10.1038/s41597-023-02092-4">doi:10.1038/s41597-023-02092-4</a>), courtesy of NIST. Part of the DVC Challenge 2.0 dataset, <a href="https://doi.org/10.18434/mds2-4129">doi:10.18434/mds2-4129</a>.</span></figcaption>
+        </figure>
+      </div>
+    </article>
+
+    <!-- Case 2: hydrogel. The slice sweep leads here; the orbit is the hero at the top of the page. -->
+    <article class="case case--flip" id="hydrogel" aria-labelledby="hydrogel-title">
+      <div class="case-top">
+        <div class="case-text">
+          <p class="case-tag"><span class="case-no">Case 2</span>Confocal microscopy</p>
+          <h3 id="hydrogel-title">Hydrogel indentation</h3>
+          <p class="case-desc">A sphere presses into a soft, transparent polyacrylamide hydrogel seeded with 1&#8239;µm fluorescent beads. From two confocal stacks of 1024&#8239;×&#8239;1024&#8239;×&#8239;306 voxels at 0.42&#8239;µm, pyALDVC measures the <span class="nw">3-D</span> displacement at 144,342 nodes. The indentation dimple stands out: about 10.5 voxels (4.5&#8239;µm) of downward motion under the sphere, fading outward. The <a href="#top">orbit at the top of the page</a> shows the same field on the deformed node grid.</p>
+          <ul class="metrics">
+            <li><b>144,342</b><span>grid nodes</span></li>
+            <li><b>−4.5&#8239;µm</b><span>w under the sphere, −10.5 voxels</span></li>
+            <li><b>70.8&#8239;s</b><span>on one&nbsp;GPU</span></li>
+          </ul>
+        </div>
+        <div class="case-media">
+          <figure class="clip">
+            <div class="clip-frame" style="aspect-ratio: 1236 / 656" data-clip>
+              <img class="poster" src="media/hydrogel-sweep-z.jpg" width="1236" height="656" loading="lazy" decoding="async" alt="">
+              <video autoplay muted loop playsinline preload="none" width="1236" height="656" data-auto data-src="media/hydrogel-sweep-z.mp4"
+                     data-desc="a horizontal slice of the hydrogel, coloured by vertical displacement, sweeping through the volume"></video>
+              <noscript><video autoplay controls muted loop playsinline poster="media/hydrogel-sweep-z.jpg" width="1236" height="656" aria-label="A horizontal slice through the gel, coloured by vertical displacement, with a round dimple at its centre, moving through the volume."><source src="media/hydrogel-sweep-z.mp4" type="video/mp4"></video></noscript>
+            </div>
+            <figcaption>An x–y slice swept along z through the bead volume; the dimple under the sphere appears as the slice moves through the gel. Colour: vertical displacement w,
+              <span class="ckey"><span class="ckey-v">−10.5</span><span class="ckey-bar" aria-hidden="true"></span><span class="ckey-v">+1.2 voxels</span></span>
+              <span class="measured"><svg aria-hidden="true"><use href="#i-check"/></svg>Measured with pyALDVC</span></figcaption>
+          </figure>
+        </div>
+      </div>
+
+      <dl class="spec">
+        <div><dt>Scan</dt><dd>0.42&#8239;µm voxels <span class="nw">(0.425&#8239;µm in z)</span></dd></div>
+        <div><dt>Nodes</dt><dd>144,342</dd></div>
+        <div><dt>Subset / step</dt><dd>43 / 12 voxels</dd></div>
+        <div><dt>Solver</dt><dd>local subset</dd></div>
+        <div><dt>Frames</dt><dd>reference and indented</dd></div>
+        <div><dt>Hardware</dt><dd>one NVIDIA RTX 5090</dd></div>
+      </dl>
+
+      <div class="plates">
+        <figure class="plate plate--paper plate--lone">
+          <a class="zoom" href="img/hydrogel-indentation-setup.webp"><img src="img/hydrogel-indentation-setup.webp" width="1030" height="598" loading="lazy" decoding="async" alt="Figure: a schematic of a sphere indenting the gel, and confocal orthogonal views of fluorescent beads with a close-up."></a>
+          <figcaption>The experiment: (a) reference and indented states; (b) confocal orthogonal views of the 1&#8239;µm fluorescent beads, 0.42&#8239;µm voxels, with a close-up. <span class="credit">Adapted from Tong et al. (2026, preprint).</span> <span class="credit-data">Data: J. Yang, L. Hazlett, A. K. Landauer and C. Franck, the ALDVC example scans (Exp. Mech. 60, <span class="nw">1205–1223</span>, 2020). Part of the DVC Challenge 2.0 dataset, <a href="https://doi.org/10.18434/mds2-4129">doi:10.18434/mds2-4129</a>.</span></figcaption>
+        </figure>
+      </div>
+    </article>
+
+    <!-- Case 3: rotation -->
+    <article class="case" id="rotation" aria-labelledby="rotation-title">
+      <div class="case-top">
+        <div class="case-text">
+          <p class="case-tag"><span class="case-no">Case 3</span>Synthetic · incremental tracking</p>
+          <h3 id="rotation-title">Rigid-body rotation</h3>
+          <p class="case-desc">A synthetic bead volume of 512&#8239;×&#8239;512&#8239;×&#8239;192 voxels turns about the z axis in 5° steps up to 30°: points near the edge move tens of voxels, yet the true strain is exactly zero. pyALDVC tracks the six steps frame to frame. Its statistics tools fit such a rigid motion in closed form (a weighted Kabsch fit) and remove it, leaving the deformation and the measurement noise.</p>
+          <ul class="metrics">
+            <li><b>30°</b><span>in six 5° steps</span></li>
+            <li><b>≈&#8239;80</b><span>voxels, largest&nbsp;u at&nbsp;30°</span></li>
+            <li><b>34&#8239;s</b><span>all&nbsp;six&nbsp;steps, one&nbsp;GPU</span></li>
+          </ul>
+          <div class="xlinks">
+            <a class="xlink" href="#tracking"><span class="xlink-k">How it works 2</span><span class="xlink-t">Tracking a sequence</span><svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
+            <a class="xlink" href="#rigid"><span class="xlink-k">How it works 5</span><span class="xlink-t">Removing rigid-body motion</span><svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
+          </div>
+        </div>
+        <div class="case-media">
+          <figure class="clip">
+            <div class="clip-frame" style="aspect-ratio: 1280 / 736" data-clip>
+              <img class="poster" src="media/rigid-rotation.jpg" width="1280" height="736" loading="lazy" decoding="async" alt="">
+              <video autoplay muted loop playsinline preload="none" width="1280" height="736" data-auto data-src="media/rigid-rotation.mp4"
+                     data-desc="a cube of synthetic beads, coloured by horizontal displacement, rotating step by step"></video>
+              <noscript><video autoplay controls muted loop playsinline poster="media/rigid-rotation.jpg" width="1280" height="736" aria-label="A cube of synthetic beads, coloured from blue to red by horizontal displacement, rotating step by step."><source src="media/rigid-rotation.mp4" type="video/mp4"></video></noscript>
+            </div>
+            <figcaption>Horizontal displacement u in voxels on the deformed node grid as the volume turns from 0° to 30°, tracked frame to frame; the clip plays forward, then back, and the colour scale is fitted to each frame. <span class="measured"><svg aria-hidden="true"><use href="#i-check"/></svg>Measured with pyALDVC</span></figcaption>
+          </figure>
+        </div>
+      </div>
+
+      <dl class="spec">
+        <div><dt>Scan</dt><dd>7 volumes, synthetic beads</dd></div>
+        <div><dt>Nodes</dt><dd>37,044 per frame</dd></div>
+        <div><dt>Subset / step</dt><dd>21 / 8 voxels</dd></div>
+        <div><dt>Solver</dt><dd>local subset</dd></div>
+        <div><dt>Tracking</dt><dd>incremental</dd></div>
+        <div><dt>Hardware</dt><dd>one NVIDIA RTX 5090</dd></div>
+      </dl>
+      <p class="data-credit">Data: synthetic bead volumes from the DVC Challenge 2.0 dataset, <a href="https://doi.org/10.18434/mds2-4129">doi:10.18434/mds2-4129</a>.</p>
+    </article>
+
+    <!-- Case 4: cavitation. One sentence only: unpublished data. -->
+    <article class="case case--flip case--teaser" id="cavitation" aria-labelledby="cavitation-title">
+      <div class="case-top">
+        <div class="case-text">
+          <p class="case-tag"><span class="case-no">Case 4</span></p>
+          <h3 id="cavitation-title">Laser-induced cavitation</h3>
+          <p class="case-desc">Residual von Mises strain left by <span class="nw">laser-induced</span> cavitation (unpublished data).</p>
+        </div>
+        <div class="case-media">
+          <figure class="clip">
+            <div class="clip-frame" style="aspect-ratio: 1280 / 736" data-clip>
+              <img class="poster" src="media/lic-strain.jpg" width="1280" height="736" loading="lazy" decoding="async" alt="">
+              <video autoplay muted loop playsinline preload="none" width="1280" height="736" data-auto data-src="media/lic-strain.mp4"
+                     data-desc="residual von Mises strain left by laser-induced cavitation"></video>
+              <noscript><video autoplay controls muted loop playsinline poster="media/lic-strain.jpg" width="1280" height="736" aria-label="Residual von Mises strain left by laser-induced cavitation."><source src="media/lic-strain.mp4" type="video/mp4"></video></noscript>
+            </div>
+          </figure>
+        </div>
+      </div>
+    </article>
+
+    <div class="cases-note">
+      <p>Subset sizes in the case settings are as entered in the application, which counts the odd span of a subset (2h&#8239;+&#8239;1 voxels); the Python parameter <code>winsize</code>, the figures and the accuracy notes give the even edge 2h, one voxel less.</p>
+      <p>The foam, hydrogel and synthetic rotation data are part of the DVC Challenge 2.0 benchmark: Tong, Z. et al. Digital Volume Correlation Challenge 2.0: A Comprehensive Dataset for Digital Volume Correlation Benchmarking. Research Square preprint (2026), <a href="https://doi.org/10.21203/rs.3.rs-9683321/v1">doi:10.21203/rs.3.rs-9683321/v1</a>. Dataset: <a href="https://doi.org/10.18434/mds2-4129">doi:10.18434/mds2-4129</a>.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ FEATURES -->
+<section class="section" id="features" aria-labelledby="features-title">
+  <div class="wrap">
+    <header class="sec-head">
+      <p class="sec-num" aria-hidden="true">02</p>
+      <h2 id="features-title">What it does</h2>
+      <p class="lede">Everything between the scans and the exported field, in one application. The same functions are available from the command line and from Python.</p>
+    </header>
+
+    <ol class="features">
+      <li>
+        <h3>Point and click</h3>
+        <p>Load the scans, draw the region of interest on the slices with a box, ellipse, polygon, brush or an automatic mask, run and export, in an interface available in seven languages.</p>
+        <ul class="langs">
+          <li lang="en">English</li><li lang="zh-Hans">简体中文</li><li lang="zh-Hant">繁體中文</li><li lang="ja">日本語</li><li lang="de">Deutsch</li><li lang="fr">Français</li><li lang="es">Español</li>
+        </ul>
+      </li>
+      <li>
+        <h3>AL-DVC solver</h3>
+        <p>Local subset fits are coupled to one smooth, compatible displacement field, which gives cleaner gradients than subset DVC alone. Cracks and holes cut out of the region of interest split the subsets and the node grid, so the field is not smoothed across them (a crack front stays connected).</p>
+      </li>
+      <li>
+        <h3>NVIDIA GPU</h3>
+        <p><code class="code-wrap">pip install <span class="nw">"al-dvc[gpu]"</span></code> runs the local solvers as CUDA kernels; their results typically differ from the CPU's by less than 10<sup>−5</sup> voxel.</p>
+      </li>
+      <li>
+        <h3>Large volumes</h3>
+        <p>Local steps over sub-boxes, streamed frames and gradients computed on the fly let a masked 1024³ run peak at 14&#8239;GB of volume memory.</p>
+      </li>
+      <li>
+        <h3>Texture analysis</h3>
+        <p>Measures the correlation length and the representative volume of your scan and suggests a subset size and step, applied to the run with one click.</p>
+      </li>
+      <li>
+        <h3>Strain</h3>
+        <p>Four gradient methods (plane fit, finite elements, finite differences, direct) and four measures (infinitesimal, Green–Lagrange, Euler–Almansi, Hencky), computed after the run in their own window.</p>
+      </li>
+      <li>
+        <h3>Statistics and rigid-body motion <span class="new-tag">New in 0.10</span></h3>
+        <p>Means with 95&#8239;% confidence intervals, the noise floor, regions, profiles and a virtual extensometer, with the rigid-body motion fitted in closed form and removed.</p>
+      </li>
+      <li>
+        <h3><span class="nw">3-D</span> view and animations</h3>
+        <p>Field slices, the deformed node grid and displacement arrows, with orbits, frame sequences and slice sweeps recorded as GIF, or as MP4 with the optional <code>imageio</code> and <code>imageio-ffmpeg</code>.</p>
+      </li>
+      <li>
+        <h3>Formats</h3>
+        <p>Reads TIFF stacks and slice folders, MATLAB, NumPy and HDF5, and NIfTI, NRRD and DICOM with their optional readers (<code>nibabel</code>, <code>pynrrd</code>, <code>pydicom</code>); writes NumPy, MATLAB, CSV, ParaView and a PDF report.</p>
+      </li>
+      <li>
+        <h3>Sessions, batch and command line</h3>
+        <p>Save a session, queue sessions as a batch, resume long sequences from checkpoints, or run the same analysis with <code>al-dvc</code> or <code>al_dvc.run_aldvc</code>.</p>
+      </li>
+    </ol>
+
+    <div class="app-gallery">
+      <h3 id="app-title" class="sub-head">The application</h3>
+      <p class="sub-note">Captured from a separate run of the hydrogel pair: the AL-DVC solver, on a region of interest that stops below the contact with the sphere.</p>
+      <div class="tabs" data-tabs data-tabs-style="seg" data-tabs-label="Application screenshots">
+        <div class="tab-panel" data-label="Slices">
+          <figure class="shot">
+            <a class="zoom" href="img/app-slices.jpg"><img src="img/app-slices.jpg" width="1600" height="1000" loading="lazy" decoding="async" alt="The pyALDVC main window with three orthogonal slices of the hydrogel overlaid with a displacement colour map."></a>
+            <figcaption>The main window with the two confocal hydrogel scans loaded: a box-shaped region of interest that stops below the contact with the sphere, and the measured vertical displacement over the slices.</figcaption>
+          </figure>
+        </div>
+        <div class="tab-panel" data-label="3-D view">
+          <figure class="shot">
+            <a class="zoom" href="img/app-3d.jpg"><img src="img/app-3d.jpg" width="1600" height="1000" loading="lazy" decoding="async" alt="The pyALDVC main window showing a 3-D view of the indented hydrogel with arrows."></a>
+            <figcaption>The <span class="nw">3-D</span> view: the deformed node grid with displacement arrows.</figcaption>
+          </figure>
+        </div>
+        <div class="tab-panel" data-label="Strain">
+          <figure class="shot">
+            <a class="zoom" href="img/app-strain.jpg"><img src="img/app-strain.jpg" width="1600" height="1000" loading="lazy" decoding="async" alt="The post-processing window on its Strain tab."></a>
+            <figcaption>Strain after the run, with the gradient method and the strain measure chosen in their own window.</figcaption>
+          </figure>
+        </div>
+        <div class="tab-panel" data-label="Statistics">
+          <figure class="shot">
+            <a class="zoom" href="img/app-statistics.jpg"><img src="img/app-statistics.jpg" width="1600" height="1000" loading="lazy" decoding="async" alt="The post-processing window on its Statistics tab with two regions."></a>
+            <figcaption>Statistics: two regions drawn on the slices and compared, each mean with its 95&#8239;% confidence interval.</figcaption>
+          </figure>
+        </div>
+        <div class="tab-panel" data-label="Texture">
+          <figure class="shot">
+            <a class="zoom" href="img/app-texture.jpg"><img src="img/app-texture.jpg" width="1600" height="1000" loading="lazy" decoding="async" alt="The texture analysis window with correlation curves of the reference volume."></a>
+            <figcaption>Texture analysis of the reference scan: correlation lengths and the suggested subset.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ HOW IT WORKS -->
+<section class="section section--longread" id="how" aria-labelledby="how-title">
+  <div class="wrap">
+    <header class="sec-head">
+      <p class="sec-num" aria-hidden="true">03</p>
+      <h2 id="how-title">How it works</h2>
+      <p class="lede">The method, and the tools that tell you how far to trust a result. The figures are computed from synthetic volumes with a known answer by a script in the repository, so they can be regenerated.</p>
+      <nav class="toc-nav" aria-label="Chapters">
+      <ol class="toc">
+        <li><a href="#method"><span>1</span>The augmented Lagrangian method</a></li>
+        <li><a href="#tracking"><span>2</span>Tracking a sequence</a></li>
+        <li><a href="#texture"><span>3</span>Texture analysis in three steps</a></li>
+        <li><a href="#errors"><span>4</span>How precise is the result?</a></li>
+        <li><a href="#rigid"><span>5</span>Removing rigid-body motion</a></li>
+      </ol>
+      </nav>
+    </header>
+
+    <!-- 1. Method -->
+    <article class="chapter" id="method" aria-labelledby="method-title">
+      <p class="chapter-num" aria-hidden="true">1</p>
+      <h3 id="method-title" class="chapter-title">The augmented Lagrangian method</h3>
+      <div class="prose">
+        <p>pyALDVC places a regular grid of nodes in the reference scan, each at the centre of a cubic subset, and solves two problems in turn. <strong>Local:</strong> each subset is matched to the deformed scan on its own, by an inverse-compositional Gauss-Newton fit of an affine warp (3 translations, 9 gradient terms) that minimises the zero-normalised sum of squared differences. This is precise where the texture is good, but the nodes are independent, so gradients are noisy and neighbours need not agree. <strong>Global:</strong> one smooth, kinematically compatible field is fitted to all local results with a finite-element solve. An augmented Lagrangian couples the two; three or four passes are enough, and the smoothness weight is chosen automatically.</p>
+        <p class="ref-link">Method paper: <a href="https://doi.org/10.1007/s11340-020-00607-3">Yang, Hazlett, Landauer, Franck, Experimental Mechanics (2020)</a></p>
+      </div>
+
+      <figure class="fig schematic" aria-labelledby="s1-cap">
+        <svg class="sx sx--wide" viewBox="0 0 1100 340" role="img" aria-labelledby="s1-cap">
+          <defs>
+            <marker id="s1w-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah"/></marker>
+          </defs>
+          <rect class="box data" x="1" y="125" width="130" height="90" rx="8"/>
+          <rect class="chip data" x="1" y="125" width="4" height="90" rx="2"/>
+          <text x="18" y="156" class="t-title">Scans f, g</text>
+          <text x="18" y="178" class="t-sub">reference and</text>
+          <text x="18" y="196" class="t-sub">deformed</text>
+          <path class="arrow" d="M131 170 H157" marker-end="url(#s1w-ah)"/>
+
+          <rect class="box" x="160" y="125" width="180" height="90" rx="8"/>
+          <text x="176" y="156" class="t-title">Initial guess</text>
+          <text x="176" y="178" class="t-sub">phase-correlation shift,</text>
+          <text x="176" y="196" class="t-sub">then NCC on a pyramid</text>
+          <path class="arrow" d="M340 170 H367" marker-end="url(#s1w-ah)"/>
+
+          <rect class="box local" x="370" y="125" width="180" height="90" rx="8"/>
+          <rect class="chip local" x="370" y="125" width="4" height="90" rx="2"/>
+          <text x="387" y="156" class="t-title">Local fit, first pass</text>
+          <text x="387" y="178" class="t-sub">12 parameters per subset</text>
+          <text x="387" y="196" class="t-sub">IC-GN on ZNSSD</text>
+
+          <rect class="box dashed" x="366" y="28" width="210" height="66" rx="8"/>
+          <text x="382" y="55" class="t-title">Weight β</text>
+          <text x="382" y="78" class="t-sub">L-curve, once per reference</text>
+
+          <path class="arrow" d="M576 61 H627" marker-end="url(#s1w-ah)"/>
+          <path class="arrow" d="M550 170 H582 V98 H627" marker-end="url(#s1w-ah)"/>
+
+          <rect class="loop" x="600" y="10" width="300" height="324" rx="14"/>
+          <text x="618" y="33" class="t-cap">ADMM LOOP · UP TO 4 GLOBAL STEPS</text>
+
+          <rect class="box global" x="630" y="46" width="240" height="64" rx="8"/>
+          <rect class="chip global" x="630" y="46" width="4" height="64" rx="2"/>
+          <text x="647" y="72" class="t-title">Global step</text>
+          <text x="647" y="93" class="t-sub">compatible field û: FEM + PCG</text>
+          <path class="arrow" d="M750 110 V135" marker-end="url(#s1w-ah)"/>
+
+          <rect class="box" x="630" y="138" width="240" height="72" rx="8"/>
+          <text x="647" y="163" class="t-title">Dual update</text>
+          <text x="647" y="183" class="t-sub t-math">W ← W + (∇û − F)</text>
+          <text x="647" y="200" class="t-sub t-math">v ← v + (û − u)</text>
+          <path class="arrow" d="M750 210 V235" marker-end="url(#s1w-ah)"/>
+
+          <rect class="box local" x="630" y="238" width="240" height="64" rx="8"/>
+          <rect class="chip local" x="630" y="238" width="4" height="64" rx="2"/>
+          <text x="647" y="264" class="t-title">Local fit, 3 parameters</text>
+          <text x="647" y="285" class="t-sub">F fixed at ∇û, proximal μ term</text>
+
+          <path class="arrow arrow--loop" d="M870 270 H886 V78 H873" marker-end="url(#s1w-ah)"/>
+          <text x="618" y="323" class="t-note">stop when the RMS update &lt; 0.01 voxel</text>
+
+          <path class="arrow" d="M900 170 H937" marker-end="url(#s1w-ah)"/>
+          <rect class="box" x="940" y="125" width="158" height="90" rx="8"/>
+          <text x="956" y="156" class="t-title">Result</text>
+          <text x="956" y="178" class="t-sub">U, F, ZNCC,</text>
+          <text x="956" y="196" class="t-sub">U_std, status</text>
+          <path class="arrow" d="M1019 215 V247" marker-end="url(#s1w-ah)"/>
+          <rect class="box dashed" x="940" y="250" width="158" height="72" rx="8"/>
+          <text x="956" y="276" class="t-title">Strain, after the run</text>
+          <text x="956" y="296" class="t-sub">4 gradient methods</text>
+          <text x="956" y="313" class="t-sub">× 4 measures</text>
+        </svg>
+
+        <svg class="sx sx--tall" viewBox="0 0 360 850" role="img" aria-labelledby="s1-cap">
+          <defs>
+            <marker id="s1t-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah"/></marker>
+          </defs>
+          <rect class="box data" x="20" y="1" width="320" height="62" rx="8"/>
+          <rect class="chip data" x="20" y="1" width="4" height="62" rx="2"/>
+          <text x="38" y="27" class="t-title">Scans f, g</text>
+          <text x="38" y="48" class="t-sub">reference and deformed</text>
+          <path class="arrow" d="M180 63 V87" marker-end="url(#s1t-ah)"/>
+
+          <rect class="box" x="20" y="90" width="320" height="62" rx="8"/>
+          <text x="38" y="116" class="t-title">Initial guess</text>
+          <text x="38" y="137" class="t-sub">phase-correlation shift, then NCC on a pyramid</text>
+          <path class="arrow" d="M180 152 V176" marker-end="url(#s1t-ah)"/>
+
+          <rect class="box local" x="20" y="179" width="320" height="62" rx="8"/>
+          <rect class="chip local" x="20" y="179" width="4" height="62" rx="2"/>
+          <text x="38" y="205" class="t-title">Local fit, first pass</text>
+          <text x="38" y="226" class="t-sub">12 parameters per subset, IC-GN on ZNSSD</text>
+          <path class="arrow" d="M180 241 V265" marker-end="url(#s1t-ah)"/>
+
+          <rect class="box dashed" x="20" y="268" width="320" height="56" rx="8"/>
+          <text x="38" y="292" class="t-title">Weight β</text>
+          <text x="38" y="312" class="t-sub">L-curve, once per reference</text>
+          <path class="arrow" d="M270 324 V358" marker-end="url(#s1t-ah)"/>
+
+          <rect class="loop" x="8" y="340" width="344" height="332" rx="14"/>
+          <text x="24" y="356" class="t-cap">ADMM LOOP · UP TO 4 GLOBAL STEPS</text>
+          <rect class="box global" x="24" y="361" width="290" height="62" rx="8"/>
+          <rect class="chip global" x="24" y="361" width="4" height="62" rx="2"/>
+          <text x="42" y="387" class="t-title">Global step</text>
+          <text x="42" y="408" class="t-sub">compatible field û: FEM + PCG</text>
+          <path class="arrow" d="M169 423 V447" marker-end="url(#s1t-ah)"/>
+
+          <rect class="box" x="24" y="450" width="290" height="72" rx="8"/>
+          <text x="42" y="475" class="t-title">Dual update</text>
+          <text x="42" y="495" class="t-sub t-math">W ← W + (∇û − F)</text>
+          <text x="42" y="512" class="t-sub t-math">v ← v + (û − u)</text>
+          <path class="arrow" d="M169 522 V546" marker-end="url(#s1t-ah)"/>
+
+          <rect class="box local" x="24" y="549" width="290" height="62" rx="8"/>
+          <rect class="chip local" x="24" y="549" width="4" height="62" rx="2"/>
+          <text x="42" y="575" class="t-title">Local fit, 3 parameters</text>
+          <text x="42" y="596" class="t-sub">F fixed at ∇û, proximal μ term</text>
+          <path class="arrow arrow--loop" d="M314 580 H334 V392 H317" marker-end="url(#s1t-ah)"/>
+          <text x="24" y="656" class="t-note">stop when the RMS update &lt; 0.01 voxel</text>
+          <path class="arrow" d="M180 672 V700" marker-end="url(#s1t-ah)"/>
+
+          <rect class="box" x="20" y="703" width="320" height="62" rx="8"/>
+          <text x="38" y="729" class="t-title">Result</text>
+          <text x="38" y="750" class="t-sub">U, F, ZNCC, U_std, status</text>
+          <path class="arrow" d="M180 765 V789" marker-end="url(#s1t-ah)"/>
+          <rect class="box dashed" x="20" y="792" width="320" height="56" rx="8"/>
+          <text x="38" y="816" class="t-title">Strain, after the run</text>
+          <text x="38" y="836" class="t-sub">4 gradient methods × 4 measures</text>
+        </svg>
+        <figcaption id="s1-cap"><span class="fig-label">Schematic 1</span> One run: an initial guess (a phase-correlation shift, then normalised cross-correlation on a pyramid), a 12-parameter local fit for every subset, then up to four ADMM passes in total (at most four global steps, each followed by a dual update and, while the loop goes on, a 3-parameter local fit), until the RMS update is below 0.01 voxel.</figcaption>
+      </figure>
+
+      <figure class="fig">
+        <a class="zoom" href="figures/aldvc_local_vs_global.png"><img src="figures/aldvc_local_vs_global.png" width="1822" height="649" loading="lazy" decoding="async" alt="Three colour maps of ∂u/∂x: the imposed field, a noisy map from the local subsets, and a smoother map after the global step."></a>
+        <figcaption><span class="fig-label">Figure 1</span> <strong>What the global step adds.</strong> The gradient ∂u/∂x of a smooth, localised displacement on the middle node layer of a noisy synthetic pair (SNR <span data-num="figures.aldvc_local_vs_global.setup.snr" data-fmt="int">2</span>, subset <span data-num="figures.aldvc_local_vs_global.setup.subset_voxel" data-fmt="int">12</span> voxels): (a) imposed, (b) from the local subsets alone, (c) after the AL-DVC global step. The RMS error of ∂u/∂x falls from <span data-num="figures.aldvc_local_vs_global.drawn_case.rms_dudx_local" data-fmt="f3">0.022</span> to <span data-num="figures.aldvc_local_vs_global.drawn_case.rms_dudx_aldvc" data-fmt="f3">0.010</span>; the displacement error changes less, from <span data-num="figures.aldvc_local_vs_global.drawn_case.rms_displacement_local_voxel" data-fmt="f3">0.139</span> to <span data-num="figures.aldvc_local_vs_global.drawn_case.rms_displacement_aldvc_voxel" data-fmt="f3">0.121</span> voxel. Over three noise seeds the error of the full gradient is <span data-num="figures.aldvc_local_vs_global.over_seed_sets_mean_sd.gradient_error_ratio_local_over_aldvc_range[0]" data-fmt="f1">2.4</span>–<span data-num="figures.aldvc_local_vs_global.over_seed_sets_mean_sd.gradient_error_ratio_local_over_aldvc_range[1]" data-fmt="f1">2.5</span> times lower after the global step.</figcaption>
+      </figure>
+    </article>
+
+    <!-- 2. Tracking -->
+    <article class="chapter" id="tracking" aria-labelledby="tracking-title">
+      <p class="chapter-num" aria-hidden="true">2</p>
+      <h3 id="tracking-title" class="chapter-title">Tracking a sequence</h3>
+      <div class="prose">
+        <p>A sequence of scans can be tracked two ways. <strong>Accumulative</strong> (the default): every scan is correlated with the first, so errors do not add up from step to step. <strong>Incremental:</strong> every scan is correlated with the one before, and the steps are chained back to the first scan by interpolating each step's displacement at the points' current positions. Incremental tracking follows deformations too large for a subset to still match its first-scan appearance, at the cost of a small error per step; the <a href="#rotation">rotation case</a> above was tracked this way. Every pair starts from a coarse-to-fine guess: a phase-correlation shift, then normalised cross-correlation on a pyramid of downsampled scans, with the search widened when many peaks hit its edge.</p>
+      </div>
+
+      <figure class="fig schematic" aria-labelledby="s2-cap">
+        <svg class="sx sx--wide" viewBox="0 14 1100 382" role="img" aria-labelledby="s2-cap">
+          <defs>
+            <marker id="s2w-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah-acc"/></marker>
+            <marker id="s2w-inc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah-inc"/></marker>
+            <pattern id="s2w-spk" width="12" height="12" patternUnits="userSpaceOnUse">
+              <circle cx="2" cy="3" r="1.3" class="spk"/><circle cx="8" cy="1.5" r="0.9" class="spk"/><circle cx="6" cy="8" r="1.6" class="spk"/><circle cx="11" cy="10" r="1" class="spk"/><circle cx="1.5" cy="10.5" r="0.8" class="spk"/>
+            </pattern>
+          </defs>
+          <rect class="key key--acc" x="0" y="106" width="12" height="12" rx="3"/>
+          <text x="22" y="117" class="t-row">Accumulative</text>
+          <text x="0" y="142" class="t-sub">every scan against scan 0</text>
+          <text x="0" y="160" class="t-sub t-dim">(the default)</text>
+          <rect class="key key--inc" x="0" y="248" width="12" height="12" rx="3"/>
+          <text x="22" y="259" class="t-row">Incremental</text>
+          <text x="0" y="284" class="t-sub">every scan against</text>
+          <text x="0" y="302" class="t-sub">the one before</text>
+
+          <!-- accumulative: one arc per frame, each leaving frame 0 from its own point -->
+          <path class="arc-acc" d="M324 90 Q395 50 466 88" marker-end="url(#s2w-acc)"/>
+          <path class="arc-acc" d="M310 90 Q473 22 636 88" marker-end="url(#s2w-acc)"/>
+          <path class="arc-acc" d="M296 90 Q551 -6 806 88" marker-end="url(#s2w-acc)"/>
+          <path class="arc-acc" d="M282 90 Q629 -34 976 88" marker-end="url(#s2w-acc)"/>
+
+          <g class="tiles">
+            <g transform="translate(260 92)"><rect class="tile tile--ref" width="76" height="76" rx="8"/><rect class="tile-in" x="16" y="16" width="44" height="44" fill="url(#s2w-spk)"/><text x="8" y="70" class="t-tile">0</text></g>
+            <g transform="translate(430 92)"><rect class="tile" width="76" height="76" rx="8"/><rect class="tile-in" x="16" y="16" width="44" height="44" fill="url(#s2w-spk)" transform="rotate(8 38 38)"/><text x="8" y="70" class="t-tile">1</text></g>
+            <g transform="translate(600 92)"><rect class="tile" width="76" height="76" rx="8"/><rect class="tile-in" x="16" y="16" width="44" height="44" fill="url(#s2w-spk)" transform="rotate(16 38 38)"/><text x="8" y="70" class="t-tile">2</text></g>
+            <g transform="translate(770 92)"><rect class="tile" width="76" height="76" rx="8"/><rect class="tile-in" x="16" y="16" width="44" height="44" fill="url(#s2w-spk)" transform="rotate(24 38 38)"/><text x="8" y="70" class="t-tile">3</text></g>
+            <g transform="translate(940 92)"><rect class="tile" width="76" height="76" rx="8"/><rect class="tile-in" x="16" y="16" width="44" height="44" fill="url(#s2w-spk)" transform="rotate(32 38 38)"/><text x="8" y="70" class="t-tile">4</text></g>
+          </g>
+
+          <line class="row-rule" x1="0" y1="206" x2="1100" y2="206"/>
+
+          <g class="tiles">
+            <g transform="translate(260 232)"><rect class="tile tile--ref" width="76" height="76" rx="8"/><rect class="tile-in" x="16" y="16" width="44" height="44" fill="url(#s2w-spk)"/><text x="8" y="70" class="t-tile">0</text></g>
+            <g transform="translate(430 232)"><rect class="tile" width="76" height="76" rx="8"/><rect class="tile-in" x="16" y="16" width="44" height="44" fill="url(#s2w-spk)" transform="rotate(8 38 38)"/><text x="8" y="70" class="t-tile">1</text></g>
+            <g transform="translate(600 232)"><rect class="tile" width="76" height="76" rx="8"/><rect class="tile-in" x="16" y="16" width="44" height="44" fill="url(#s2w-spk)" transform="rotate(16 38 38)"/><text x="8" y="70" class="t-tile">2</text></g>
+            <g transform="translate(770 232)"><rect class="tile" width="76" height="76" rx="8"/><rect class="tile-in" x="16" y="16" width="44" height="44" fill="url(#s2w-spk)" transform="rotate(24 38 38)"/><text x="8" y="70" class="t-tile">3</text></g>
+            <g transform="translate(940 232)"><rect class="tile" width="76" height="76" rx="8"/><rect class="tile-in" x="16" y="16" width="44" height="44" fill="url(#s2w-spk)" transform="rotate(32 38 38)"/><text x="8" y="70" class="t-tile">4</text></g>
+          </g>
+          <path class="arc-inc" d="M340 270 H426" marker-end="url(#s2w-inc)"/>
+          <path class="arc-inc" d="M510 270 H596" marker-end="url(#s2w-inc)"/>
+          <path class="arc-inc" d="M680 270 H766" marker-end="url(#s2w-inc)"/>
+          <path class="arc-inc" d="M850 270 H936" marker-end="url(#s2w-inc)"/>
+          <path class="arc-chain" d="M978 312 Q638 372 300 314" marker-end="url(#s2w-inc)"/>
+          <text x="638" y="378" class="t-sub t-center">chained back to scan 0: each step interpolated at the tracked positions (cubic)</text>
+        </svg>
+
+        <svg class="sx sx--tall" viewBox="0 0 360 396" role="img" aria-labelledby="s2-cap">
+          <defs>
+            <marker id="s2t-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah-acc"/></marker>
+            <marker id="s2t-inc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah-inc"/></marker>
+            <pattern id="s2t-spk" width="9" height="9" patternUnits="userSpaceOnUse">
+              <circle cx="1.5" cy="2" r="1" class="spk"/><circle cx="6" cy="1.2" r="0.7" class="spk"/><circle cx="4.5" cy="6" r="1.2" class="spk"/><circle cx="8.2" cy="7.5" r="0.7" class="spk"/>
+            </pattern>
+          </defs>
+          <rect class="key key--acc" x="4" y="7" width="11" height="11" rx="3"/>
+          <text x="22" y="17" class="t-row t-row--small">Accumulative <tspan class="t-dim t-small">(the default)</tspan></text>
+          <text x="4" y="38" class="t-sub">every scan against scan 0</text>
+          <path class="arc-acc" d="M54 108 Q81 84 106 106" marker-end="url(#s2t-acc)"/>
+          <path class="arc-acc" d="M45 108 Q112 66 176 106" marker-end="url(#s2t-acc)"/>
+          <path class="arc-acc" d="M36 108 Q142 48 246 106" marker-end="url(#s2t-acc)"/>
+          <path class="arc-acc" d="M27 108 Q172 30 316 106" marker-end="url(#s2t-acc)"/>
+          <g class="tiles">
+            <g transform="translate(12 110)"><rect class="tile tile--ref" width="52" height="52" rx="6"/><rect class="tile-in" x="11" y="11" width="30" height="30" fill="url(#s2t-spk)"/><text x="5" y="48" class="t-tile t-small">0</text></g>
+            <g transform="translate(82 110)"><rect class="tile" width="52" height="52" rx="6"/><rect class="tile-in" x="11" y="11" width="30" height="30" fill="url(#s2t-spk)" transform="rotate(8 26 26)"/><text x="5" y="48" class="t-tile t-small">1</text></g>
+            <g transform="translate(152 110)"><rect class="tile" width="52" height="52" rx="6"/><rect class="tile-in" x="11" y="11" width="30" height="30" fill="url(#s2t-spk)" transform="rotate(16 26 26)"/><text x="5" y="48" class="t-tile t-small">2</text></g>
+            <g transform="translate(222 110)"><rect class="tile" width="52" height="52" rx="6"/><rect class="tile-in" x="11" y="11" width="30" height="30" fill="url(#s2t-spk)" transform="rotate(24 26 26)"/><text x="5" y="48" class="t-tile t-small">3</text></g>
+            <g transform="translate(292 110)"><rect class="tile" width="52" height="52" rx="6"/><rect class="tile-in" x="11" y="11" width="30" height="30" fill="url(#s2t-spk)" transform="rotate(32 26 26)"/><text x="5" y="48" class="t-tile t-small">4</text></g>
+          </g>
+          <line class="row-rule" x1="0" y1="190" x2="360" y2="190"/>
+          <rect class="key key--inc" x="4" y="209" width="11" height="11" rx="3"/>
+          <text x="22" y="219" class="t-row t-row--small">Incremental</text>
+          <text x="4" y="240" class="t-sub">every scan against the one before</text>
+          <g class="tiles">
+            <g transform="translate(12 256)"><rect class="tile tile--ref" width="52" height="52" rx="6"/><rect class="tile-in" x="11" y="11" width="30" height="30" fill="url(#s2t-spk)"/><text x="5" y="48" class="t-tile t-small">0</text></g>
+            <g transform="translate(82 256)"><rect class="tile" width="52" height="52" rx="6"/><rect class="tile-in" x="11" y="11" width="30" height="30" fill="url(#s2t-spk)" transform="rotate(8 26 26)"/><text x="5" y="48" class="t-tile t-small">1</text></g>
+            <g transform="translate(152 256)"><rect class="tile" width="52" height="52" rx="6"/><rect class="tile-in" x="11" y="11" width="30" height="30" fill="url(#s2t-spk)" transform="rotate(16 26 26)"/><text x="5" y="48" class="t-tile t-small">2</text></g>
+            <g transform="translate(222 256)"><rect class="tile" width="52" height="52" rx="6"/><rect class="tile-in" x="11" y="11" width="30" height="30" fill="url(#s2t-spk)" transform="rotate(24 26 26)"/><text x="5" y="48" class="t-tile t-small">3</text></g>
+            <g transform="translate(292 256)"><rect class="tile" width="52" height="52" rx="6"/><rect class="tile-in" x="11" y="11" width="30" height="30" fill="url(#s2t-spk)" transform="rotate(32 26 26)"/><text x="5" y="48" class="t-tile t-small">4</text></g>
+          </g>
+          <path class="arc-inc" d="M66 282 H79" marker-end="url(#s2t-inc)"/>
+          <path class="arc-inc" d="M136 282 H149" marker-end="url(#s2t-inc)"/>
+          <path class="arc-inc" d="M206 282 H219" marker-end="url(#s2t-inc)"/>
+          <path class="arc-inc" d="M276 282 H289" marker-end="url(#s2t-inc)"/>
+          <path class="arc-chain" d="M318 312 Q178 352 40 314" marker-end="url(#s2t-inc)"/>
+          <text x="180" y="366" class="t-sub t-center">chained back to scan 0: each step</text>
+          <text x="180" y="384" class="t-sub t-center">interpolated at the tracked positions (cubic)</text>
+        </svg>
+        <figcaption id="s2-cap"><span class="fig-label">Schematic 2</span> Accumulative: every scan against scan 0. Incremental: every scan against the previous one, chained back to scan 0 by cubic interpolation at the tracked positions.</figcaption>
+      </figure>
+
+      <figure class="fig">
+        <a class="zoom" href="figures/tracking_modes.png"><img src="figures/tracking_modes.png" width="1823" height="678" loading="lazy" decoding="async" alt="Two charts against total rotation: the accumulative error rises steeply after 20° and its share of converged nodes drops, while the incremental curves stay flat."></a>
+        <figcaption><span class="fig-label">Figure 2</span> Accumulative against incremental tracking of a speckled cylinder turning <span data-num="figures.tracking_modes.setup.step_deg" data-fmt="int">5</span>° between scans (synthetic, subset <span data-num="figures.tracking_modes.setup.subset_voxel" data-fmt="int">16</span> voxels). (a) Accumulative tracking keeps a median error of <span data-num="figures.tracking_modes.accumulative.median_error_voxel[3]" data-fmt="f3">0.004</span> voxel or less up to 20°, then degrades and breaks down beyond 25°; (b) <span data-num="figures.tracking_modes.accumulative.converged_percent[5]" data-fmt="f1">88.6</span>&#8239;% of its nodes converge at 30° and <span data-num="figures.tracking_modes.accumulative.converged_percent[7]" data-fmt="int">29</span>&#8239;% at 40°. Incremental tracking converges at every node evaluated up to <span data-num="figures.tracking_modes.angles_deg[8]" data-fmt="int">45</span>°, its median error growing slowly from <span data-num="figures.tracking_modes.incremental.median_error_voxel[0]" data-fmt="f3">0.002</span> to <span data-num="figures.tracking_modes.incremental.median_error_voxel[8]" data-fmt="f3">0.012</span> voxel. Where accumulative tracking fails depends on the subset size and the texture.</figcaption>
+      </figure>
+    </article>
+
+    <!-- 3. Texture -->
+    <article class="chapter" id="texture" aria-labelledby="texture-title">
+      <p class="chapter-num" aria-hidden="true">3</p>
+      <h3 id="texture-title" class="chapter-title">Texture analysis in three steps</h3>
+      <div class="prose">
+        <p>A subset can only be followed if it holds enough texture: several speckles, beads or cell walls. The texture analysis measures how far grey values stay correlated and turns that into a subset size. <strong>1. Correlation length.</strong> Compare a cube with shifted copies of itself; the shift at which the correlation falls to 1/e is the correlation length. Each value is divided by the number of voxel pairs that still overlap, so the shrinking overlap does not bias it. <strong>2. Representative volume.</strong> Grow the cube about one centre until the length stops changing. <strong>3. Subset.</strong> Suggest four correlation lengths per axis and a step of half a subset: a starting point, applied with one click.</p>
+      </div>
+
+      <div class="fig steps">
+        <div class="tabs" data-tabs data-tabs-style="steps" data-tabs-label="Texture analysis steps">
+          <div class="tab-panel" data-label="Correlation length" data-step="1">
+            <figure>
+              <div class="clip-frame clip-frame--figure" style="aspect-ratio: 1332 / 558" data-clip data-btn="tr">
+                <img class="poster" src="figures/guide_overlap_correction.png" width="1332" height="558" loading="lazy" decoding="async" alt="">
+                <video autoplay muted loop playsinline preload="none" width="1332" height="558" data-auto data-src="figures/guide_overlap_correction.mp4"
+                       data-desc="a box compared with a shifted copy of itself, next to the raw and the overlap-corrected correlation curves"></video>
+                <noscript><video autoplay controls muted loop playsinline poster="figures/guide_overlap_correction.png" width="1332" height="558" aria-label="Animation: a box compared with a shifted copy of itself, next to the raw and the overlap-corrected correlation curves."><source src="figures/guide_overlap_correction.mp4" type="video/mp4"></video></noscript>
+              </div>
+              <figcaption><span class="fig-label">Step 1</span> A cube and its shifted copy. The overlap shrinks as the shift grows, so the raw correlation falls faster than the overlap-corrected one.</figcaption>
+            </figure>
+          </div>
+          <div class="tab-panel" data-label="Representative volume" data-step="2">
+            <figure>
+              <div class="clip-frame clip-frame--figure" style="aspect-ratio: 1332 / 558" data-clip data-btn="tr">
+                <img class="poster" src="figures/guide_rve_sweep.png" width="1332" height="558" loading="lazy" decoding="async" alt="">
+                <video autoplay muted loop playsinline preload="none" width="1332" height="558" data-auto data-src="figures/guide_rve_sweep.mp4"
+                       data-desc="concentric boxes of growing size on a speckle image, next to the correlation length settling as the box grows"></video>
+                <noscript><video autoplay controls muted loop playsinline poster="figures/guide_rve_sweep.png" width="1332" height="558" aria-label="Animation: concentric boxes of growing size on a speckle image, next to the correlation length settling as the box grows."><source src="figures/guide_rve_sweep.mp4" type="video/mp4"></video></noscript>
+              </div>
+              <figcaption><span class="fig-label">Step 2</span> Concentric cubes of growing size about one centre. The correlation length settles once the cube is larger than the representative volume.</figcaption>
+            </figure>
+          </div>
+          <div class="tab-panel" data-label="Subset" data-step="3">
+            <figure>
+              <a class="zoom" href="figures/guide_subset.png"><img src="figures/guide_subset.png" width="1332" height="558" loading="lazy" decoding="async" alt="A speckle image with a subset box about four correlation lengths wide and its copy one step along, next to a correlation curve crossing 1/e."></a>
+              <figcaption><span class="fig-label">Step 3</span> From the 1/e correlation length to the subset: four lengths, rounded up to an even edge, and a step of half the subset, also even.</figcaption>
+            </figure>
+          </div>
+        </div>
+      </div>
+
+      <figure class="fig">
+        <a class="zoom" href="figures/texture_subset.png"><img src="figures/texture_subset.png" width="1760" height="703" loading="lazy" decoding="async" alt="A grey-scale texture of bright spheres with nested boxes of one, two and four correlation lengths, and a curve of displacement error against subset size that falls steeply and flattens near the suggested size."></a>
+        <figcaption><span class="fig-label">Figure 3</span> <strong>Why four lengths.</strong> (a) A synthetic texture of random spheres with a correlation length L of <span data-num="figures.texture_subset.correlation_length_1e_voxel[0]" data-fmt="f1">5.1</span> voxels, and subsets of 1, 2 and 4&#8239;L. (b) The displacement error over three such textures falls from <span data-num="figures.texture_subset.error_at_smallest_subset_voxel" data-fmt="f3">0.028</span> voxel at the smallest subset, <span data-num="figures.texture_subset.setup.subsets_voxel[0]" data-fmt="int">8</span> voxels, to <span data-num="figures.texture_subset.error_at_suggested_subset_voxel" data-fmt="f4">0.0137</span> at the suggested <span data-num="figures.texture_subset.suggested_subset_voxel[0][0]" data-fmt="int">22</span> voxels (four per-axis lengths, rounded up to an even edge), and barely changes with larger subsets (<span data-num="figures.texture_subset.error_at_largest_subset_voxel" data-fmt="f4">0.0133</span> at <span data-num="figures.texture_subset.setup.subsets_voxel[10]" data-fmt="int">32</span>). Noisy scans may need larger subsets, finely varying fields smaller ones.</figcaption>
+      </figure>
+    </article>
+
+    <!-- 4. Errors -->
+    <article class="chapter" id="errors" aria-labelledby="errors-title">
+      <p class="chapter-num" aria-hidden="true">4</p>
+      <h3 id="errors-title" class="chapter-title">How precise is the result?</h3>
+      <div class="prose">
+        <p>pyALDVC reports precision in three ways. <strong>Noise floor:</strong> for two scans of a static specimen, or a known translation, it uses the DVC Challenge 2.0 definitions: the bias is the mean error of each component, the noise floor its population standard deviation after that mean is removed, and u<sub>rms</sub> combines both; MAER/SDER, the virtual strain gauge and, for several static scans, spatial and temporal noise are reported too. <strong>Per node:</strong> every converged node carries U<sub>std</sub>, a standard deviation of its local subset fit, predicted from its own residual and Gauss-Newton matrix at no extra cost. <strong>Means:</strong> every mean comes with a 95&#8239;% confidence interval built on the effective number of independent nodes, because overlapping subsets make std/√N far too optimistic.</p>
+      </div>
+
+      <figure class="fig">
+        <a class="zoom" href="figures/noise_floor.png"><img src="figures/noise_floor.png" width="1823" height="618" loading="lazy" decoding="async" alt="Three histograms of measured u, v and w for a static pair, each centred near zero, with a solid line at the bias and dashed lines one noise floor either side."></a>
+        <figcaption><span class="fig-label">Figure 4</span> Two scans of a static specimen (synthetic, 8-bit, independent noise of 2&#8239;% of full scale in each): measured (a) u, (b) v and (c) w, with the bias (solid line) and the bias ± noise floor (dashed); u<sub>rms</sub> is <span data-num="figures.noise_floor.u_rms_voxel" data-fmt="f3">0.049</span> voxel. The <span data-num="figures.noise_floor.n_nodes" data-fmt="int">729</span> nodes are worth about <span data-num="figures.noise_floor.n_eff[0]" data-fmt="int">124</span> independent values for u, so the 95&#8239;% interval of its mean is ±<span data-num="figures.noise_floor.ci95_half_width_voxel[0]" data-fmt="f4">0.0046</span> voxel, <span data-num="figures.noise_floor.ci_widening_factor[0]" data-fmt="f2">2.45</span>× wider than the naive ±<span data-num="figures.noise_floor.naive_ci95_half_width_voxel[0]" data-fmt="f4">0.0019</span>.</figcaption>
+      </figure>
+
+      <figure class="fig">
+        <a class="zoom" href="figures/uncertainty_map.png"><img src="figures/uncertainty_map.png" width="1823" height="638" loading="lazy" decoding="async" alt="Two maps, predicted and actual displacement error, both growing towards the low-contrast side, and a calibration curve lying above the identity line."></a>
+        <figcaption><span class="fig-label">Figure 5</span> Predicted against actual error where the texture contrast fades from 1 to 0.25 along x (synthetic): (a) U<sub>std</sub> from the run, (b) the actual error of the local subset fit, (c) calibration over deciles of U<sub>std</sub>. The error grows where U<sub>std</sub> does, but the prediction runs low: <span data-num="figures.uncertainty_map.per_decile_prediction_over_error_range[0]" data-fmt="pct">68</span>–<span data-num="figures.uncertainty_map.per_decile_prediction_over_error_range[1]" data-fmt="pct">80</span>&#8239;% of the actual error per decile, <span data-num="figures.uncertainty_map.rms_prediction_over_rms_error" data-fmt="pct">74</span>&#8239;% overall. U<sub>std</sub> describes the local fit and assumes similar noise in both scans; the global step lowers the error of the final field.</figcaption>
+      </figure>
+    </article>
+
+    <!-- 5. Rigid -->
+    <article class="chapter" id="rigid" aria-labelledby="rigid-title">
+      <p class="chapter-num" aria-hidden="true">5</p>
+      <h3 id="rigid-title" class="chapter-title">Removing rigid-body motion</h3>
+      <div class="prose">
+        <p>A specimen that shifts or turns between scans adds displacement that is not deformation, and a rotation even reads as false infinitesimal strain: 2° gives about <span class="nw">−6&#8239;×&#8239;10<sup>−4</sup></span>. pyALDVC removes a translation (the mean, as the DVC Challenge 2.0 noise floor does), a rigid motion, or the whole affine part. The rigid fit is a closed-form, weighted Kabsch solution in physical units, and it can be fitted over one region, such as a grip, and removed everywhere. Strain is recomputed from the corrected gradient, <span class="nw">R<sup>T</sup>(I&#8239;+&#8239;H)&#8239;−&#8239;I</span>: the Green–Lagrange strain is unchanged, the infinitesimal strain loses the rotation. The stored result is never edited; the corrected field can be shown and exported, with its fit recorded.</p>
+      </div>
+
+      <figure class="fig">
+        <a class="zoom" href="figures/rigid_removal.png"><img src="figures/rigid_removal.png" width="1823" height="674" loading="lazy" decoding="async" alt="Arrow plots before and after removing the rigid motion, and a bar chart in which the corrected normal strains match the imposed ones."></a>
+        <figcaption><span class="fig-label">Figure 6</span> A <span data-num="figures.rigid_removal.setup.rotation_deg" data-fmt="int">4</span>° rotation about an oblique axis and a translation, on top of a small compression along x with Poisson expansion (synthetic). (a) As measured, the rotation dominates the arrows and distorts the infinitesimal strains. (b) With the fitted rigid motion (<span data-num="figures.rigid_removal.fitted_rotation_deg" data-fmt="f2">4.00</span>°) removed, the compression and the expansion appear (arrows ×40). (c) Mean ε<sub>xx</sub>&#8201;/&#8201;ε<sub>yy</sub>&#8201;/&#8201;ε<sub>zz</sub>: imposed <span data-num="figures.rigid_removal.strain_imposed_percent[0]" data-fmt="s2">−0.40</span>&#8201;/&#8201;<span data-num="figures.rigid_removal.strain_imposed_percent[1]" data-fmt="s2">+0.12</span>&#8201;/&#8201;<span data-num="figures.rigid_removal.strain_imposed_percent[2]" data-fmt="s2">+0.12</span>&#8239;%, as measured <span data-num="figures.rigid_removal.strain_as_measured_percent[0]" data-fmt="s2">−0.62</span>&#8201;/&#8201;<span data-num="figures.rigid_removal.strain_as_measured_percent[1]" data-fmt="s2">−0.12</span>&#8201;/&#8201;<span data-num="figures.rigid_removal.strain_as_measured_percent[2]" data-fmt="s2">+0.09</span>&#8239;%, with the rigid motion removed <span data-num="figures.rigid_removal.strain_removed_percent[0]" data-fmt="s3">−0.397</span>&#8201;/&#8201;<span data-num="figures.rigid_removal.strain_removed_percent[1]" data-fmt="s3">+0.116</span>&#8201;/&#8201;<span data-num="figures.rigid_removal.strain_removed_percent[2]" data-fmt="s3">+0.119</span>&#8239;%.</figcaption>
+      </figure>
+    </article>
+  </div>
+</section>
+
+<!-- ============================================================ ACCURACY -->
+<section class="section" id="accuracy" aria-labelledby="accuracy-title">
+  <div class="wrap">
+    <header class="sec-head">
+      <p class="sec-num" aria-hidden="true">04</p>
+      <h2 id="accuracy-title">Accuracy and speed</h2>
+      <p class="lede">Synthetic volumes with a known deformation, and the confocal hydrogel scan run through both pyALDVC and the MATLAB ALDVC code.</p>
+    </header>
+
+    <div class="accuracy-grid">
+      <div class="accuracy-main">
+        <table class="data-table">
+          <caption class="visually-hidden">Accuracy and speed of pyALDVC</caption>
+          <thead>
+            <tr><th scope="col">Test</th><th scope="col">Result</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">Rigid translation, synthetic</th><td>0.003–0.006 voxel</td></tr>
+            <tr><th scope="row">2&#8239;% strain, synthetic</th><td>0.004 voxel</td></tr>
+            <tr><th scope="row">5° rotation, synthetic</th><td>0.001 voxel</td></tr>
+            <tr><th scope="row">Translation by (12.3, −9.6, 7.4) voxels plus 1&#8239;% strain, synthetic</th><td>0.004–0.005 voxel</td></tr>
+            <tr><th scope="row">2&#8239;% strain, noisy scan (SNR 6)</th><td>0.011–0.012 voxel</td></tr>
+            <tr><th scope="row">The confocal hydrogel pair against MATLAB ALDVC</th><td>median difference 0.005&#8201;/&#8201;0.006&#8201;/&#8201;0.020 voxel <span class="nw">(u, v, w)</span></td></tr>
+            <tr><th scope="row">GPU against CPU</th><td>typically below 10<sup>−5</sup> voxel</td></tr>
+          </tbody>
+        </table>
+        <p class="accuracy-note">Synthetic rows: RMS error of each displacement component at the interior nodes, subset 16, step 8 voxels. MATLAB row: subset 32, step 8 voxels, 79,200 nodes. These subsets are the Python <code>winsize</code>; the application shows one voxel more (17 and 33). The difference in w is larger mainly because the confocal scan has far less texture along z, where both codes stop early; the two codes also reject different outliers. The synthetic rows use the default settings; the MATLAB row and the timing use the settings of the MATLAB example run, so both codes solve the same problem. Every push to the main branch is tested on Python 3.10, 3.11 and 3.12.</p>
+        <p class="ref-link">The full comparison with the MATLAB code: <a href="https://github.com/zachtong/pyALDVC/blob/main/docs/design.md">design document, section 10</a></p>
+      </div>
+
+      <aside class="accuracy-side" aria-label="Run time and memory">
+        <div class="bars">
+          <p class="bars-k">Run time, one confocal pair</p>
+          <p class="bars-sub">1024&#8239;×&#8239;1024&#8239;×&#8239;306 voxels, 79,200 nodes, settings of the MATLAB example</p>
+          <div class="bar" style="--w: 11.3%">
+            <div class="bar-row"><span class="bar-name">NVIDIA RTX 5090</span><span class="bar-val">34&#8239;s</span></div>
+            <div class="bar-track"><div class="bar-fill"></div></div>
+          </div>
+          <div class="bar bar--muted" style="--w: 100%">
+            <div class="bar-row"><span class="bar-name">24-core CPU</span><span class="bar-val">5.0&#8239;min</span></div>
+            <div class="bar-track"><div class="bar-fill"></div></div>
+          </div>
+        </div>
+        <div class="bars">
+          <p class="bars-k">Peak volume memory, masked 1024³ run</p>
+          <p class="bars-sub">local steps over sub-boxes, gradients on the fly</p>
+          <div class="bar" style="--w: 26.4%">
+            <div class="bar-row"><span class="bar-name">Now</span><span class="bar-val">14&#8239;GB</span></div>
+            <div class="bar-track"><div class="bar-fill"></div></div>
+          </div>
+          <div class="bar bar--muted" style="--w: 100%">
+            <div class="bar-row"><span class="bar-name">Before</span><span class="bar-val">53&#8239;GB</span></div>
+            <div class="bar-track"><div class="bar-fill"></div></div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ GET STARTED -->
+<section class="section section--start" id="start" aria-labelledby="start-title">
+  <div class="wrap">
+    <header class="sec-head">
+      <p class="sec-num" aria-hidden="true">05</p>
+      <h2 id="start-title">Get started</h2>
+    </header>
+
+    <div class="start-grid">
+      <div class="install-block">
+        <div class="term">
+          <div class="term-bar">
+            <h3 class="term-title">Install</h3>
+            <button class="copy-btn" type="button" data-copy-target="#install-code" data-copy-mode="commands">Copy</button>
+          </div>
+<pre class="term-code" id="install-code"><code><span class="ln"><span class="tk-cmd">conda</span> create -n pyaldvc python=3.12 -y</span>
+<span class="ln"><span class="tk-cmd">conda</span> activate pyaldvc</span>
+<span class="ln"><span class="tk-cmd">pip</span> install al-dvc<span class="pad">    </span><span class="c"># NVIDIA GPU: pip install "al-dvc[gpu]"</span></span>
+<span class="ln"><span class="tk-cmd">al-dvc</span><span class="pad">                </span><span class="c"># opens the application</span></span></code></pre>
+        </div>
+        <div class="install-notes">
+          <p>conda only provides Python here: al-dvc and its dependencies come from PyPI.</p>
+          <p>The GPU flavour needs an NVIDIA driver, not the CUDA Toolkit.</p>
+          <p>Copy leaves the comments out, so the lines run as they are in Anaconda Prompt, PowerShell or a Unix shell.</p>
+        </div>
+      </div>
+
+      <div class="cards">
+        <div class="card">
+          <h3>No Python?</h3>
+          <p>Every release ships a portable Windows bundle: unzip it and double-click <code>pyALDVC.exe</code>. The bundle runs on the CPU.</p>
+          <a class="btn btn-ghost btn-small" href="https://github.com/zachtong/pyALDVC/releases/latest">Download for Windows</a>
+        </div>
+        <div class="card">
+          <h3>Check the install</h3>
+          <p><code>al-dvc --self-test</code> runs six checks, prints <code>[ok]</code> or <code>[FAIL]</code> for each and saves them to <code>pyaldvc_self_test.txt</code>. The compute-backend line names the GPU when one is used.</p>
+        </div>
+        <div class="card">
+          <h3>Learn</h3>
+          <p>The user guide covers data preparation, parameters, results, statistics, exports, the GPU and the command line.</p>
+          <a class="btn btn-ghost btn-small" href="https://github.com/zachtong/pyALDVC/blob/main/docs/user_guide.md">Read the user guide</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ CITE -->
+<section class="section" id="cite" aria-labelledby="cite-title">
+  <div class="wrap">
+    <header class="sec-head">
+      <p class="sec-num" aria-hidden="true">06</p>
+      <h2 id="cite-title">Cite</h2>
+      <p class="lede">If pyALDVC helps your research, please cite the software and the method.</p>
+    </header>
+
+    <div class="refs">
+      <div class="ref">
+        <p class="ref-kind">Software</p>
+        <p class="ref-text">Tong, Z., Yang, J. pyALDVC: Augmented Lagrangian Digital Volume Correlation in Python. Zenodo (2026). <a class="doi" href="https://doi.org/10.5281/zenodo.22883767">doi:10.5281/zenodo.22883767</a></p>
+        <p class="ref-small">The concept DOI always resolves to the latest release; each release also has its own DOI.</p>
+      </div>
+      <div class="ref">
+        <p class="ref-kind">Method</p>
+        <p class="ref-text">Yang, J., Hazlett, L., Landauer, A. K., Franck, C. Augmented Lagrangian Digital Volume Correlation (ALDVC). Experimental Mechanics 60, <span class="nw">1205–1223</span> (2020). <a class="doi" href="https://doi.org/10.1007/s11340-020-00607-3">doi:10.1007/s11340-020-00607-3</a></p>
+      </div>
+    </div>
+
+    <details class="bibtex">
+      <summary>BibTeX</summary>
+      <div class="code">
+        <button class="copy-btn copy-btn--code" type="button" data-copy-target="#bibtex" data-label="Copy BibTeX">Copy BibTeX</button>
+<pre id="bibtex"><code>@software{tong_pyaldvc,
+  author    = {Tong, Zixiang and Yang, Jin},
+  title     = {{pyALDVC}: Augmented Lagrangian Digital Volume Correlation in Python},
+  publisher = {Zenodo},
+  year      = {2026},
+  doi       = {10.5281/zenodo.22883767},
+  url       = {https://github.com/zachtong/pyALDVC}
+}
+
+@article{yang_aldvc_2020,
+  author  = {Yang, Jin and Hazlett, Lauren and Landauer, Alexander K. and Franck, Christian},
+  title   = {Augmented {Lagrangian} Digital Volume Correlation ({ALDVC})},
+  journal = {Experimental Mechanics},
+  volume  = {60},
+  number  = {9},
+  pages   = {1205--1223},
+  year    = {2020},
+  doi     = {10.1007/s11340-020-00607-3}
+}</code></pre>
+      </div>
+    </details>
+
+    <p class="case-data">Using the case data? Cite the DVC Challenge 2.0 dataset (<a href="https://doi.org/10.18434/mds2-4129">doi:10.18434/mds2-4129</a>) and paper (Tong et al., Research Square preprint, 2026, <a href="https://doi.org/10.21203/rs.3.rs-9683321/v1">doi:10.21203/rs.3.rs-9683321/v1</a>) and, for the foam, Landauer et al., Sci. Data 10, 356 (2023).</p>
+  </div>
+</section>
+
+</main>
+
+<!-- ============================================================ FOOTER -->
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <a class="brand" href="#top" aria-label="pyALDVC, back to the top">
+          <img src="img/logo.png" width="30" height="30" alt="">
+          <span>pyALDVC</span>
+        </a>
+        <p>pyALDVC is free software under the BSD 3-Clause licence. © 2026 Zixiang Tong and Jin Yang.</p>
+        <p>Developed by Zixiang Tong and Jin Yang in Dr. Jin Yang's group at The University of Texas at Austin.</p>
+      </div>
+      <nav class="footer-col" aria-label="Project">
+        <h2>Project</h2>
+        <ul>
+          <li><a href="https://github.com/zachtong/pyALDVC">GitHub</a></li>
+          <li><a href="https://pypi.org/project/al-dvc/">PyPI</a></li>
+          <li><a href="https://github.com/zachtong/pyALDVC/releases">Releases</a></li>
+          <li><a href="https://github.com/zachtong/pyALDVC/blob/main/CHANGELOG.md">Changelog</a></li>
+          <li><a href="https://github.com/zachtong/pyALDVC/issues">Issues</a></li>
+        </ul>
+      </nav>
+      <nav class="footer-col" aria-label="Documentation">
+        <h2>Documentation</h2>
+        <ul>
+          <li><a href="https://github.com/zachtong/pyALDVC/blob/main/docs/user_guide.md">User guide</a></li>
+          <li><a href="https://github.com/zachtong/pyALDVC/blob/main/docs/design.md">Design document</a></li>
+          <li><a href="https://doi.org/10.5281/zenodo.22883767">Zenodo archive</a></li>
+        </ul>
+      </nav>
+      <nav class="footer-col" aria-label="Related">
+        <h2>Related</h2>
+        <ul>
+          <li><a href="https://github.com/zachtong/pyALDIC">pyALDIC, the <span class="nw">2-D</span> sibling</a></li>
+          <li><a href="https://github.com/FranckLab/ALDVC">MATLAB ALDVC</a></li>
+          <li><a href="https://doi.org/10.21203/rs.3.rs-9683321/v1">DVC Challenge 2.0 preprint</a></li>
+          <li><a href="https://doi.org/10.18434/mds2-4129">DVC Challenge 2.0 data</a></li>
+        </ul>
+      </nav>
+    </div>
+    <p class="footer-credits">Foam data courtesy of NIST. The foam, hydrogel and rotation data sets are from the DVC Challenge 2.0 benchmark.</p>
+  </div>
+</footer>
+
+<dialog class="lightbox" aria-label="Enlarged image">
+  <button class="lightbox-close" type="button" aria-label="Close">
+    <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+  </button>
+  <p class="lightbox-caption"></p>
+</dialog>
+</body>
+</html>
