@@ -4,6 +4,28 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.1] - 2026-09-24
+
+### Changed
+- **One entry to the post-processing window.** Strain and statistics are two tabs of one window, but the
+  results panel had two buttons at different levels (*Strain post-processing...* highlighted, *Statistics...*
+  plain) and the Analysis menu two items. Both are now one *Post-processing...* (Ctrl+T), as in pyALDIC,
+  next to *Texture analysis...*; the window opens on the tab last shown, the strain tab the first time.
+- **The compute backend line says why the CPU runs.** It showed a raw exception, e.g. `CPU only
+  (ModuleNotFoundError: No module named 'numba.cuda')`. It now reads, in the parameter panel: the portable
+  version, CPU-only by design, with the pip command for NVIDIA GPU acceleration; GPU acceleration not installed,
+  with the same command; no NVIDIA GPU or driver found; or the GPU backend did not start, with the technical
+  reason in the tooltip and the console. The status bar shows `CPU` or `GPU: <name>`, and the self-test uses
+  the same words (a GPU backend that is installed but does not start still fails it).
+- **README**: the first heading is the full name of the software, with the website's headline below it;
+  the portable bundle's line says it is CPU-only and how to get GPU acceleration.
+
+### Fixed
+- **No occupancy warning on the console when the GPU is probed.** numba-cuda highlights its warning text
+  with a terminal escape sequence, so the filter on the message never matched; it now allows one.
+- **Website screenshots** show the current results column (`scripts/make_site_screens.py`, which can also
+  capture the main window before the run, with the panels' rectangles, for annotated figures).
+
 ## [1.0.0] - 2026-09-24
 
 The first stable release: the method, the application, the command line and the library are complete for
