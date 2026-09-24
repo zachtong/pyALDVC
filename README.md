@@ -2,7 +2,9 @@
   <a href="https://zachtong.github.io/pyALDVC/"><img src="https://raw.githubusercontent.com/zachtong/pyALDVC/main/assets/readme/banner.png" alt="pyALDVC: augmented Lagrangian digital volume correlation in Python" width="800"></a>
 </p>
 
-<h2 align="center">3-D displacement and strain, <i>inside the material</i></h2>
+<h1 align="center">pyALDVC: A Python Implementation of Augmented Lagrangian Digital Volume Correlation</h1>
+
+<h3 align="center">3-D displacement and strain, <i>inside the material</i></h3>
 
 <p align="center">
   Open-source digital volume correlation for micro-CT, confocal and other 3-D scans:<br>
