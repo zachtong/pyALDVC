@@ -38,11 +38,54 @@ def _select(combo, key) -> None:
     combo.setCurrentIndex(idx)
 
 
+def test_one_post_processing_entry_opens_the_window_on_the_tab_last_shown(window, qapp):
+    """Strain and statistics share one window (one tab each), so the panel and the menu have one entry for it."""
+    from PySide6.QtWidgets import QPushButton
+
+    panel = window.results_panel
+    assert not panel._btn_post.isEnabled()  # no result yet
+    fns = [lambda x, y, z, a=a: (a + 0 * x, 0.002 * (y - 60.0), 0 * z) for a in (0.25, 0.5)]
+    window.state.set_results(make_result(fns, voxel_size=(2.0, 2.0, 2.0)))
+    # two entries at the same level: Texture analysis and Post-processing, both primary buttons
+    buttons = panel._analysis_group.findChildren(QPushButton)
+    assert [b.text() for b in buttons] == ["Texture analysis...", "Post-processing..."]
+    assert all(b.property("class") == "btn-primary" for b in buttons)
+    assert panel._btn_post.isEnabled()
+    assert "strain" in panel._btn_post.toolTip() and "statistics" in panel._btn_post.toolTip()
+    assert "Texture analysis:" in panel._analysis_hint.text() and "Post-processing:" in panel._analysis_hint.text()
+    assert not hasattr(panel, "_btn_strain") and not hasattr(panel, "_btn_statistics")
+    # the menu: one action with the strain action's old shortcut, no separate statistics action
+    act = window._actions["post_processing"]
+    assert act.text() == "Post-processing..." and act.shortcut().toString() == "Ctrl+T"
+    assert "strain" not in window._actions and "statistics" not in window._actions
+    assert all(a.shortcut().toString() != "Ctrl+Shift+T" for a in window._actions.values())
+
+    # the first time on the strain tab
+    panel._btn_post.click()
+    post = window.strain_window
+    assert post.isVisible() and post.tabs.currentIndex() == 0
+    # closed on the statistics tab: the button and the menu bring it back there
+    post.show_tab("analysis")
+    assert post.analysis.wait()
+    post.close()
+    assert not post.isVisible()
+    act.trigger()
+    assert window.strain_window is post and post.isVisible()
+    assert post.tabs.currentWidget() is post.analysis
+    post.show_tab("strain")
+    post.close()
+    panel._btn_post.click()
+    assert post.isVisible() and post.tabs.currentIndex() == 0
+    # scripts and tests still open the statistics directly
+    assert window.open_statistics().tabs.currentWidget() is post.analysis
+    assert post.analysis.wait()
+    assert window.settle_workers(5_000) == []
+
+
 def test_the_statistics_open_on_the_analysis_tab_with_the_current_frame(window, qapp):
     fns = [lambda x, y, z, a=a: (a + 0 * x, 0.002 * (y - 60.0), 0 * z) for a in (0.25, 0.5)]
     window.state.set_results(make_result(fns, voxel_size=(2.0, 2.0, 2.0)))
-    assert window.results_panel._btn_statistics.isEnabled()
-    assert window._actions["statistics"].shortcut().toString() == "Ctrl+Shift+T"
+    assert window.results_panel._btn_post.isEnabled()
     post = window.open_statistics()
     tab = post.analysis
     assert post.tabs.currentWidget() is tab

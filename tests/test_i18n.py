@@ -15,7 +15,7 @@ from al_dvc.gui.i18n_tools import audit_table, extract_sources, update_table  # 
 def test_extraction_finds_gui_strings():
     sources = extract_sources()
     assert "Run AL-DVC" in sources and "app.py" in sources["Run AL-DVC"] or "run_panel.py" in sources["Run AL-DVC"]
-    assert "Same scale" in sources and "Strain post-processing..." in sources
+    assert "Same scale" in sources and "Post-processing..." in sources
     assert all(isinstance(k, str) and k for k in sources)
     assert not any(k.startswith('f"') for k in sources)  # f-strings are never translatable sources
 

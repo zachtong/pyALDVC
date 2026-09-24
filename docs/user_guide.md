@@ -65,8 +65,10 @@ rejected by the median test and replaced: their value is not a measurement.
 
 ### Statistics of the results
 
-*Analysis > Statistics...* (Ctrl+Shift+T, or *Statistics...* in the results
-panel) opens the post-processing window on its **Analysis** tab:
+*Analysis > Post-processing...* (Ctrl+T, or *Post-processing...* in the results
+panel) opens the post-processing window, which holds the strain and the statistics
+of the result, one tab each; it opens on the tab last shown (the **Strain** tab the
+first time). The statistics are on its **Analysis** tab:
 
 * **Statistics of** -- displacement, its uncertainty, the strain tensor,
   principal or equivalent strains, the local rotation, det F or ZNCC. The
@@ -227,7 +229,11 @@ newer; the RTX 5090 included). Results agree with the CPU kernels to about
 faster on an RTX 5090 than on a 24-core CPU. Installations without the `gpu` flavour,
 without a driver or without a usable device are unaffected: `backend="auto"`
 (the default) probes CUDA once and uses the CPU kernels otherwise, and the GUI
-shows which backend it picked. The portable Windows bundle is CPU-only.
+shows which backend it picked: the GPU's name, or why the CPU runs, under
+*Performance* in the parameters and in the status bar (the technical reason of
+a GPU backend that did not start is in the tooltip and the console). The
+portable Windows bundle is CPU-only: for GPU acceleration, install pyALDVC with
+pip as above.
 
 ## 8. Command line
 

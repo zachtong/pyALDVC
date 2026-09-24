@@ -522,7 +522,9 @@ class ExportDialog(QDialog):
         if not has:
             self._status.setText(self.tr("No results to export yet."))
         elif not res.result_strain:
-            self._status.setText(self.tr("Displacement only: compute strain in the strain window to export strain fields."))
+            self._status.setText(
+                self.tr("Displacement only: compute strain under Post-processing (Strain tab) to export strain fields.")
+            )
         else:
             self._status.setText("")
 

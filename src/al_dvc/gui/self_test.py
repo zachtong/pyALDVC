@@ -118,38 +118,29 @@ def check_view3d() -> str:
     return f"pyvista {pv.__version__}, VTK {vtkVersion.GetVTKVersion()}, off-screen render ok"
 
 
-def _gpu_backend_installed() -> bool:
-    """Whether the optional GPU backend (numba-cuda, the ``[gpu]`` extra) is installed."""
-    try:
-        from importlib.metadata import version
-
-        version("numba-cuda")
-    except Exception:
-        return False
-    return True
-
-
 def check_cuda() -> str:
     """Compute backend: the CUDA device when the optional backend works, else the CPU.
 
-    The GPU is optional, so a machine without the GPU backend, or without a CUDA device, passes on the CPU
-    kernels. A GPU backend that is installed and has a device but does not start is a broken install and
-    fails: it used to pass as "CPU kernels" with a hint to install the very extra that was installed, which
-    is how numba-cuda's clash with NumPy 2.5 went unnoticed on an RTX 5090.
+    The GPU is optional, so the portable version (CPU-only by design), a machine without the GPU backend
+    and one without a CUDA device pass on the CPU kernels, with the same words as the parameter panel. A
+    GPU backend that is installed and has a device but does not start is a broken install and fails: it
+    used to pass as "CPU kernels" with a hint to install the very extra that was installed, which is how
+    numba-cuda's clash with NumPy 2.5 went unnoticed on an RTX 5090.
     """
-    from al_dvc.solver.cuda_kernels import cuda_available, device_name, unavailable_kind, unavailable_reason
+    from . import backend_status as bs
 
-    if cuda_available():
-        return f"GPU {device_name()} (backend auto -> cuda)"
-    reason = unavailable_reason()
-    if not _gpu_backend_installed():
-        return 'CPU kernels (optional GPU backend: pip install "al-dvc[gpu]")'
-    if unavailable_kind() == "no_device":
-        return f"CPU kernels: the GPU backend is installed but found no usable CUDA device or driver ({reason[:80]})"
+    status = bs.backend_status()
+    if status.on_gpu:
+        return f"GPU {status.device} (backend auto -> cuda)"
+    text = bs.describe(status, translate=None)  # the report is in English
+    if status.case in (bs.PORTABLE, bs.MISSING):
+        return text.tooltip  # the full sentence, on one line
+    if status.case == bs.NO_DEVICE:
+        return f"{text.line} ({status.reason[:80]})"
     hint = ""
-    if "row_stack" in reason:
+    if "row_stack" in status.reason:
         hint = ' -- NumPy 2.5 removed np.row_stack, which numba-cuda still uses: pip install "numpy<2.5"'
-    raise CheckFailed(f"the GPU backend is installed but did not start: {reason}{hint}")
+    raise CheckFailed(f"the GPU backend is installed but did not start: {status.reason}{hint}")
 
 
 CHECKS: list[tuple[str, Callable[[], str]]] = [

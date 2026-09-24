@@ -373,6 +373,7 @@ def test_the_probe_tells_a_cpu_machine_from_a_broken_gpu_stack(monkeypatch):
 
 def test_the_self_test_fails_a_gpu_backend_that_is_installed_but_does_not_start(monkeypatch):
     """It used to pass as "CPU kernels" and suggest installing the extra that was installed."""
+    from al_dvc.gui import backend_status as bs
     from al_dvc.gui import self_test as st
 
     def backend(available: bool, kind: str, reason: str) -> None:
@@ -380,15 +381,17 @@ def test_the_self_test_fails_a_gpu_backend_that_is_installed_but_does_not_start(
         monkeypatch.setattr(ck, "_unavailable_kind", kind)
         monkeypatch.setattr(ck, "_unavailable_reason", reason)
 
+    monkeypatch.setattr(bs.sys, "frozen", False, raising=False)  # a pip install, not the portable version
     # without the optional backend the CPU passes, and the line says how to add the GPU
-    monkeypatch.setattr(st, "_gpu_backend_installed", lambda: False)
+    monkeypatch.setattr(bs, "gpu_backend_installed", lambda: False)
     backend(False, "missing", "ImportError: No module named 'numba_cuda'")
-    assert "pip install" in st.check_cuda()
+    assert st.check_cuda() == 'CPU. GPU acceleration is not installed: pip install "al-dvc[gpu]"'
 
     # installed on a machine without a CUDA device or driver: still a CPU machine, and no install hint
-    monkeypatch.setattr(st, "_gpu_backend_installed", lambda: True)
+    monkeypatch.setattr(bs, "gpu_backend_installed", lambda: True)
     backend(False, "no_device", "RuntimeError: numba.cuda reports no usable CUDA device")
     text = st.check_cuda()
+    assert text.startswith("CPU. No NVIDIA GPU or driver was found.")
     assert "no usable CUDA device" in text and "pip install" not in text
 
     # installed, a device present, the stack fails: a broken install, with the fix for the known cause
@@ -414,3 +417,32 @@ def test_the_occupancy_warning_is_silenced_whichever_class_carries_it():
         warnings.warn(ForeignPerformanceWarning("Grid size 1 will likely result in GPU under-utilization due to low occupancy."))
         warnings.warn(ForeignPerformanceWarning("something else"))
     assert [str(w.message) for w in seen] == ["something else"]
+
+
+def test_the_occupancy_warning_is_silenced_with_terminal_highlighting():
+    """Numba highlights warning messages (ESC[1m ... ESC[0m); the filter must still match them."""
+    import warnings
+
+    class ForeignPerformanceWarning(UserWarning):
+        pass
+
+    text = "Grid size 1 will likely result in GPU under-utilization due to low occupancy."
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        ck._quiet_performance_warnings()
+        warnings.warn(ForeignPerformanceWarning(f"\x1b[1m{text}\x1b[0m"))
+        warnings.warn(ForeignPerformanceWarning("\x1b[1msomething else\x1b[0m"))
+    assert [str(w.message) for w in seen] == ["\x1b[1msomething else\x1b[0m"]
+
+
+def test_the_real_numba_cuda_occupancy_warning_is_silenced():
+    """The class numba-cuda raises, with the highlighting it adds, when numba-cuda is installed."""
+    import warnings
+
+    errors = pytest.importorskip("numba.cuda.core.errors")
+    text = "Grid size 1 will likely result in GPU under-utilization due to low occupancy."
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        ck._quiet_performance_warnings()
+        warnings.warn(errors.NumbaPerformanceWarning(text))
+    assert seen == []

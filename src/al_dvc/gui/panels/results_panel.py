@@ -1,8 +1,9 @@
 """Result display controls, the post-processing entry points, a compact summary and exports.
 
-Order, top to bottom: the two post-processing windows (texture analysis needs only a volume,
-strain needs a result), the display controls, the export, and a two-line summary whose
-per-frame details are folded away.
+Order, top to bottom: the two post-processing windows (texture analysis needs only a volume; the
+post-processing window, with the strain and the statistics of the result one tab each, needs a
+result), the display controls, the export, and a two-line summary whose per-frame details are
+folded away.
 """
 
 from __future__ import annotations
@@ -41,10 +42,9 @@ COLORMAPS = ["turbo", "viridis", "plasma", "inferno", "magma", "coolwarm", "RdBu
 
 
 class ResultsPanel(QWidget):
-    """Field / frame / colour controls, a text summary, the strain window and export buttons."""
+    """Field / frame / colour controls, a text summary, the post-processing windows and export buttons."""
 
-    strain_requested = Signal()
-    statistics_requested = Signal()
+    post_processing_requested = Signal()
     texture_requested = Signal()
     export_requested = Signal()
 
@@ -65,18 +65,14 @@ class ResultsPanel(QWidget):
         self._btn_texture.setMinimumHeight(32)
         self._btn_texture.setEnabled(False)
         self._btn_texture.clicked.connect(self.texture_requested.emit)
-        self._btn_strain = QPushButton()
-        self._btn_strain.setProperty("class", "btn-primary")
-        self._btn_strain.setMinimumHeight(32)
-        self._btn_strain.setEnabled(False)
-        self._btn_strain.clicked.connect(self.strain_requested.emit)
-        self._btn_statistics = QPushButton()
-        self._btn_statistics.setMinimumHeight(32)
-        self._btn_statistics.setEnabled(False)
-        self._btn_statistics.clicked.connect(self.statistics_requested.emit)
+        # one window for the strain and the statistics (one tab each), so one entry, as in pyALDIC
+        self._btn_post = QPushButton()
+        self._btn_post.setProperty("class", "btn-primary")
+        self._btn_post.setMinimumHeight(32)
+        self._btn_post.setEnabled(False)
+        self._btn_post.clicked.connect(self.post_processing_requested.emit)
         agrid.addWidget(self._btn_texture)
-        agrid.addWidget(self._btn_strain)
-        agrid.addWidget(self._btn_statistics)
+        agrid.addWidget(self._btn_post)
         self._analysis_hint = QLabel()
         self._analysis_hint.setObjectName("hint")
         self._analysis_hint.setWordWrap(True)
@@ -125,7 +121,7 @@ class ResultsPanel(QWidget):
         self._no_result.setWordWrap(True)
         self._no_result.hide()
         form.addRow(self._no_result)
-        # the fields are drawn with a motion removed (the Statistics window): a badge, and a way back
+        # the fields are drawn with a motion removed (the statistics tab): a badge, and a way back
         self._correction_row = QWidget()
         crow = QHBoxLayout(self._correction_row)
         crow.setContentsMargins(0, 0, 0, 0)
@@ -295,8 +291,7 @@ class ResultsPanel(QWidget):
         has = res is not None and bool(res.result_disp)
         self._display_group.setEnabled(has)
         self._export_group.setEnabled(has)
-        self._btn_strain.setEnabled(has)
-        self._btn_statistics.setEnabled(has)
+        self._btn_post.setEnabled(has)
         self._btn_texture.setEnabled(bool(self._state.volumes))
         self._updating = True
         try:
@@ -461,14 +456,13 @@ class ResultsPanel(QWidget):
         self._analysis_group.setTitle(self.tr("Post-processing"))
         self._btn_texture.setText(self.tr("Texture analysis..."))
         self._analysis_hint.setText(
-            self.tr("Texture: subset size from the reference volume. Strain: from the displacement result.")
+            self.tr(
+                "Texture analysis: subset size from the reference volume.\nPost-processing: strain and statistics of the result."
+            )
         )
         self._export_group.setTitle(self.tr("Export"))
-        self._btn_strain.setText(self.tr("Strain post-processing..."))
-        self._btn_statistics.setText(self.tr("Statistics..."))
-        self._btn_statistics.setToolTip(
-            self.tr("Mean, standard deviation, rigid-body motion, noise floor and series over frames of the result")
-        )
+        self._btn_post.setText(self.tr("Post-processing..."))
+        self._btn_post.setToolTip(self.tr("The strain and the statistics of the result, one tab each"))
         texts = {
             "frame": self.tr("Frame"),
             "field": self.tr("Field"),

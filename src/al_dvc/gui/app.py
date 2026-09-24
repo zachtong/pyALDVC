@@ -146,8 +146,7 @@ class MainWindow(QMainWindow):
         self._right_column = right
         self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
         self.state.log_message.connect(self.console.append_log)
-        self.results_panel.strain_requested.connect(self._on_strain)
-        self.results_panel.statistics_requested.connect(self._on_statistics)
+        self.results_panel.post_processing_requested.connect(self._on_post_processing)
         self.results_panel.texture_requested.connect(self._on_texture)
         self.results_panel.export_requested.connect(self._on_export_requested)
 
@@ -155,6 +154,7 @@ class MainWindow(QMainWindow):
         self._menus = {}
         self._build_menu_bar()
         self.state.progress_updated.connect(lambda _f, msg: self.statusBar().showMessage(msg))
+        self._backend = None  # BackendStatus, probed after the start
         self._backend_label = QLabel()
         self._backend_label.setObjectName("hint")
         self.statusBar().addPermanentWidget(self._backend_label)
@@ -251,8 +251,7 @@ class MainWindow(QMainWindow):
         for key, slot, shortcut in [
             ("run", self.run_panel.start, "F5"),
             ("stop", self.run_panel.stop, "Esc"),
-            ("strain", self._on_strain, "Ctrl+T"),
-            ("statistics", self._on_statistics, "Ctrl+Shift+T"),
+            ("post_processing", self._on_post_processing, "Ctrl+T"),
             ("texture", self._on_texture, "Ctrl+X"),
             ("export", self._on_export_requested, "Ctrl+E"),
         ]:
@@ -272,13 +271,26 @@ class MainWindow(QMainWindow):
         self._sync_language_check()
 
     def _refresh_backend(self) -> None:
-        """Backend line in the parameter panel and a permanent status-bar label (GPU name or CPU)."""
-        self.param_panel.refresh_backend_status()
-        from al_dvc.solver.cuda_kernels import cuda_available, device_name
+        """Backend line in the parameter panel and a permanent status-bar label ("GPU: <name>" or "CPU")."""
+        from .backend_status import ERROR, backend_status
 
-        self._backend_label.setText(
-            self.tr("GPU: {name}").format(name=device_name()) if cuda_available() else self.tr("CPU kernels")
-        )
+        self._backend = backend_status()
+        self.param_panel.refresh_backend_status(self._backend)
+        self._show_backend()
+        if self._backend.case == ERROR:  # the console keeps the reason where it can be copied into a report
+            self.state.log(
+                self.tr("The GPU backend did not start, the CPU runs: {reason}").format(reason=self._backend.reason),
+                "warning",
+            )
+
+    def _show_backend(self) -> None:
+        if getattr(self, "_backend", None) is None:  # not probed yet: the label stays empty
+            return
+        from .backend_status import describe
+
+        text = describe(self._backend)
+        self._backend_label.setText(text.label)
+        self._backend_label.setToolTip(text.tooltip)
 
     # ------------------------------------------------------------------ recent sessions
     def recent_sessions(self) -> list[str]:
@@ -456,7 +468,11 @@ class MainWindow(QMainWindow):
         return window
 
     def open_strain_window(self):
-        """The (single) strain post-processing window, created on first use and raised afterwards."""
+        """The (single) post-processing window, created on first use and raised afterwards.
+
+        It holds the strain and the statistics of the result, one tab each, and opens on the tab last shown
+        (the strain tab the first time): the window is hidden when closed, not destroyed.
+        """
         from .strain_window import StrainWindow
 
         window = getattr(self, "strain_window", None)
@@ -470,11 +486,8 @@ class MainWindow(QMainWindow):
         window.activateWindow()
         return window
 
-    def _on_strain(self) -> None:
+    def _on_post_processing(self) -> None:
         self.open_strain_window()
-
-    def _on_statistics(self) -> None:
-        self.open_statistics()
 
     def open_texture_window(self):
         """The (single) texture analysis window, created on first use and raised afterwards."""
@@ -744,8 +757,7 @@ class MainWindow(QMainWindow):
             "notify": self.tr("Notify when a task finishes"),
             "run": self.tr("Run AL-DVC"),
             "stop": self.tr("Stop"),
-            "strain": self.tr("Strain post-processing..."),
-            "statistics": self.tr("Statistics..."),
+            "post_processing": self.tr("Post-processing..."),
             "texture": self.tr("Texture analysis..."),
             "export": self.tr("Export results..."),
             "texture_guide": self.tr("Texture analysis guide..."),
@@ -756,6 +768,7 @@ class MainWindow(QMainWindow):
             self._actions[key].setText(text)
         self._on_run_state_changed(self.state.run_state)
         self._sync_language_check()
+        self._show_backend()
         if hasattr(self, "_left_column"):
             self._fit_left_column()
         dialog = getattr(self, "batch_dialog", None)

@@ -89,7 +89,7 @@ def main(argv=None) -> int:
     lines = [
         f"pyALDVC {__version__} -- post-processing windows (strain window, export dialog)",
         "",
-        "Strain is not part of the run: the strain window (Analysis > Strain post-processing, Ctrl+T)",
+        "Strain is not part of the run: the strain tab of the post-processing window (Analysis > Post-processing, Ctrl+T)",
         "computes it on demand from the displacement results with its own parameters and writes",
         "it back so the main viewer and the exports see it. The export dialog (Ctrl+E) gathers the",
         "destination, formats, fields and frames and writes everything on a worker thread.",

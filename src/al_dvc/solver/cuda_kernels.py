@@ -87,9 +87,11 @@ def _quiet_performance_warnings() -> None:
     numba-cuda raises its own ``NumbaPerformanceWarning`` (``numba.cuda.core.errors``), a different class from
     numba's, so a filter on numba's class alone let the occupancy warning through -- onto the console of every
     run and of the self-test. The message is filtered too, whichever class carries it; nothing is imported
-    from numba.cuda for it, so a CPU-only install pays nothing.
+    from numba.cuda for it, so a CPU-only install pays nothing. Numba's warning classes wrap the message in
+    terminal highlighting (a leading ESC[1m), and a warnings filter matches from the start of the message,
+    so the pattern allows escape sequences in front of the text.
     """
-    warnings.filterwarnings("ignore", message=r"Grid size \d+ will likely result in GPU under-utilization")
+    warnings.filterwarnings("ignore", message=r"(?:\x1b\[[0-9;]*m)*Grid size \d+ will likely result in GPU under-utilization")
     try:
         from numba.core.errors import NumbaPerformanceWarning
 

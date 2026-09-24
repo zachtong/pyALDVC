@@ -11,12 +11,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
 
 from al_dvc.core.config import units_problem
 from al_dvc.io.volume_ops import memory_model
 
 from ..app_state import AppState
+from ..backend_status import BackendStatus, backend_status, describe
 from ..names import fill_combo, retranslate_combo, select_key
 from ..widgets import COMBO_WIDTH, CollapsibleSection, dspin, form_label, guard_wheel, make_form, spin
 
@@ -31,6 +33,7 @@ class ParamPanel(QWidget):
         super().__init__(parent)
         self._state = state
         self._updating = False
+        self._backend: BackendStatus | None = None  # probed after the start: the probe compiles a CUDA kernel
         self.labels: dict[str, QLabel] = {}
         self.sections: dict[str, CollapsibleSection] = {}
         self.combos: dict[QComboBox, str] = {}  # combo -> names.CHOICES group
@@ -108,6 +111,7 @@ class ParamPanel(QWidget):
         self.backend_status = QLabel()
         self.backend_status.setObjectName("hint")
         self.backend_status.setWordWrap(True)
+        self.backend_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)  # the pip command
         self.n_threads = spin(0, 512, 1)
         self.gradient_mode = self._choice("gradient")
         self.tile_local = spin(0, 4096, 32)  # 0 = the whole volume in one box
@@ -380,16 +384,22 @@ class ParamPanel(QWidget):
             ).format(n=int(p.tile_local))
         self._memory.setText(text)
 
-    def refresh_backend_status(self) -> None:
-        """Describe the compute backend that the automatic choice would pick (CUDA device name or CPU)."""
-        from al_dvc.solver.cuda_kernels import cuda_available, device_name, unavailable_reason
+    def refresh_backend_status(self, status: BackendStatus | None = None) -> BackendStatus:
+        """Describe the compute backend that the automatic choice would pick: the GPU's name, or why the CPU
+        runs and how to get the GPU. The technical reason goes to the tooltip, not the line."""
+        self._backend = status if status is not None else backend_status()
+        self._show_backend()
+        return self._backend
 
-        if cuda_available():
-            self.backend_status.setText(self.tr("GPU: {name}").format(name=device_name()))
-        else:
-            self.backend_status.setText(self.tr("CPU only ({reason})").format(reason=unavailable_reason()[:80]))
+    def _show_backend(self) -> None:
+        if self._backend is None:  # not probed yet: the line stays empty
+            return
+        text = describe(self._backend)
+        self.backend_status.setText(text.line)
+        self.backend_status.setToolTip(text.tooltip)
 
     def retranslate_ui(self) -> None:
+        self._show_backend()
         self.winsize_lock.setText(self.tr("Cube"))
         self.winsize_lock.setToolTip(self.tr("Keep the subset cubic: one size for x, y and z"))
         self.units.setPlaceholderText(self.tr("e.g. um"))
