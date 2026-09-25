@@ -586,8 +586,11 @@ class View3DPanel(QWidget):
         """The volume the grey slice planes show: the slice tab's background frame, so the two agree."""
         if not self.volume_slices.isChecked() or not self._state.volumes:
             return None
+        index = self._state.background_index()
+        if self._state.volumes[index].missing:  # a session's file that was not found (the session said so)
+            return None
         try:
-            return self._state.volume_array(self._state.background_index())
+            return self._state.volume_array(index)
         except Exception as exc:
             self._state.log(f"3-D view: cannot load the volume for the slices: {exc}", "warning")
             return None
@@ -599,7 +602,8 @@ class View3DPanel(QWidget):
         for k in range(len(res.result_disp)):
             idx = self._state.volume_for_result(k)
             try:
-                out.append(fallback if idx is None else self._state.volume_array(idx))
+                missing = idx is not None and self._state.volumes[idx].missing
+                out.append(fallback if idx is None or missing else self._state.volume_array(idx))
             except Exception as exc:
                 self._state.log(f"3-D view: cannot load the volume of frame {k + 1}: {exc}", "warning")
                 out.append(fallback)

@@ -4,6 +4,56 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **A session keeps everything after a computation.** *Save session* now stores the results of the run (every
+  frame: displacement, gradients, local pass, initial guess, ZNCC, uncertainty, status and outlier flags, mesh,
+  the parameters used) and which volume each result belongs to, the strain computed in the post-processing
+  window with its settings, the statistics (regions, fit region, the motion removed in the views, every
+  setting), the texture analysis (region, centre, cube, sweep settings, autocorrelation and RVE results, plot
+  settings), the display (field, frame, colour map and range, overlay, slice positions, layout, background,
+  grid, subset, mask tint), the 3-D view (mode, surfaces, cut-away, warp, arrows, slices, background, camera,
+  animation) and which windows were open. *Open session* restores all of it without recomputing: the run
+  state is *done* (export, post-processing and 3-D view available), the post-processing window shows the
+  saved strain, the statistics the saved regions and correction, and the session opens without unsaved
+  changes. Arrays come back bit for bit, dtypes included.
+- **Moved projects are found again.** A session refers to every volume by its path, its path relative to the
+  session file and a fingerprint (name, size, shape). Opening looks where the file was, at the same place
+  relative to the session, in a folder next to it named like the old one and in the session's folder, then
+  applies the move of one volume to the others; a file elsewhere is used only when its name and size match.
+  Volumes still missing make the window ask once for their folder. Volumes that stay missing are kept in the
+  list, marked, and everything else is restored; views that need the grey values say what is missing and how
+  to fix it. The output folder and the exported archive are resolved the same way.
+- Saving and opening run in the background with a progress bar in the status bar; the window stays usable.
+  A session file dropped on the window opens it.
+- `al_dvc.io.session_serialize` (a faithful archive of any result record: arrays deduplicated, dtypes and
+  memory order kept, `allow_pickle=False`), `al_dvc.io.session_bundle` and `al_dvc.io.session_paths`, usable
+  without the application (the user guide shows how to read the result of a session from a script).
+- `scripts/make_session_report.py` writes `reports/session.pdf`: what is saved, the round trip of a completed
+  run (largest difference of every array: 0), the moved-project scenarios, sizes and times against nodes x
+  frames, the longest pause of the window while a large session is saved and opened, mask storage, and the
+  main and post-processing windows before saving and after reopening.
+
+### Changed
+- **Session format 3.** A `.aldvc` file is now a zip bundle: `session.json` (readable settings), `results.npz`,
+  `masks.npz`, `texture.npz`. It is written to a temporary file and moved over the old one when complete, so a
+  failed save leaves the previous file intact. Sessions of pyALDVC 1.1.0 and earlier (JSON, drawn masks in a
+  `<name>_masks` folder) still open, moved or not, and are saved in the new format; a session from a newer
+  pyALDVC is refused with a message.
+- Masks are stored in the session (every distinct composed mask once, bit-packed), no longer as files in a
+  `<name>_masks` folder beside it.
+- A finished run, a strain computation and a texture analysis now count as unsaved changes: closing or
+  replacing the session offers to save them.
+- A batch run reads its sessions without their results and finds moved volumes as the window does;
+  `al-dvc stats --regions` reads the regions from sessions of every format.
+
+### Fixed
+- Opening a session whose files had been moved showed nothing: the volumes are now searched for (see above)
+  and the results, masks and settings are restored even while volumes are missing.
+- Results were never restored from a session (the console said so); they are now part of it.
+- The overlay switch and the slice positions of the main window were not saved with a session.
+
 ## [1.1.0] - 2026-09-24
 
 ### Added

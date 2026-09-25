@@ -390,9 +390,10 @@ def cmd_batch(args: argparse.Namespace) -> int:
 def _load_regions(path: str) -> list:
     """Regions from a JSON file: a list of regions, a statistics summary (``regions``) or a session (``analysis``)."""
     from .analysis.regions import regions_from_dicts
+    from .io.session_bundle import is_bundle, read_session_document
 
-    try:
-        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    try:  # a session file (a zip bundle since format 3, JSON before) or a JSON file
+        doc = read_session_document(path) if is_bundle(path) else json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise SystemExit(f"cannot read the regions in {path}: {exc}") from exc
     if isinstance(doc, dict):

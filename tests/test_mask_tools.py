@@ -17,6 +17,7 @@ from al_dvc.gui.app import MainWindow, create_application  # noqa: E402
 from al_dvc.gui.app_state import RunState  # noqa: E402
 from al_dvc.gui.mask_editor import MaskOp  # noqa: E402
 from al_dvc.gui.session import load_session  # noqa: E402
+from al_dvc.io.session_bundle import read_session_document  # noqa: E402
 from al_dvc.io.volume_io import load_volume, save_volume  # noqa: E402
 from al_dvc.synthetic import affine_displacement, generate_speckle_volume, warp_volume_lagrangian  # noqa: E402
 
@@ -186,11 +187,13 @@ def test_save_mask_and_session_roundtrip(qapp, pair, tmp_path):
     out = state.save_mask(tmp_path / "mask.tif")
     assert out.exists() and state.volumes[0].mask_path == str(out)
     np.testing.assert_array_equal(load_volume(out) > 0, drawn)
-    # the saved file is the composed mask: the session points at it and replays nothing on top of it
+    # the session holds the composed mask itself (and remembers the file it came from): nothing is replayed
     assert state.volumes[0].mask_ops is None
     session = window.save_session_path(tmp_path / "masked.aldvc")
     doc = load_session(session)
-    assert doc.volumes[0]["mask_ops"] is None and doc.volumes[0]["mask"] == str(out)
+    assert doc.volumes[0]["mask_ops"] is None and doc.volumes[0]["mask_path"] is None
+    np.testing.assert_array_equal(doc.volumes[0]["mask"], drawn)
+    assert read_session_document(session)["volumes"][0]["mask_source"]["relative"] == "mask.tif"
     window.close()
     window2 = MainWindow()
     window2.show()

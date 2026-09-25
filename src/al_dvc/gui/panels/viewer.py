@@ -283,6 +283,12 @@ class SliceViewer(QWidget):
             self._volume_index = None
             self.redraw()
             return
+        entry = self._state.volumes[idx]
+        if entry.missing and entry.array is None:  # a session's file that was not found: the hint says so, once
+            self._volume = None
+            self._volume_index = None
+            self.redraw()
+            return
         try:
             vol = self._state.volume_array(idx)
         except Exception as exc:
@@ -366,6 +372,7 @@ class SliceViewer(QWidget):
         self._hover_artist = None  # gone with the cleared axes
         if self._volume is None:
             self._plan_cache = None
+            self._empty.setText(self._empty_text())
             self._empty.setVisible(True)
             self.canvas.draw_idle()
             return
@@ -818,8 +825,18 @@ class SliceViewer(QWidget):
         except Exception:
             return 1.0
 
+    def _empty_text(self) -> str:
+        """What the empty canvas says: how to start, or that the volume file of the frame is missing."""
+        idx = self._state.background_index()
+        if idx is not None and idx < len(self._state.volumes) and self._state.volumes[idx].missing:
+            return self.tr(
+                "The volume file of this frame was not found:\n{path}\n\nThe results and settings of the session are "
+                "loaded. Move the file back, or open the session again and choose the folder that holds it."
+            ).format(path=self._state.volumes[idx].path)
+        return self.tr("No volume loaded. Use 'Add volumes...' to start.")
+
     def retranslate_ui(self) -> None:
-        self._empty.setText(self.tr("No volume loaded. Use 'Add volumes...' to start."))
+        self._empty.setText(self._empty_text())
         self._layout_label.setText(self.tr("Layout"))
         self.equal_scale.setText(self.tr("Same scale"))
         self.show_mesh.setText(self.tr("Show grid"))

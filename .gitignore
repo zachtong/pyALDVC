@@ -19,6 +19,7 @@ build/
 reports/*.pdf
 reports/*.csv
 reports/*.png
+reports/*/
 
 # Local scratch / datasets (large binary volumes)
 datasets/

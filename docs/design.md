@@ -306,6 +306,7 @@ src/al_dvc/
             pipeline.py (run_aldvc)
   io/       volume_io.py (tiff / mat / npy / slice folders; lazy providers)
             volume_ops.py (normalise, gradients, VOI clamp, prefilter)
+            session_bundle.py, session_serialize.py, session_paths.py (session files)
   mesh/     grid_mesh.py (uniform hex8 grid, mask trimming, neighbours)
             hex8.py (shape functions, Gauss points)
   solver/   interp_kernels.py (numba tricubic / bspline / trilinear)
@@ -539,8 +540,8 @@ roadmap as a real-scan feature.
 signals; panels that only read and write the state (`VolumePanel`,
 `ParamPanel`, `RunPanel`, `SliceViewer`, `ResultsPanel`); a `PipelineWorker`
 `QThread` that calls `run_aldvc` with `progress_fn` / `stop_fn` and returns the
-`PipelineResult` (partial on stop); `session.py` for `.aldvc` JSON sessions with
-paths relative to the file; `KernelWarmup` compiling the kernels on a daemon
+`PipelineResult` (partial on stop); `session.py` for `.aldvc` sessions (a zip bundle with the
+results, see *Sessions* below); `KernelWarmup` compiling the kernels on a daemon
 thread shortly after the window opens; `self_test.py` for installation checks
 (`al-dvc --self-test`); two colour themes (`theme.py`: the pyALDIC dark theme, copied, and a
 light one) and Windows title-bar helpers.
@@ -640,8 +641,8 @@ replays, folding operations older than `MAX_UNDO_REPLAY_OPS` into the base.
 `AppState` owns one editor for the current frame (`ensure_mask_editor`,
 `apply_mask_op`, `undo_mask`, `save_mask`, `mask_target` = current or all
 frames) and pushes the mask into the `VolumeEntry` objects the pipeline reads,
-together with the operations (`mask_ops`), which sessions store so a drawing
-survives a reload (re-applied on top of the mask file when there is one).
+together with the operations (`mask_ops`, the undo history). Sessions store the
+composed mask itself; the operations are replayed only for sessions of format 1.
 `panels/mask_tools.py` is the toolbar; the viewer turns mouse gestures on any
 of the three axes into operations (drag for rectangle / ellipse / brush,
 clicks + right-click for polygons, Esc cancels) with a live preview, and
@@ -678,8 +679,10 @@ install command.
 ### Batch runs
 
 `batch.py` (no widgets) runs a list of `.aldvc` files in order:
-`run_session_file` loads the session, reads its volumes and masks (mask
-files, then drawn operations on top), runs the pipeline with the session's
+`run_session_file` loads the session without its result (`load_session(path,
+results=False)`), finds its volumes (a moved project too), reads its masks (the
+composed masks it holds; mask files and drawn operations of older sessions),
+runs the pipeline with the session's
 parameters and checkpoints, and writes the requested exports (`npz`,
 `summary`, `report`, `vtk`, `mat`, `csv`) into the session's output folder;
 every failure is recorded in the returned `BatchJob` so the next session
@@ -689,6 +692,72 @@ rest is skipped). The dialog (`dialogs/batch_dialog.py`) wraps the runner in
 a `QThread`, shows a job table with status / nodes / convergence / time, two
 progress bars and a log, and can open a finished session in the window; the
 CLI `al-dvc batch` uses the same runner and exits non-zero when a job failed.
+A batch only reads its session files; a result a session holds is left as it is.
+
+### Sessions
+
+A `.aldvc` file (session format 3) is a zip bundle (`io/session_bundle.py`) with four members:
+
+| member | content |
+|---|---|
+| `session.json` | human-readable document: `format`, `pyaldvc`, `para_revision`, `saved`; `volumes` (per volume: `path`, `relative`, `fingerprint`, `label`, `uid`, `mask`, `mask_source`); `para`, `write_checkpoints`, `output_dir` and `results_path` (references); `results` (`result_uids`, counts); `display`; `analysis` (regions, correction, settings); `views` (`main`, `view3d`, `post`, `texture`); `texture` |
+| `results.npz` | the `PipelineResult`, faithfully (`io/session_serialize.py`) |
+| `masks.npz` | every distinct composed mask, `np.packbits` of the boolean volume plus its shape; `texture_region` |
+| `texture.npz` | `{"result": TextureResult, "sweep": SizeSweep}` |
+
+The archives are stored uncompressed in the bundle (they compress their own members), so
+`SessionBundle.member` hands `np.load` a seekable window onto the bundle file (the member's data offset is
+read from its local header) instead of extracting a copy. `write_bundle` streams each archive into the zip
+(a zip written to an unseekable stream uses data descriptors), writes the document last so it can describe
+what the writers stored, and moves the temporary file over the target with `os.replace` only when
+complete: a failure leaves the previous file untouched.
+
+**Faithful encoding.** `session_serialize.encode` walks a dataclass tree and returns `(arrays, root)`:
+arrays go into the archive, deduplicated by content (dtype, shape, memory order, bytes; the mesh shared by
+every frame, `U_accum` equal to `U`, frames sharing a mask are stored once) and by identity; everything else
+becomes a JSON manifest (`__manifest__` in the archive): `{"__dataclass__": name, "fields": ...}` for the
+records of `registry()` only (`PipelineResult`, `DVCPara`, `DVCMesh`, `FrameResult`, `StrainResult`,
+`FrameSchedule`, `VOIRange`, `ADMMInfo`, `LocalSolveInfo` and the texture records), `__tuple__`, `__slice__`,
+`__dict__` (string keys) or `__items__` (other keys: the texture results key on thresholds),
+`__npscalar__` (dtype kept), `__float__` for non-finite numbers (the manifest is strict JSON). Decoding
+checks every marker, refuses records outside the registry and field names a record does not have, limits
+the nesting depth, and reads the archive with `allow_pickle=False`: a hostile file raises `SessionError`
+and never executes code. Integer and boolean members are deflated; floating-point members only when a 1 MB
+sample shrinks by 15 % (measured noise compresses 4 % at zlib level 1 for 3.4 times the time).
+
+**References and relocation** (`io/session_paths.py`, no Qt, used by the batch runner too). A volume is a
+reference `{path, relative, fingerprint}`: absolute path, path relative to the session file (always, `..`
+included; `None` across Windows drives), and `{name, kind, size | n_files, shape, dtype}`. `resolve`
+applies, per reference: the saved path (accepted even when its fingerprint changed, and reported); the
+relative path from the session's folder; `<session folder>/<old parent name>/<name>`;
+`<session folder>/<name>`; then, for what is still missing, the move of every reference already found
+elsewhere (the longest common tail of the old and new paths is kept, the prefix swapped). A candidate
+other than the saved path must match name and size (or, without a size, the header shape). The window asks
+once for the folder of the first missing volume (`MainWindow.locate_volumes_folder`, never under the
+offscreen platform) and `relocate_into` searches it by name, plus the moves from the old parent and
+grandparent folder to the chosen one. Output folder and exported archive: `resolve_folder`. Formats 1 and
+2 carry no fingerprint; their files are matched by name.
+
+**Save and open.** `session.prepare_save` (UI thread, cheap) takes the snapshot: references and
+fingerprints, the document, the result object (immutable), per volume the mask array (the live editor's
+copy-on-write snapshot for the current frame) or its file, and the window settings from
+`session_views.collect` (with the texture analysis under `texture_data`). `write_session` (worker) reads
+mask files one at a time, packs every distinct mask, and writes the bundle. `load_session` (worker) reads
+and checks everything, decodes the archives and resolves the references; `apply_session` (UI thread)
+replaces the document of `AppState` in one step -- volumes with their saved `uid` (so `result_uids` maps
+every result to its frame again) and their saved size (no header read for an unchanged file), masks
+(frames that shared a mask share one array), the result, the run state `DONE` -- and marks it clean;
+`session_views.restore` then puts the window settings back, into the windows that exist or, for the
+post-processing and texture windows, when they are created (`AppState.ui_state`). `session_ops.SessionOps`
+runs both jobs on a `QThread` with a progress bar in the status bar; `wait=True` (scripts, tests, the
+unsaved-changes prompt) returns when the job is done while processing events. A save clears the unsaved
+flag when it starts and restores it if it fails, so a change made during the write stays unsaved.
+
+**Compatibility.** Loading sniffs the content: a zip is format 3, anything else is read as the JSON of
+formats 1 and 2 (volumes and mask files relative to the session or absolute, drawn masks as composed files
+in `<name>_masks/` or, format 1, as drawing operations replayed on load); saving writes format 3. A format
+newer than `FORMAT_VERSION` is refused. `al-dvc stats --regions` reads the document of either
+(`read_session_document`).
 
 ### Portable Windows bundle
 

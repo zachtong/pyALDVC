@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -113,6 +113,8 @@ class _VolumeTable(QTableWidget):
 
 class VolumePanel(QWidget):
     """Frames of the sequence (files or arrays) with their optional masks."""
+
+    session_dropped = Signal(str)  # a session file (.aldvc) was dropped here: the window opens it
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -224,6 +226,10 @@ class VolumePanel(QWidget):
         """Add dropped files and folders; a dropped folder replaces the sequence like Add folder. Returns the count."""
         from al_dvc.io.volume_io import resolve_volume_paths
 
+        sessions = [p for p in paths if str(p).lower().endswith(".aldvc")]
+        if sessions:  # a session is not a volume: it replaces the whole document
+            self.session_dropped.emit(str(sessions[0]))
+            return 0
         files: list[str] = []
         replace = False
         for p in paths:
@@ -400,14 +406,19 @@ class VolumePanel(QWidget):
         self._list.setRowCount(len(self._state.volumes))
         for i, entry in enumerate(self._state.volumes):
             name = Path(entry.path).name if entry.path else entry.name
+            if entry.missing:
+                name = FLAG + " " + name
             size, size_tip = self._size_cell(entry, i in differs, ref)
             cells = ["", str(i), name, size, self._region_text(i, entry)]
+            path_tip = entry.path or self.tr("in-memory array")
+            if entry.missing:
+                path_tip = self.tr("File not found: {path}").format(path=entry.path)
             for c, text in enumerate(cells):
                 item = QTableWidgetItem(text)
-                item.setToolTip(size_tip if c == 3 else (entry.path or self.tr("in-memory array")))
+                item.setToolTip(size_tip if c == 3 else path_tip)
                 if c in (1, 3, 4):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                if i in differs and c in (2, 3):
+                if (i in differs and c in (2, 3)) or (entry.missing and c == 2):
                     item.setForeground(QColor(current_colors().DANGER))
                 self._list.setItem(i, c, item)
             self._list.setCellWidget(i, 0, self._thumbnail_label(entry))

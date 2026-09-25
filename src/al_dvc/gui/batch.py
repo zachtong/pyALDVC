@@ -1,11 +1,14 @@
 """Run several sessions one after another (the GUI's batch dialog and ``al-dvc batch``).
 
-A batch is a list of ``.aldvc`` session files. Each one is loaded, its
-volumes and masks (files and drawn operations) are read, the pipeline runs
-with the session's parameters, and the chosen exports are written into the
-session's output folder. Jobs are independent: a failure is recorded in its
-:class:`BatchJob` and the next session starts. No Qt widgets here; the
-dialog wraps :class:`BatchRunner` in a thread.
+A batch is a list of ``.aldvc`` session files. Each one is loaded (its
+volumes found again if the project moved, see al_dvc.io.session_paths), its
+masks (embedded in the session, or files and drawn operations of older
+sessions) are read, the pipeline runs with the session's parameters, and the
+chosen exports are written into the session's output folder. A session file
+is only read, never written: a result it already holds is left as it is.
+Jobs are independent: a failure is recorded in its :class:`BatchJob` and the
+next session starts. No Qt widgets here; the dialog wraps
+:class:`BatchRunner` in a thread.
 """
 
 from __future__ import annotations
@@ -61,9 +64,10 @@ def session_provider(data: SessionData):
     The batch used to load every volume and every mask of a session into lists before the run
     started, so a sequence of N frames cost N frames of memory before the first correlation, where
     the interactive run had long been reading them through ``FileVolumeProvider`` with two normalised
-    frames resident. Mask files stream the same way. A mask that was *drawn* has to be rebuilt from
-    its operations, and a threshold operation needs the intensities, so that frame's volume is read
-    once here and dropped again; only the boolean mask stays.
+    frames resident. Mask files stream the same way. The composed masks a session holds (format 3)
+    are passed as arrays -- frames sharing a mask share one array. A mask that was *drawn* in a format 1
+    session has to be rebuilt from its operations, and a threshold operation needs the intensities, so
+    that frame's volume is read once here and dropped again; only the boolean mask stays.
     """
     from al_dvc.io.volume_io import FileVolumeProvider, load_volume
 
@@ -74,13 +78,13 @@ def session_provider(data: SessionData):
     drawn: list = []
     for v in data.volumes:
         path = v.get("path")
-        if not path or not Path(path).exists():
-            raise FileNotFoundError(f"volume not found: {path}")
-        mask_file = v.get("mask") or None
+        if not path or v.get("missing") or not Path(path).exists():
+            raise FileNotFoundError(f"volume not found: {v.get('saved') or path}")
+        mask = v.get("mask")  # the composed mask a format 3 session holds
+        mask_file = (v.get("mask_path") or None) if mask is None else None
         if mask_file and not Path(mask_file).exists():
             raise FileNotFoundError(f"mask not found: {mask_file}")
-        mask = None
-        if v.get("mask_ops"):
+        if mask is None and v.get("mask_ops"):
             vol = load_volume(path)  # transient: the drawing replays on it, exactly as the GUI rebuilds a session
             base = (np.asarray(load_volume(mask_file)) > 0) if mask_file else None
             mask = MaskEditor.from_dict(v["mask_ops"], base=base, volume=vol).mask
@@ -171,7 +175,7 @@ def run_session_file(
     job = BatchJob(session=Path(path))
     t0 = time.perf_counter()
     try:
-        data = load_session(path)
+        data = load_session(path, results=False)  # the inputs; a result the session holds is not needed
         provider = session_provider(data)  # streams the frames; nothing but the provider's cache is resident
         out_dir = Path(data.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)

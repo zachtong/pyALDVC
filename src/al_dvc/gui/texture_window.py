@@ -706,11 +706,11 @@ class TextureWindow(QMainWindow):
 
     # ------------------------------------------------------------------ region (step 1)
     def _volume_shape(self) -> tuple[int, int, int] | None:
-        return self._state.volume_shape() if self._state.volumes else None
+        return self._state.volume_shape() if self._state.volumes and not self._state.volumes[0].missing else None
 
     def _reference(self):
-        """The reference volume, ``None`` without one."""
-        if not self._state.volumes:
+        """The reference volume, ``None`` without one (or when a session's reference file was not found)."""
+        if not self._state.volumes or self._state.volumes[0].missing:
             return None
         return np.asarray(self._state.volume_array(0))
 
@@ -1231,6 +1231,7 @@ class TextureWindow(QMainWindow):
 
     def _on_finished(self, result) -> None:
         self.result = result
+        self._state.dirty = True  # an analysis is work the session keeps
         self._result_source = self._job_source
         self._previous_note = ""
         self.recommendation = self._recommend(result)
@@ -1250,6 +1251,7 @@ class TextureWindow(QMainWindow):
 
     def _on_sweep_finished(self, sweep) -> None:
         self.sweep = sweep
+        self._state.dirty = True
         self._sweep_source = self._job_source
         self._sweep_progress.setValue(1000)
         size = self.sweep_size()

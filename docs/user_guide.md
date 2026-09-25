@@ -302,3 +302,81 @@ next:
 The theme is saved in the application settings (`ui/theme`: `dark` or `light`) and applied before the
 window opens at the next start. The environment variable `PYALDVC_THEME=light` (or `dark`) starts in that
 theme whatever was saved, e.g. for screenshots in a fixed look.
+
+## 11. Sessions
+
+*File > Save session* writes everything the window holds into one `.aldvc` file, and *File > Open
+session* (or *Recent sessions*, a file dropped on the window, `al-dvc study.aldvc`) brings it back as it
+was: after a computation nothing has to be run again.
+
+**What is saved.** The volumes (their order, labels and which one is the reference), every frame's region
+of interest, the parameters (advanced ones and the compute backend included), the output folder, and:
+
+* the **results** of the run, every frame: displacement, gradients, the local pass, the initial guess,
+  ZNCC, the uncertainty, status and outlier flags, the mesh and the parameters the run used -- and which
+  volume each result belongs to, so a reordered list still shows every field on its own frame;
+* the **strain** computed in the post-processing window, with the settings it was computed with
+  (method, measure, fit window, smoothing, edge trim); the controls as you left them, even if you changed
+  them after computing (the window then says so, as before);
+* the **statistics**: regions, the region the motion is fitted over, the rigid-body or affine motion
+  removed in the views, and every setting of the tab;
+* the **texture analysis**: region, centre, cube, sweep settings, the autocorrelation and RVE results
+  (still marked current or from a previous input, as they were) and the plot settings;
+* the **display**: field, frame, colour map and range, overlay, slice positions, layout, same scale,
+  background frame, grid and subset, mask tint; the **3-D view**: mode, surfaces, iso level, cut-away,
+  warp, arrows, volume slices, outline, background, camera (preset, turn, tilt, zoom) and animation;
+  the tab on screen, and whether the post-processing and texture windows were open (they open again).
+
+**What is not saved**: the voxels of the volumes (a session refers to them; they are often gigabytes),
+application preferences (theme, language, window geometry, notifications -- see *Settings*), the drawing
+tool of the moment, undo histories, the export dialog's choices, and statistics that are computed when
+their tab is used (series over frames, noise floor, profiles, line), which come back from the saved
+result and settings as soon as the tab is shown. A run or a strain computation still going when you save
+is not part of the session.
+
+The file is written next to its target and moved over it only when complete, so a failed save (a full
+disk) leaves the previous file as it was. Saving and opening run in the background with a progress bar in
+the status bar; the window stays usable. A session with results is about the size of those results (a
+100,000-node, 10-frame result with strain: about 350 MB); masks take a few kilobytes to megabytes.
+Changes made since the last save -- including a new run, a strain or texture computation -- are offered
+for saving before a session is replaced or the application closes.
+
+**Moving a project.** A session remembers each volume by its full path, its path relative to the session
+file and a fingerprint (name and size). When you open it, each volume is looked for:
+
+1. where it was;
+2. at the same place relative to the session file (the project folder was moved or copied as a whole,
+   also when the volumes lived outside the session's folder, e.g. `../data`);
+3. in a folder next to the session named like the volumes' old folder, then in the session's own folder;
+4. with the same move as a volume already found elsewhere (the rest of a series follows the first one).
+
+A file found elsewhere is used only if its name and size match, so another scan that happens to share
+the name is never taken silently. If volumes are still missing, the application asks once for the folder
+that now holds the first of them and looks there (and in the folders next to it) for the others. The
+console lists what was found where; the next save records the new places.
+
+**Missing volumes.** Volumes that cannot be found stay in the list, marked with a warning sign and
+"File not found" in their tooltip. Everything else is restored: results, masks, parameters, strain,
+statistics and display; the post-processing, the statistics and the 3-D view work on the results. Only
+views that need the grey values show a hint instead of the image. Move the files back, or open the
+session again and point to their folder.
+
+**Older sessions** (pyALDVC 1.1.0 and before) are plain JSON files with drawn masks in a
+`<name>_masks` folder next to them; they still open, moved or not, and saving them writes the new format.
+A session written by a newer pyALDVC is refused with a message rather than guessed at.
+
+**Inside the file.** A session is a zip archive: `session.json` (the settings, readable), `results.npz`,
+`masks.npz` and `texture.npz`. Reading one never executes code (`allow_pickle=False`). The result can be
+read without the application:
+
+```python
+from al_dvc.io.session_bundle import SessionBundle
+from al_dvc.io.session_serialize import load_result_npz
+
+with SessionBundle("study.aldvc") as bundle, bundle.member("results.npz") as f:
+    result = load_result_npz(f)  # the PipelineResult, exactly as it was in the window
+print(result.n_frames, result.result_strain[0].exx[:5])
+```
+
+`al-dvc stats run.npz --regions study.aldvc` takes the regions of a session, and `al-dvc batch study/*.aldvc`
+runs sessions (moved projects are found the same way; the result a session holds is left untouched).

@@ -199,7 +199,7 @@ def test_a_batch_says_how_to_start_over_after_a_checkpoint_mismatch(tmp_path, mo
     session = tmp_path / "s.aldvc"
     session.write_text("{}", encoding="utf-8")
     stub = type("D", (), {"notes": [], "output_dir": str(tmp_path), "para": None})
-    monkeypatch.setattr(batch, "load_session", lambda _p: stub())
+    monkeypatch.setattr(batch, "load_session", lambda _p, **_k: stub())
     monkeypatch.setattr(batch, "session_provider", lambda _d: None)
     monkeypatch.setattr(batch, "run_aldvc", boom)
     job = batch.run_session_file(session)

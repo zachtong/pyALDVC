@@ -307,6 +307,7 @@ def test_the_corrected_field_in_the_main_window_and_the_exports(window, qapp, tm
 
 def test_regions_correction_and_settings_come_back_with_the_session(window, qapp, tmp_path):
     from al_dvc.gui.session import apply_session, load_session, save_session
+    from al_dvc.io.session_bundle import read_session_document
 
     vol = tmp_path / "ref.npy"
     np.save(vol, np.zeros((8, 8, 8), dtype=np.uint8))
@@ -326,7 +327,7 @@ def test_regions_correction_and_settings_come_back_with_the_session(window, qapp
     saved_regions = list(state.regions)
     saved_corr = state.display_correction
     path = save_session(state, tmp_path / "s.aldvc")
-    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc = read_session_document(path)
     assert len(doc["analysis"]["regions"]) == 2 and doc["analysis"]["correction"]["fit_region"]["id"] == grip.id
     # a fresh state, then the session back
     state.set_regions([])
@@ -334,7 +335,8 @@ def test_regions_correction_and_settings_come_back_with_the_session(window, qapp
     tab.profile_axis.setCurrentText("x")
     apply_session(load_session(path), state, path)
     assert state.regions == saved_regions and state.display_correction == saved_corr
-    state.set_results(make_result([lambda x, y, z: (0.01 * x, 0 * y, 0 * z)]))  # results do not come with a session
+    assert state.results is not None and state.results.n_frames == 1  # the result comes back with the session
+    state.set_results(make_result([lambda x, y, z: (0.01 * x, 0 * y, 0 * z)]))  # and a new one keeps the settings
     assert tab.wait()
     assert tab.motion_kind() == "rigid" and tab.fit_region() == grip and tab.stats_region() == grip
     assert tab.profile_axis.currentText() == "y" and tab.apply_main.isChecked()

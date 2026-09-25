@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from al_dvc import __version__
 
+from . import session_views
 from .app_state import AppState, RunState
 from .i18n import SUPPORTED_LANGUAGES, LanguageManager
 from .kernel_warmup import START_DELAY_MS, KernelWarmup
@@ -40,7 +41,8 @@ from .panels.run_panel import RunPanel
 from .panels.view3d import View3DPanel
 from .panels.viewer import SliceViewer
 from .panels.volume_panel import VolumePanel
-from .session import SESSION_SUFFIX, SessionError, apply_session, load_session, save_session
+from .session import SESSION_SUFFIX
+from .session_ops import SessionOps
 from .settings_store import SETTINGS_ORG, gui_settings, settings_are_private, use_private_settings
 from .sticky_headers import StickyHeadersOverlay
 from .theme import SIDE_COLUMN, THEMES, current_theme
@@ -159,11 +161,15 @@ class MainWindow(QMainWindow):
         self._build_menu_bar()
         self.state.progress_updated.connect(lambda _f, msg: self.statusBar().showMessage(msg))
         self._backend = None  # BackendStatus, probed after the start
+        self.sessions = SessionOps(self)  # saving and opening sessions, with a progress bar in the status bar
+        self.closing = False  # set while the window closes: a session read meanwhile is not applied
         self._backend_label = QLabel()
         self._backend_label.setObjectName("hint")
         self.statusBar().addPermanentWidget(self._backend_label)
         self.state.run_state_changed.connect(self._on_run_state_changed)
         self.state.log_message.connect(self._on_log_message)
+        self.volume_panel.session_dropped.connect(lambda path: self.open_session_path(path, wait=False))
+        self.setAcceptDrops(True)  # a session file dropped anywhere on the window opens it
         self.retranslate_ui()
         self._fit_left_column()
         QTimer.singleShot(START_DELAY_MS + 1500, self._refresh_backend)
@@ -193,8 +199,8 @@ class MainWindow(QMainWindow):
         for key, slot in [
             ("new", self._on_new_session),
             ("open", self._on_open_session),
-            ("save", self._on_save_session),
-            ("save_as", self._on_save_session_as),
+            ("save", lambda: self._on_save_session()),
+            ("save_as", lambda: self._on_save_session_as()),
             ("add_volumes", self.volume_panel._on_add_files),
             ("batch", self._on_batch),
             ("exit", self.close),
@@ -340,7 +346,7 @@ class MainWindow(QMainWindow):
         for p in recent:
             act = menu.addAction(Path(p).name)
             act.setToolTip(p)
-            act.triggered.connect(lambda _c=False, path=p: self.open_session_path(path))
+            act.triggered.connect(lambda _c=False, path=p: self.open_session_path(path, wait=False))
         menu.setEnabled(bool(recent))
 
     def _sync_language_check(self) -> None:
@@ -363,8 +369,15 @@ class MainWindow(QMainWindow):
         self._message("warning", what, self.tr("A run is in progress. Stop it before changing the session."))
         return True
 
+    def _refuse_while_session_busy(self, what: str) -> bool:
+        """True (and a message) while a session is being saved or opened: one session job at a time."""
+        if not self.sessions.busy:
+            return False
+        self._message("warning", what, self.tr("A session is being saved or opened. Wait until it is done."))
+        return True
+
     def confirm_discard(self, title: str) -> bool:
-        """Unsaved edits: offer Save / Discard / Cancel; True when the caller may replace the document."""
+        """Unsaved changes: offer Save / Discard / Cancel; True when the caller may replace the document."""
         if not self.state.dirty:
             return True
         if self.headless:
@@ -373,7 +386,7 @@ class MainWindow(QMainWindow):
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Question)
         box.setWindowTitle(title)
-        box.setText(self.tr("The session has unsaved edits (volumes, region of interest or parameters)."))
+        box.setText(self.tr("The session has unsaved changes (volumes, region of interest, parameters or results)."))
         box.setInformativeText(self.tr("Save them first?"))
         box.setStandardButtons(
             QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel
@@ -381,12 +394,13 @@ class MainWindow(QMainWindow):
         box.setDefaultButton(QMessageBox.StandardButton.Save)
         answer = box.exec()
         if answer == QMessageBox.StandardButton.Save:
-            self._on_save_session()
-            return not self.state.dirty  # a cancelled file dialog leaves the edits unsaved: stay
+            self._on_save_session(wait=True)
+            return not self.state.dirty  # a cancelled file dialog or a failed save leaves the changes unsaved: stay
         return answer == QMessageBox.StandardButton.Discard
 
     def _on_new_session(self) -> None:
-        if self._refuse_while_running(self.tr("New session")) or not self.confirm_discard(self.tr("New session")):
+        what = self.tr("New session")
+        if self._refuse_while_running(what) or self._refuse_while_session_busy(what) or not self.confirm_discard(what):
             return
         self.state.reset()
         self.setWindowTitle(f"pyALDVC {__version__}")
@@ -394,57 +408,49 @@ class MainWindow(QMainWindow):
     def _on_open_session(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, self.tr("Open session"), "", SESSION_FILTER)
         if path:
-            self.open_session_path(path)
+            self.open_session_path(path, wait=False)
 
-    def open_session_path(self, path: str) -> list[str]:
-        if self._refuse_while_running(self.tr("Open session")) or not self.confirm_discard(self.tr("Open session")):
+    def open_session_path(self, path: str, wait: bool = True) -> list[str] | None:
+        """Open the session at ``path`` (read on a worker thread, then applied). With ``wait`` (scripts, tests, the
+        batch dialog) the saved paths of the volumes still missing once it is open, else None at once."""
+        what = self.tr("Open session")
+        if self._refuse_while_running(what) or self._refuse_while_session_busy(what) or not self.confirm_discard(what):
             return []
-        try:
-            data = load_session(path)  # validated completely before the state is touched
-            missing = apply_session(data, self.state, path)
-        except SessionError as exc:
-            self._message("critical", self.tr("Cannot open session"), str(exc))
-            return []
-        self.setWindowTitle(f"pyALDVC {__version__} - {Path(path).name}")
-        if missing:
-            self._message(
-                "warning",
-                self.tr("Missing volumes"),
-                self.tr("{n} volume file(s) of the session were not found:\n{files}").format(
-                    n=len(missing), files="\n".join(missing[:8])
-                ),
-            )
-        self.viewer.sync_from_state()
-        self.state.log(self.tr("Session loaded: {path}").format(path=path))
-        self.remember_session(path)
-        return missing
+        return self.sessions.open(path, wait=wait)
 
-    def _on_save_session(self) -> None:
+    def locate_volumes_folder(self, missing: str) -> str | None:
+        """The folder the user points at for the missing volumes of a session being opened (None: not asked or
+        cancelled)."""
+        return self.sessions.ask_folder(missing)
+
+    def _on_save_session(self, wait: bool = False) -> None:
         if self.state.session_path is None:
-            self._on_save_session_as()
+            self._on_save_session_as(wait)
         else:
-            self.save_session_path(self.state.session_path)
+            self.save_session_path(self.state.session_path, wait=wait)
 
-    def _on_save_session_as(self) -> None:
+    def _on_save_session_as(self, wait: bool = False) -> None:
         path, _ = QFileDialog.getSaveFileName(self, self.tr("Save session"), "", SESSION_FILTER)
         if path:
-            self.save_session_path(path)
+            self.save_session_path(path, wait=wait)
 
-    def save_session_path(self, path: str | Path) -> Path | None:
-        results_path = self.state.results_path  # the archive the export dialog or a batch actually wrote
-        if results_path is None and self.state.results is not None:
-            candidate = Path(self.state.output_dir) / "aldvc.npz"
-            if candidate.exists():
-                results_path = str(candidate)
-        try:
-            p = save_session(self.state, path, results_path)
-        except SessionError as exc:
-            self._message("critical", self.tr("Cannot save session"), str(exc))
+    def save_session_path(self, path: str | Path, wait: bool = True) -> Path | None:
+        """Save the session to ``path`` on a worker thread. With ``wait`` the path written (None on failure), else
+        None at once (the status bar shows the progress, the console the outcome)."""
+        if self._refuse_while_session_busy(self.tr("Save session")):
             return None
-        self.setWindowTitle(f"pyALDVC {__version__} - {p.name}")
-        self.state.log(self.tr("Session saved: {path}").format(path=p))
-        self.remember_session(p)
-        return p
+        return self.sessions.save(path, wait=wait)
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if any(u.toLocalFile().lower().endswith(SESSION_SUFFIX) for u in event.mimeData().urls()):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:  # noqa: N802 - Qt API
+        for url in event.mimeData().urls():
+            if url.toLocalFile().lower().endswith(SESSION_SUFFIX):
+                event.acceptProposedAction()
+                self.open_session_path(url.toLocalFile(), wait=False)
+                return
 
     # ------------------------------------------------------------------ layout
     def _fit_left_column(self) -> None:
@@ -508,6 +514,7 @@ class MainWindow(QMainWindow):
             self.strain_window = window
             self._place_window(window)
             window.export_requested.connect(lambda: self.open_export_dialog(preselect_strain=True))
+            session_views.restore_post(window, session_views.take_post(self.state))  # what a session left for it
         window.show()
         window.raise_()
         window.activateWindow()
@@ -526,6 +533,9 @@ class MainWindow(QMainWindow):
             self.texture_window = window
             window.guide_requested.connect(self.open_guide_window)
             self._place_window(window)
+            settings, data = session_views.take_texture(self.state)
+            if settings is not None or data is not None:
+                session_views.restore_texture(window, settings, data)  # what a session left for it
         window.show()
         window.raise_()
         window.activateWindow()
@@ -708,6 +718,7 @@ class MainWindow(QMainWindow):
         jobs.append(("automatic mask", self.state.auto_mask_thread_running, self.state.cancel_auto_mask))
         jobs.append(("saving the mask", self.state.save_mask_thread_running, lambda: None))  # a write finishes its file
         jobs.append(("recording", self.view3d.recording, self.view3d.cancel_recording))
+        jobs.append(("session", lambda: self.sessions.busy, lambda: None))  # a session file is finished, never cut
         export = getattr(self, "export_dialog", None)
         if export is not None and hasattr(export, "is_busy"):
             jobs.append(("export", lambda: bool(export.is_busy), lambda: None))  # an export finishes its files
@@ -739,8 +750,10 @@ class MainWindow(QMainWindow):
         if not self.confirm_discard(self.tr("Exit")):
             event.ignore()
             return
+        self.closing = True  # a session still being read is not applied to a closing window
         pending = self.settle_workers()
         if pending:
+            self.closing = False
             # a thread that does not stop must not be destroyed under the running code: the window stays
             self._message(
                 "warning",
@@ -914,7 +927,7 @@ def main(argv: list[str] | None = None) -> int:
     QTimer.singleShot(START_DELAY_MS, warmup.start)
     session = _session_path_from_argv(argv)
     if session:
-        QTimer.singleShot(0, lambda: window.open_session_path(session))
+        QTimer.singleShot(0, lambda: window.open_session_path(session, wait=False))
     return app.exec()
 
 

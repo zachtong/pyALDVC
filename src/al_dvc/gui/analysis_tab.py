@@ -459,7 +459,7 @@ class AnalysisTab(AnalysisExportMixin, AnalysisPagesMixin, QWidget):
         finally:
             self._updating = False
         background = None
-        if res is not None and self._state.volumes:
+        if res is not None and self._state.volumes and not self._state.volumes[0].missing:
             try:
                 vol = self._state.volume_array(0)
                 if tuple(vol.shape) == tuple(res.volume_shape):

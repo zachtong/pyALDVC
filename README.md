@@ -108,7 +108,7 @@ Foam data courtesy of NIST (Landauer et al., *Sci. Data* 10, 356, 2023).</sub>
   </tr>
   <tr>
     <td valign="top"><b>Formats</b><br>TIFF, MATLAB, NumPy, HDF5, NIfTI, NRRD, DICOM in; NumPy, MATLAB, CSV, ParaView, PDF out.</td>
-    <td valign="top"><b>Sessions, batch, command line</b><br>Save sessions, queue batches, resume from checkpoints, or script it with <code>al-dvc</code> and <code>al_dvc.run_aldvc</code>.</td>
+    <td valign="top"><b>Sessions, batch, command line</b><br>Save sessions with the results and every setting (found again when the project moves), queue batches, resume from checkpoints, or script it with <code>al-dvc</code> and <code>al_dvc.run_aldvc</code>.</td>
   </tr>
 </table>
 

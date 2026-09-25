@@ -553,7 +553,7 @@ class StrainWindow(QMainWindow):
     def _load_data(self) -> None:
         res = self._state.results
         background = None
-        if res is not None and self.show_volume.isChecked() and self._state.volumes:
+        if res is not None and self.show_volume.isChecked() and self._state.volumes and not self._state.volumes[0].missing:
             try:
                 vol = self._state.volume_array(0)
                 if tuple(vol.shape) == tuple(res.volume_shape):

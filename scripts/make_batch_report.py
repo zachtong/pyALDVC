@@ -122,10 +122,10 @@ def main(argv=None) -> int:
                 f"pyALDVC {__version__} -- batch runs (al_dvc.gui.batch, dialogs/batch_dialog.py, al-dvc batch)",
                 "",
                 "A batch is a list of .aldvc session files. Each is loaded, its volumes and masks",
-                "(files, then drawn operations) are read, the pipeline runs with the session's own",
-                "parameters and the chosen exports go to the session's output folder. Jobs are",
-                "independent: a failure is recorded and the next session starts; Stop ends the",
-                "running session early (pipeline stop flag) and skips the rest.",
+                "(held in the session; files or drawn operations in older ones) are read, the pipeline",
+                "runs with the session's own parameters and the chosen exports go to the session's",
+                "output folder. Jobs are independent: a failure is recorded and the next session",
+                "starts; Stop ends the running session early (pipeline stop flag) and skips the rest.",
                 "",
                 f"Synthetic pair {shape[::-1]} (x,y,z); sessions with subsets {'12/16/20' if args.quick else '16/24/32'}",
                 "(the largest also carries a drawn elliptical mask) and one session whose second",
@@ -140,8 +140,9 @@ def main(argv=None) -> int:
                 "",
                 "Limitations: sessions run one after another (no parallel jobs: each run already uses",
                 "every core); results are written to disk, not loaded into the window (open a finished",
-                "session with 'Open in window' and load its exports); relative paths in a session",
-                "resolve against the session file, so moving a session without its volumes breaks it.",
+                "session with 'Open in window' and load its exports); a session moved without its",
+                "volumes fails its job (they are searched for as when the window opens it: saved path,",
+                "relative to the session, next to it; see reports/session.pdf).",
             ]
         )
         fig = plt.figure(figsize=(8.5, 11))

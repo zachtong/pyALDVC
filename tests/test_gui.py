@@ -1,6 +1,5 @@
 """Offscreen tests of the PySide6 application (skipped when PySide6 is missing)."""
 
-import json
 import os
 from pathlib import Path
 
@@ -18,6 +17,7 @@ from al_dvc.gui.app_state import RunState  # noqa: E402
 from al_dvc.gui.i18n import SUPPORTED_LANGUAGES, load_table  # noqa: E402
 from al_dvc.gui.names import select_key  # noqa: E402
 from al_dvc.gui.session import SessionError, load_session, save_session  # noqa: E402
+from al_dvc.io.session_bundle import read_session_document  # noqa: E402
 from al_dvc.io.volume_io import save_volume  # noqa: E402
 from al_dvc.synthetic import affine_displacement, generate_speckle_volume, warp_volume_lagrangian  # noqa: E402
 
@@ -127,8 +127,9 @@ def test_session_roundtrip(qapp, small_pair, tmp_path):
     window.state.set_display(display_field="disp_u", colormap="magma")
     path = window.save_session_path(tmp_path / "test.aldvc")
     assert path is not None and path.exists()
-    doc = json.loads(path.read_text(encoding="utf-8"))
-    assert doc["volumes"][0]["path"] == "ref.npy"  # relative to the session file
+    doc = read_session_document(path)
+    assert doc["format"] == 3 and doc["volumes"][0]["relative"] == "ref.npy"  # relative to the session file
+    assert doc["volumes"][0]["path"] == str(p0.resolve()) and doc["volumes"][0]["fingerprint"]["size"] == p0.stat().st_size
     data = load_session(path)
     assert data.para.winsize == (20, 20, 20) and data.para.units == "um"
     other = MainWindow()
@@ -381,5 +382,5 @@ def test_the_noise_corrected_steps_are_an_advanced_option_off_by_default(qapp, t
     state.add_volume_paths([str(vol), str(vol)])
     state.set_params(icgn_noise_hessian=True)
     saved = save_session(state, tmp_path / "chosen.aldvc")
-    assert json.loads(saved.read_text(encoding="utf-8"))["para_revision"] == 2
+    assert read_session_document(saved)["para_revision"] == 2
     assert load_session(saved).para.icgn_noise_hessian is True  # a deliberate choice survives save and reopen

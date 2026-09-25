@@ -87,6 +87,7 @@ class VolumeEntry:
     uid: str = field(default_factory=lambda: uuid.uuid4().hex)  # identity, so results stay attached to their volumes
     header_shape: tuple[int, int, int] | None = None  # the file's size, read from its header when it was added
     shape_pending: bool = False  # the header is being read, off the UI thread
+    missing: bool = False  # a session referred to this file and it was not found (cleared once it is read)
 
     @property
     def shape(self) -> tuple[int, int, int] | None:
@@ -103,6 +104,7 @@ class VolumeEntry:
 
             arr = load_volume(self.path)  # bind locally first: a release must not blank a live read
             self.array = arr
+            self.missing = False
             self.header_shape = tuple(int(s) for s in arr.shape)  # type: ignore[assignment]  # known after a release
             return arr
         return self.array
@@ -284,6 +286,9 @@ class AppState(QObject):
         self.display_correction = None  # al_dvc.analysis.Correction | None
         self.analysis_settings: dict = {}
         self._display_cache: tuple | None = None
+        # settings of the windows a session restores (3-D view, post-processing, texture analysis) and the texture
+        # analysis itself, kept here for a window that is opened only later (al_dvc.gui.session_views)
+        self.ui_state: dict = {}
         # volume sizes, read from the file headers by background threads
         self._shape_batches: dict[int, list[str]] = {}
         self._shape_batch_seq = 0
@@ -917,6 +922,8 @@ class AppState(QObject):
     def volume_shape(self) -> tuple[int, int, int] | None:
         if not self.volumes:
             return None
+        if self.volumes[0].missing and self.volumes[0].array is None:
+            return self.volumes[0].shape  # the file of a session is not there: its saved size, and no error per call
         try:
             return tuple(int(s) for s in self.volume_array(0).shape)  # type: ignore[return-value]
         except Exception as exc:  # unreadable file: report, do not crash
@@ -1004,6 +1011,8 @@ class AppState(QObject):
         captured); without it a replacement (strain added) keeps the existing identity and a fresh result
         takes the current sequence."""
         self.results = results
+        if results is not None:
+            self.dirty = True  # a run or a strain computation is work a session keeps
         if uids is not None:
             self.result_uids = list(uids)
         elif results is None:
@@ -1118,6 +1127,7 @@ class AppState(QObject):
         self.regions = []
         self.display_correction = None
         self.analysis_settings = {}
+        self.ui_state = {}
         self._display_cache = None
         self.session_generation += 1
         self.mask_revision += 1
