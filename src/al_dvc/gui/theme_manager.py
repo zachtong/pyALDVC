@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import TypeVar
 
-from PySide6.QtCore import QObject, QSettings, Signal
+from PySide6.QtCore import QObject, QSettings, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import QApplication, QComboBox, QWidget
 
 from .icons import ICON_PROPERTY, icon
@@ -76,7 +78,9 @@ class ThemeManager(QObject):
             raise ValueError(f"unknown theme {name!r}; available: {sorted(THEMES)}")
         changed = name != current_theme()
         set_current_theme(name)
-        self._app.setStyleSheet(build_stylesheet())
+        css = build_stylesheet()
+        if self._app.styleSheet() != css:  # setting a sheet re-polishes every widget: not for the same sheet
+            self._app.setStyleSheet(css)
         if persist:
             QSettings().setValue(SETTINGS_KEY, name)
         if not changed:
@@ -137,16 +141,38 @@ def restyle(root: QWidget) -> None:
 
 
 def refresh_toolbar_icons(toolbar) -> None:
-    """Choose a matplotlib toolbar's icons again: matplotlib draws them black, or in the text colour on a dark
-    background, depending on the palette when the toolbar is built -- before the stylesheet has reached it, and
-    before a theme change."""
-    toolbar.ensurePolished()  # the stylesheet's colours are in the palette the icons are chosen from
+    """Draw a matplotlib toolbar's icons in the theme's text colour.
+
+    matplotlib picks their colour itself from the toolbar's background -- 3.10 when the toolbar is built (the text
+    colour on a dark background, black otherwise), 3.11 at every paint (white or black) -- and the light theme
+    leaves that background transparent, which reads as black: matplotlib 3.11 drew white icons on the white
+    window. The icons are made here from matplotlib's own images instead, so they follow the theme alone.
+    """
+    colour = QColor(current_colors().TEXT_PRIMARY)
     try:
         for text, _tip, image, callback in toolbar.toolitems:
             if text is not None and callback in toolbar._actions:
-                toolbar._actions[callback].setIcon(toolbar._icon(image + ".png"))
-    except (AttributeError, TypeError, ValueError) as exc:  # another matplotlib: the icons stay as they are
+                toolbar._actions[callback].setIcon(_tinted_icon(image, colour, toolbar.devicePixelRatioF()))
+    except (AttributeError, TypeError, ValueError, OSError) as exc:  # another matplotlib: the icons stay as they are
         logger.debug("matplotlib toolbar icons not refreshed: %s", exc)
+
+
+def _tinted_icon(image: str, colour: QColor, pixel_ratio: float) -> QIcon:
+    """matplotlib's toolbar image ``image`` (its large PNG when there is one) with its black drawn in ``colour``."""
+    import matplotlib
+
+    folder = Path(matplotlib.get_data_path()) / "images"
+    path = folder / f"{image}_large.png"
+    if not path.is_file():
+        path = folder / f"{image}.png"
+    if not path.is_file():
+        raise OSError(f"no toolbar image {image!r} in {folder}")
+    pixmap = QPixmap(str(path))
+    pixmap.setDevicePixelRatio(pixel_ratio or 1.0)
+    mask = pixmap.createMaskFromColor(QColor("black"), Qt.MaskMode.MaskOutColor)
+    pixmap.fill(colour)
+    pixmap.setMask(mask)
+    return QIcon(pixmap)
 
 
 class ThemeDefault(QObject):

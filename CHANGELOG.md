@@ -61,7 +61,9 @@ All notable changes to pyALDVC are documented here. The format follows
   its settings in a temporary folder of its own. The application itself reads and writes the same place as
   before, so no setting is lost.
 - **The texture plots' toolbar icons were black on the dark background.** matplotlib chose them before the
-  stylesheet reached the toolbar; they are light in the dark theme now, and dark in the light one.
+  stylesheet reached the toolbar. They are now drawn in the theme's text colour, light in the dark theme and
+  dark in the light one, from matplotlib's own images: matplotlib 3.11 picks the colour itself at every paint
+  and would draw white icons on the light theme's white window.
 - **Iso-surfaces, the deformed lattice and the node points were drawn translucent at full opacity.** Every
   field was given a transparent colour for unmeasured nodes, and such a colour puts the whole mesh into VTK's
   translucent pass whether it holds an unmeasured node or not: nested surfaces and the far faces of the deformed

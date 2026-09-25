@@ -40,6 +40,20 @@ def qapp():
     return create_application(["pytest"])
 
 
+@pytest.fixture(scope="module", autouse=True)
+def no_leftover_windows(qapp):
+    """Delete the hidden windows earlier test modules left in this process. A theme switch restyles every
+    widget of the application; in one process (CI runs the suite so) the closed windows of a few hundred tests
+    added up to thousands of widgets, and a switch took minutes."""
+    from PySide6.QtCore import QEvent
+
+    for widget in QApplication.topLevelWidgets():
+        if not widget.isVisible():
+            widget.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    yield
+
+
 @pytest.fixture
 def dark_again(qapp):
     """Every test starts dark with nothing saved, and leaves it that way (other modules expect the default)."""
