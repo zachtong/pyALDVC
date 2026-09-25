@@ -4,7 +4,7 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.1.0] - 2026-09-24
 
 ### Added
 - **Several iso-surfaces in the 3-D view.** In the *Iso-surface* mode, *Surfaces* (1 to 10) draws that many
