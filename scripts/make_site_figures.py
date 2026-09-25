@@ -76,7 +76,7 @@ from al_dvc.texture import analyse_texture, boolean_spheres, recommend_parameter
 DEFAULT_OUT = ROOT / "site" / "figures"
 NUMBERS = "numbers.json"
 
-# --- app colours (src/al_dvc/gui/theme.py COLORS; the guide and branding scripts use the same) -------------
+# --- app colours (src/al_dvc/gui/theme.py DARK; the guide and branding scripts use the same) ---------------
 BG = "#141929"  # BG_PANEL: figure face, the colour of a card on the site
 AX_BG = "#0b0f1a"  # BG_DARKEST
 BORDER = "#1e293b"

@@ -12,9 +12,12 @@ Two backends behind one panel:
 Without pyvista the panel shows how to install it and does nothing else.
 The scene itself is built by :mod:`al_dvc.gui.view3d_scene`, so the two
 backends cannot drift apart. The controls shown depend on the mode: slice
-positions for ``slices`` (shared with the Slices tab), the iso level for
-``surface``, the warp scale for ``warped``; arrows, outline, volume slices,
-background and camera are always available.
+positions for ``slices`` (shared with the Slices tab), the number of
+surfaces, the iso level and the cut-away for ``surface``, the warp scale for
+``warped``; arrows, outline, volume slices, background and camera are always
+available. The cut-away removes the quarter facing the camera of the camera
+row (or the mouse-turned camera, re-evaluated when the mouse is released); an
+animation keeps the quarter it started with.
 
 Camera: the presets are the starting point; the Turn / Tilt / Zoom boxes and the
 mouse drive the same camera, and a mouse drag is written back into the boxes so
@@ -55,8 +58,10 @@ from PySide6.QtWidgets import (
 )
 
 from ..app_state import AppState
-from ..icons import icon, tool_button
+from ..flow_layout import flow_group, flow_row
+from ..icons import set_icon, tool_button
 from ..names import field_name, fill_combo, retranslate_combo
+from ..theme_manager import ThemeDefault
 from ..view3d_animation import (
     DEFAULT_SPEEDS,
     FORMATS,
@@ -73,6 +78,7 @@ from ..view3d_scene import (
     BACKGROUND,
     BACKGROUNDS,
     CAMERAS,
+    MAX_ISO_LEVELS,
     MODES,
     SCENE_COLUMNS,
     CameraSpec,
@@ -82,6 +88,7 @@ from ..view3d_scene import (
     apply_camera,
     available,
     build_scene,
+    facing_quadrant,
     import_error,
     render_image,
 )
@@ -251,6 +258,11 @@ class View3DPanel(QWidget):
         self.iso.setRange(0.0, 1.0)
         self.iso.setSingleStep(0.05)
         self.iso.setValue(0.5)
+        self.iso_levels = QSpinBox()  # surface: how many iso-surfaces
+        self.iso_levels.setRange(1, MAX_ISO_LEVELS)
+        self.iso_levels.setValue(1)
+        self.iso_levels.setFixedWidth(56)
+        self.iso_cutaway = QCheckBox()  # surface: remove the quarter facing the camera
         self.warp_scale = QDoubleSpinBox()
         self.warp_scale.setRange(0.0, 1000.0)
         self.warp_scale.setValue(1.0)
@@ -273,6 +285,7 @@ class View3DPanel(QWidget):
         self.background = QComboBox()
         for key in BACKGROUNDS:
             self.background.addItem(key, key)
+        self._background_default = ThemeDefault(self.background, "VIEW3D_BACKGROUND")  # until the user picks one
         self.camera = QComboBox()
         for key in CAMERAS:
             self.camera.addItem(key, key)
@@ -304,14 +317,13 @@ class View3DPanel(QWidget):
         self.anim_direction = QComboBox()
         fill_combo(self.anim_direction, "direction")
         self.anim_direction.setMinimumWidth(136)  # room for 'Counter-clockwise'
-        self.anim_speed = QDoubleSpinBox()
+        self.anim_speed = QDoubleSpinBox()  # as wide as its largest value and unit ('°/s', 'f/s', 'vx/s')
         self.anim_speed.setDecimals(2)
-        self.anim_speed.setFixedWidth(84)
         self.anim_smooth = QCheckBox()  # frames: interpolate the deformation between frames
         self._btn_play = tool_button("play")
         self._btn_stop = tool_button("stop")
         self._btn_record = QPushButton()
-        self._btn_record.setIcon(icon("record"))
+        set_icon(self._btn_record, "record")
         self._record_progress = QProgressBar()
         self._record_progress.setRange(0, 1000)
         self._record_progress.setTextVisible(False)
@@ -333,6 +345,7 @@ class View3DPanel(QWidget):
                 "slice_z",
                 "slice_y",
                 "slice_x",
+                "iso_levels",
                 "iso",
                 "warp_scale",
                 "stride",
@@ -349,63 +362,44 @@ class View3DPanel(QWidget):
         for key in ("mode", "background", "anim_kind"):
             self._labels[key].setFixedWidth(LABEL_COLUMN_WIDTH)  # the leading labels line up
 
-        # rows of controls: a grid so the leading labels share one column
+        # rows of controls: a grid so the leading labels share one column; in a narrow window a row wraps onto
+        # more lines instead of drawing its controls over each other
         rows = QGridLayout()
         rows.setContentsMargins(0, 0, 0, 0)
         rows.setHorizontalSpacing(6)
         rows.setVerticalSpacing(4)
-        top = QHBoxLayout()
-        top.addWidget(self.mode)
-        for axis in SLICE_AXES:
-            top.addWidget(self._labels[f"slice_{axis}"])
-            top.addWidget(self.slice_spins[axis])
-        top.addWidget(self._labels["iso"])
-        top.addWidget(self.iso)
-        top.addWidget(self._labels["warp_scale"])
-        top.addWidget(self.warp_scale)
-        top.addWidget(self.edges)
-        top.addStretch(1)
-        bottom = QHBoxLayout()
-        bottom.addWidget(self.background)
-        bottom.addSpacing(8)
-        bottom.addWidget(self._labels["camera"])
-        bottom.addWidget(self.camera)
-        bottom.addSpacing(8)
-        bottom.addWidget(self._labels["azimuth"])
-        bottom.addWidget(self.azimuth)
-        bottom.addWidget(self._labels["elevation"])
-        bottom.addWidget(self.elevation)
-        bottom.addWidget(self._labels["zoom"])
-        bottom.addWidget(self.zoom)
-        bottom.addWidget(self._btn_reset_camera)
-        bottom.addStretch(1)
-        anim = QHBoxLayout()
-        anim.addWidget(self.anim_kind)
-        anim.addWidget(self.anim_axis)
-        anim.addWidget(self.anim_direction)
-        anim.addWidget(self._labels["anim_speed"])
-        anim.addWidget(self.anim_speed)
-        anim.addWidget(self.anim_smooth)
-        anim.addSpacing(6)
-        anim.addWidget(self._btn_play)
-        anim.addWidget(self._btn_stop)
-        anim.addWidget(self._btn_record)
-        anim.addWidget(self._record_progress)
-        anim.addStretch(1)
-        actions = QHBoxLayout()
-        actions.addWidget(self.volume_slices)
-        actions.addWidget(self.outline)
-        actions.addWidget(self.arrows)
-        actions.addStretch(1)
-        actions.addWidget(self._btn_refresh)
-        actions.addWidget(self._btn_shot)
-        rows.addWidget(self._labels["mode"], 0, 0)
-        rows.addLayout(top, 0, 1)
-        rows.addWidget(self._labels["background"], 1, 0)
-        rows.addLayout(bottom, 1, 1)
-        rows.addWidget(self._labels["anim_kind"], 2, 0)
-        rows.addLayout(anim, 2, 1)
-        rows.addLayout(actions, 3, 0, 1, 2)
+        top = flow_row(
+            self.mode,
+            *(flow_group(self._labels[f"slice_{axis}"], self.slice_spins[axis]) for axis in SLICE_AXES),
+            flow_group(self._labels["iso_levels"], self.iso_levels),
+            flow_group(self._labels["iso"], self.iso),
+            self.iso_cutaway,
+            flow_group(self._labels["warp_scale"], self.warp_scale),
+            self.edges,
+        )
+        bottom = flow_row(
+            self.background,
+            flow_group(self._labels["camera"], self.camera),
+            flow_group(self._labels["azimuth"], self.azimuth),
+            flow_group(self._labels["elevation"], self.elevation),
+            flow_group(self._labels["zoom"], self.zoom),
+            self._btn_reset_camera,
+        )
+        anim = flow_row(
+            self.anim_kind,
+            self.anim_axis,
+            self.anim_direction,
+            flow_group(self._labels["anim_speed"], self.anim_speed),
+            self.anim_smooth,
+            flow_group(self._btn_play, self._btn_stop, self._btn_record, self._record_progress),
+        )
+        actions = flow_row(self.volume_slices, self.outline, self.arrows, None, flow_group(self._btn_refresh, self._btn_shot))
+        line_height = self.mode.sizeHint().height()
+        for row, (key, cells) in enumerate((("mode", top), ("background", bottom), ("anim_kind", anim))):
+            self._labels[key].setFixedHeight(line_height)  # level with the first line of a wrapped row
+            rows.addWidget(self._labels[key], row, 0, Qt.AlignmentFlag.AlignTop)
+            rows.addWidget(cells, row, 1)
+        rows.addWidget(actions, 3, 0, 1, 2)
         rows.setColumnStretch(1, 1)
         self._arrow_row = QWidget()
         arrow_row = QHBoxLayout(self._arrow_row)
@@ -425,7 +419,7 @@ class View3DPanel(QWidget):
         self._hint.setObjectName("hint")
         self._image = QLabel()
         self._image.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._image.setStyleSheet(f"background: {BACKGROUND};")
+        self._image.setStyleSheet(f"background: {self.background_colour()};")
         self._image.setMinimumSize(200, 150)
         self._stack.addWidget(self._hint)
         self._stack.addWidget(self._image)
@@ -471,9 +465,9 @@ class View3DPanel(QWidget):
         guard_wheel(self)
 
         self.mode.currentIndexChanged.connect(lambda _i: self._on_control_changed())
-        for w in (self.arrows, self.volume_slices, self.outline, self.edges):
+        for w in (self.arrows, self.volume_slices, self.outline, self.edges, self.iso_cutaway):
             w.toggled.connect(lambda _v: self._on_control_changed())
-        for w in (self.stride, self.arrow_scale, self.warp_scale, self.iso):
+        for w in (self.stride, self.arrow_scale, self.warp_scale, self.iso, self.iso_levels):
             w.valueChanged.connect(lambda _v: self._on_control_changed())
         for axis, s in self.slice_spins.items():
             s.valueChanged.connect(lambda v, a=axis: self._on_slice_spin(a, v))
@@ -519,7 +513,7 @@ class View3DPanel(QWidget):
 
                 self._interactor = QtInteractor(self, shape=(1, 2), col_weights=list(SCENE_COLUMNS), border=False)
                 self._interactor.subplot(0, 0)
-                self._interactor.set_background(BACKGROUND, all_renderers=True)
+                self._interactor.set_background(self.background_colour(), all_renderers=True)
                 self._interactor.iren.add_observer("EndInteractionEvent", lambda *_a: self._on_user_camera())
                 self._stack.addWidget(self._interactor)
                 self.backend = "interactive"
@@ -535,6 +529,9 @@ class View3DPanel(QWidget):
 
     def background_key(self) -> str:
         return str(self.background.currentData() or "dark")
+
+    def background_colour(self) -> str:
+        return BACKGROUNDS.get(self.background_key(), BACKGROUND)
 
     def options(self) -> SceneOptions:
         st = self._state
@@ -553,9 +550,12 @@ class View3DPanel(QWidget):
             show_outline=self.outline.isChecked(),
             show_volume_slices=self.volume_slices.isChecked(),
             iso_fraction=float(self.iso.value()),
+            iso_levels=int(self.iso_levels.value()),
+            iso_cutaway=self.iso_cutaway.isChecked(),
+            cutaway_quadrant=self._cutaway_quadrant(),
             slice_index=dict(st.slice_index),
             slice_visible={axis: cb.isChecked() for axis, cb in self.slice_visible.items()},
-            background=BACKGROUNDS.get(self.background_key(), BACKGROUND),
+            background=self.background_colour(),
             title=field_name(st.display_field),
         )
 
@@ -573,6 +573,14 @@ class View3DPanel(QWidget):
         if self.backend == "interactive" and self._live_state is not None:
             return self._live_state
         return self.camera_spec()
+
+    def _cutaway_quadrant(self) -> tuple[int, int]:
+        """The quarter the cut-away removes: the one facing the camera while a cut is shown, else the default (a
+        turned camera must not rebuild a scene that has no cut). The scene is built before the camera is pointed,
+        so a camera about to be reset to the camera row counts as the camera row."""
+        if self.mode_key() == "surface" and self.iso_cutaway.isChecked():
+            return facing_quadrant(self.camera_spec() if self._camera_reset_pending else self.base_camera())
+        return (1, 1)
 
     def _volume_for_scene(self):
         """The volume the grey slice planes show: the slice tab's background frame, so the two agree."""
@@ -662,7 +670,7 @@ class View3DPanel(QWidget):
             self._status.setText(self.tr("Slice sweep needs the Slices mode or the volume slices: animation set to Orbit."))
 
     def _on_background(self) -> None:
-        colour = BACKGROUNDS.get(self.background_key(), BACKGROUND)
+        colour = self.background_colour()
         self._image.setStyleSheet(f"background: {colour};")
         if self._interactor is not None:
             self._interactor.set_background(colour, all_renderers=True)
@@ -700,7 +708,8 @@ class View3DPanel(QWidget):
 
     def _on_user_camera(self) -> None:
         """The mouse moved the interactive camera: remember it, show it in the camera row and, while an
-        animation plays, continue the animation from this view."""
+        animation plays, continue the animation from this view. A cut-away turned away from the camera is
+        redrawn on the camera's side."""
         if self._interactor is None:
             return
         self._live_state = CameraState.from_camera(self._interactor.camera)
@@ -715,6 +724,8 @@ class View3DPanel(QWidget):
                 self._updating = False
         if self._play_base is not None:
             self._rebase_playback()
+        elif self._last_options is not None and self._last_options.cutaway_quadrant != self._cutaway_quadrant():
+            self.invalidate()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -803,6 +814,8 @@ class View3DPanel(QWidget):
         parts = [f"{field_name(info.field)}: {info.n_finite}/{info.n_nodes} nodes, [{lo:.4g}, {hi:.4g}]"]
         if self._last_options is not None and self._last_options.frame < 0 and self._play_base is None:
             parts.insert(0, self.tr("reference state (no displacement)"))
+        if info.iso_levels:
+            parts.append(self.tr("iso levels: {levels}").format(levels=", ".join(f"{v:.4g}" for v in info.iso_levels)))
         if info.n_arrows:
             parts.append(self.tr("{n} arrows").format(n=info.n_arrows))
         if info.note == "nodes_only":
@@ -966,7 +979,7 @@ class View3DPanel(QWidget):
             self._play_clock.start()
             self._play_timer.start(PLAY_INTERVAL_MS.get(self.backend, 100))
             self._playing = True
-        self._btn_play.setIcon(icon("pause" if self._playing else "play"))
+        set_icon(self._btn_play, "pause" if self._playing else "play")
         self._btn_play.setToolTip(self.tr("Pause") if self._playing else self.tr("Play"))
 
     def _clear_playback(self) -> None:
@@ -977,7 +990,7 @@ class View3DPanel(QWidget):
         self._play_base = None
         self._play_kind = None
         self._last_frame = None
-        self._btn_play.setIcon(icon("play"))
+        set_icon(self._btn_play, "play")
         self._btn_play.setToolTip(self.tr("Play"))
 
     def stop_animation(self) -> None:
@@ -1180,9 +1193,15 @@ class View3DPanel(QWidget):
             self._labels[f"slice_{axis}"].setVisible(False)
             self.slice_spins[axis].setVisible(False)
             self.slice_spins[axis].setEnabled(has)
-        self._labels["iso"].setVisible(mode == "surface")
-        self.iso.setVisible(mode == "surface")
-        self.iso.setEnabled(has)
+        surface = mode == "surface"
+        single = self.iso_levels.value() == 1  # the iso level places a single surface only
+        for w in (self._labels["iso_levels"], self.iso_levels, self._labels["iso"], self.iso, self.iso_cutaway):
+            w.setVisible(surface)
+        self.iso_levels.setEnabled(has)
+        self.iso_cutaway.setEnabled(has)
+        self.iso.setEnabled(has and single)
+        self._labels["iso"].setEnabled(single)
+        self.iso.setToolTip(self._iso_tooltip())
         self._labels["warp_scale"].setVisible(mode == "warped")
         self.warp_scale.setVisible(mode == "warped")
         self.warp_scale.setEnabled(has)
@@ -1200,6 +1219,10 @@ class View3DPanel(QWidget):
             names.add("slices")
         if self.iso.isVisibleTo(self):
             names.add("iso")
+        if self.iso_levels.isVisibleTo(self):
+            names.add("iso_levels")
+        if self.iso_cutaway.isVisibleTo(self):
+            names.add("iso_cutaway")
         if self.warp_scale.isVisibleTo(self):
             names.add("warp_scale")
         if self.stride.isVisibleTo(self):
@@ -1216,6 +1239,11 @@ class View3DPanel(QWidget):
             return self.tr("No result for this volume: select a deformed volume of the run.")
         return self.tr("No results to show. Run an analysis first.")
 
+    def _iso_tooltip(self) -> str:
+        if self.iso_levels.value() > 1:
+            return self.tr("Used for a single surface; several surfaces are spread evenly over the colour range")
+        return self.tr("Where the surface lies in the colour range: 0 at its minimum, 1 at its maximum")
+
     def retranslate_ui(self) -> None:
         self._labels["mode"].setText(self.tr("Mode"))
         self._labels["slice_z"].setText(self.tr("Slice z"))
@@ -1225,6 +1253,21 @@ class View3DPanel(QWidget):
         self._labels["arrow_scale"].setText(self.tr("Arrow scale"))
         self._labels["warp_scale"].setText(self.tr("Warp scale"))
         self._labels["iso"].setText(self.tr("Iso level"))
+        self._labels["iso_levels"].setText(self.tr("Surfaces"))
+        self.iso_levels.setToolTip(
+            self.tr(
+                "Number of iso-surfaces. Several are spread evenly over the colour range, each in the colour of its "
+                "value on the colour bar; one lies at the iso level."
+            )
+        )
+        self.iso.setToolTip(self._iso_tooltip())
+        self.iso_cutaway.setText(self.tr("Cut away a quarter"))
+        self.iso_cutaway.setToolTip(
+            self.tr(
+                "Remove the quarter of the surfaces that faces the camera, split at the centre of the node grid, "
+                "so the inner surfaces can be seen"
+            )
+        )
         self._labels["background"].setText(self.tr("Background"))
         self._labels["camera"].setText(self.tr("Camera"))
         self._labels["azimuth"].setText(self.tr("Turn"))

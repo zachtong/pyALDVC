@@ -111,7 +111,12 @@ def test_displacement_is_trimmed_to_valid_nodes(window_with_result):
 
 def test_view3d_controls_follow_the_mode(qapp, window_with_result):
     panel = window_with_result.view3d
-    expected = {"slices": {"slices"}, "points": set(), "surface": {"iso"}, "warped": {"warp_scale"}}
+    expected = {
+        "slices": {"slices"},
+        "points": set(),
+        "surface": {"iso", "iso_levels", "iso_cutaway"},
+        "warped": {"warp_scale"},
+    }
     for i, (mode, controls) in enumerate(expected.items()):
         panel.mode.setCurrentIndex(i)
         qapp.processEvents()

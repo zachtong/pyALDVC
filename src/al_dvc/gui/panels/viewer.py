@@ -27,10 +27,12 @@ from al_dvc.export.slice_plots import (
 )
 
 from ..app_state import AppState
+from ..flow_layout import ElidedLabel, flow_group, flow_row
 from ..lattice_preview import describe, layer_segments, nearest_node, plan_from_result, plan_lattice, subset_rect
 from ..mask_editor import MaskOp
 from ..names import field_name
-from ..theme import COLORS
+from ..theme import current_colors
+from ..theme_manager import connect_theme
 from .mask_tools import MaskToolbar
 
 PLANE_OF_AXIS = ("xy", "xz", "yz")  # axes[0], axes[1], axes[2]
@@ -70,7 +72,7 @@ class SliceViewer(QWidget):
         self._volume_index: int | None = None
         self._vmin = 0.0
         self._vmax = 1.0
-        self.figure = Figure(figsize=(9, 3.4), facecolor=COLORS.BG_CANVAS)
+        self.figure = Figure(figsize=(9, 3.4), facecolor=current_colors().BG_CANVAS)
         self.canvas = FigureCanvas(self.figure)
         self.axes: list = []
         self.cax = None  # one colorbar axes of fixed position: the image axes never shrink on redraw
@@ -88,12 +90,14 @@ class SliceViewer(QWidget):
         self.show_subset = QCheckBox()  # the subset of the crosshair node and of the node under the pointer
         self.show_subset.setChecked(bool(getattr(state, "show_subset_window", False)))
         self.background_frame = QComboBox()  # which volume is drawn under the field
+        # as wide as its longest entry, also once the frames exist ('Reference (frame 0)' was cut)
+        self.background_frame.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.background_frame.setMinimumWidth(140)
         self._background_label = QLabel()
-        self._config_label = QLabel()
+        self._config_label = ElidedLabel()  # status line: which configuration the field and image are in
         self._config_label.setObjectName("hint")
         self._updating_background = False
-        self._lattice_label = QLabel()
+        self._lattice_label = ElidedLabel()  # status line: node count, subset and overlap of the grid
         self._lattice_label.setObjectName("hint")
         self._plan = None  # LatticePlan drawn on the slices, None when hidden or not computable
         self._plan_cache: tuple | None = None  # (key, LatticePlan): the preview costs a pass over the mask
@@ -107,21 +111,17 @@ class SliceViewer(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout_row = QHBoxLayout()
-        layout_row.addWidget(self.show_mesh)
-        layout_row.addWidget(self.show_subset)
-        layout_row.addSpacing(8)
-        layout_row.addWidget(self._lattice_label)
-        layout_row.addStretch(1)
-        layout_row.addWidget(self.equal_scale)
-        layout_row.addSpacing(12)
-        layout_row.addWidget(self._background_label)
-        layout_row.addWidget(self.background_frame)
-        layout_row.addWidget(self._config_label)
-        layout_row.addSpacing(12)
-        layout_row.addWidget(self._layout_label)
-        layout_row.addWidget(self.layout_combo)
-        layout.addLayout(layout_row)
+        # the controls wrap onto a second line in a narrow window instead of being drawn over each other; every
+        # label follows a box, so no two texts run together on a full line; the grid toggles at the right (pyALDIC)
+        self._controls_row = flow_row(
+            flow_group(self._background_label, self.background_frame),
+            flow_group(self._layout_label, self.layout_combo),
+            self.equal_scale,
+            None,
+            self.show_mesh,
+            self.show_subset,
+        )
+        layout.addWidget(self._controls_row)
         layout.addWidget(self.canvas, stretch=1)
         rows = QHBoxLayout()
         for axis in ("z", "y", "x"):
@@ -136,6 +136,13 @@ class SliceViewer(QWidget):
             self.sliders[axis] = s
             self._slider_labels[axis] = lab
         layout.addLayout(rows)
+        # status line under the sliders (like the 3-D view's): the grid on the left, the configuration on the
+        # right; both end in "..." when the window is narrow, the whole text is in the tooltip
+        status = QHBoxLayout()
+        status.setSpacing(16)
+        status.addWidget(self._lattice_label, 1)
+        status.addWidget(self._config_label)
+        layout.addLayout(status)
         self._empty = QLabel()
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty.setObjectName("hint")
@@ -161,6 +168,7 @@ class SliceViewer(QWidget):
         self._state.display_changed.connect(self._on_display_changed)
         self._state.mask_changed.connect(self.redraw)
         self._state.params_changed.connect(self.redraw)
+        connect_theme(self._on_theme_changed)
         self.retranslate_ui()
         self._on_volumes_changed()
 
@@ -325,6 +333,9 @@ class SliceViewer(QWidget):
         return iz, iy, ix
 
     # ------------------------------------------------------------------ drawing
+    def _on_theme_changed(self, _name: str) -> None:
+        self.redraw()  # every colour of the canvas is read from the theme when it draws
+
     def _field_grid(self):
         """``(grid (nz, ny, nx) over nodes, mesh, label)`` of the displayed field (the motion of the display
         correction removed, if any) or ``None``."""
@@ -339,12 +350,14 @@ class SliceViewer(QWidget):
         return res.dvc_mesh.to_grid(values), res.dvc_mesh, self._state.display_field
 
     def redraw(self) -> None:
+        c = current_colors()
+        self.figure.set_facecolor(c.BG_CANVAS)
         for ax in self.axes:
             ax.clear()
-            ax.set_facecolor(COLORS.BG_CANVAS)
-            ax.tick_params(colors=COLORS.TEXT_SECONDARY, labelsize=7)
+            ax.set_facecolor(c.BG_CANVAS)
+            ax.tick_params(colors=c.CANVAS_TEXT, labelsize=7)
             for spine in ax.spines.values():
-                spine.set_color(COLORS.BORDER)
+                spine.set_color(c.CANVAS_SPINE)
         self.cax.clear()
         self.cax.set_visible(False)
         self._cbar = None
@@ -382,9 +395,9 @@ class SliceViewer(QWidget):
                 vmax=self._vmax,
                 extent=[-0.5, w - 0.5, -0.5, h - 0.5],
             )
-            ax.set_title(title, color=COLORS.TEXT_SECONDARY, fontsize=8)
-            ax.set_xlabel(xl, color=COLORS.TEXT_SECONDARY, fontsize=7)
-            ax.set_ylabel(yl, color=COLORS.TEXT_SECONDARY, fontsize=7)
+            ax.set_title(title, color=c.CANVAS_TEXT, fontsize=8)
+            ax.set_xlabel(xl, color=c.CANVAS_TEXT, fontsize=7)
+            ax.set_ylabel(yl, color=c.CANVAS_TEXT, fontsize=7)
         self._draw_mask(iz, iy, ix)
         if overlay is not None:
             grid, mesh, label = overlay
@@ -426,16 +439,16 @@ class SliceViewer(QWidget):
             note = self._state.correction_text()
             if note:
                 text += f"\n{note}"
-            self._cbar.set_label(text, color=COLORS.WARNING if note else COLORS.TEXT_SECONDARY, fontsize=8)
-            self._cbar.ax.tick_params(colors=COLORS.TEXT_SECONDARY, labelsize=7)
+            self._cbar.set_label(text, color=c.WARNING if note else c.CANVAS_TEXT, fontsize=8)
+            self._cbar.ax.tick_params(colors=c.CANVAS_TEXT, labelsize=7)
         self._draw_lattice(iz, iy, ix)  # on top of the field, so the grid is legible either way
         # cursor lines showing the other two slice positions
-        self.axes[0].axhline(iy, color=COLORS.ACCENT, lw=0.5, alpha=0.6)
-        self.axes[0].axvline(ix, color=COLORS.ACCENT, lw=0.5, alpha=0.6)
-        self.axes[1].axhline(iz, color=COLORS.ACCENT, lw=0.5, alpha=0.6)
-        self.axes[1].axvline(ix, color=COLORS.ACCENT, lw=0.5, alpha=0.6)
-        self.axes[2].axhline(iz, color=COLORS.ACCENT, lw=0.5, alpha=0.6)
-        self.axes[2].axvline(iy, color=COLORS.ACCENT, lw=0.5, alpha=0.6)
+        self.axes[0].axhline(iy, color=c.ACCENT, lw=0.5, alpha=0.6)
+        self.axes[0].axvline(ix, color=c.ACCENT, lw=0.5, alpha=0.6)
+        self.axes[1].axhline(iz, color=c.ACCENT, lw=0.5, alpha=0.6)
+        self.axes[1].axvline(ix, color=c.ACCENT, lw=0.5, alpha=0.6)
+        self.axes[2].axhline(iz, color=c.ACCENT, lw=0.5, alpha=0.6)
+        self.axes[2].axvline(iy, color=c.ACCENT, lw=0.5, alpha=0.6)
         # every pane shows its whole slice: the last imshow (the field overlay) must not zoom the view to itself
         for ax, _img, (w, h), *_rest in panes:
             ax.set_xlim(-0.5, w - 0.5)

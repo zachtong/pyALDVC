@@ -542,8 +542,20 @@ signals; panels that only read and write the state (`VolumePanel`,
 `PipelineResult` (partial on stop); `session.py` for `.aldvc` JSON sessions with
 paths relative to the file; `KernelWarmup` compiling the kernels on a daemon
 thread shortly after the window opens; `self_test.py` for installation checks
-(`al-dvc --self-test`); the pyALDIC dark theme (`theme.py`, copied) and
-Windows title-bar helpers.
+(`al-dvc --self-test`); two colour themes (`theme.py`: the pyALDIC dark theme, copied, and a
+light one) and Windows title-bar helpers.
+
+Themes are palettes (`theme.Colors`: `DARK`, `LIGHT`) behind one stylesheet builder; the dark
+stylesheet is kept byte for byte (`tests/test_theme.py` holds its hash). `theme_manager.ThemeManager`
+switches the running application (*Settings > Theme*, saved as `ui/theme` in `QSettings()`): it
+rebuilds the application stylesheet, fills again every widget style made with `themed(widget,
+template)` (`{FIELD}` placeholders of `Colors`) and every icon set with `icons.set_icon`, picks the
+matplotlib toolbar icons again, colours the title bars and emits `theme_changed`. Canvases and
+charts read `current_colors()` when they draw, never at import, and redraw on that signal
+(`connect_theme`); a combo whose default depends on the theme (the 3-D and texture-plot
+backgrounds) uses `ThemeDefault`, which follows the theme until the user picks an entry. In the light
+theme plain containers are transparent, so the side columns (object name `sideColumn`) and group
+boxes show through them.
 
 The window follows pyALDIC's three columns: volumes and parameters on the
 left (`CollapsibleSection`s with fixed-width labels and inputs; a `WheelGuard`
@@ -641,11 +653,17 @@ matplotlib mouse events, so the whole path is covered headless.
 `view3d_scene.py` turns a result into pyvista datasets without Qt: the node
 lattice is a `pyvista.ImageData` (node spacing as voxel spacing, first node as
 origin) whose point order `n = iz*ny*nx + iy*nx + ix` is VTK's, so per-node
-arrays attach without reordering; non-converged nodes carry NaN and are drawn
-transparent. `build_scene(plotter, result, SceneOptions, volume)` draws one
-of four modes (orthogonal field slices at the slice-viewer positions, node
-points, an iso-surface at a fraction of the colour range, the lattice warped
-by the displacement), optional displacement glyphs on a strided subset
+arrays attach without reordering; non-converged nodes carry NaN, which the
+field slices draw transparent and the other modes leave out (only a mesh that
+holds NaN gets a transparent NaN colour: it moves the whole mesh into VTK's
+translucent pass, even at opacity 1). `build_scene(plotter, result,
+SceneOptions, volume)` draws one of four modes (orthogonal field slices at the
+slice-viewer positions, node points, one to ten iso-surfaces over the colour
+range -- one at a fraction of it, several evenly spread, each carrying its
+level as its value -- optionally without the quarter facing the camera
+(`cutaway_quadrant`, split at the node grid's centre; `facing_quadrant(camera)`
+picks it, since the camera is pointed after the scene is built), the lattice
+warped by the displacement), optional displacement glyphs on a strided subset
 (capped at 20,000), the volume outline and the image volume's three slices as
 grey planes (subsampled above 4 Mpixel). `render_image` / `render_png` run
 the same code off-screen. `panels/view3d.py` embeds a `pyvistaqt.QtInteractor`

@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -35,13 +35,14 @@ from PySide6.QtWidgets import (
 
 from ..app_state import AppState, lexical_key, natural_key, size_text
 from ..mask_editor import mask_coverage as _coverage
-from ..theme import COLORS
+from ..settings_store import gui_settings
+from ..theme import current_colors
+from ..theme_manager import connect_theme
 from ..widgets import headless
 
 VOLUME_FILTER = "Volumes (*.tif *.tiff *.mat *.npy *.npz *.h5 *.hdf5 *.nii *.nii.gz *.nrrd);;All files (*)"
 COLUMNS = ("thumb", "index", "name", "shape", "region")
 THUMB_SIZE = 44  # px, middle XY slice of a loaded volume
-SETTINGS_ORG, SETTINGS_APP = "pyALDVC", "gui"
 NATURAL_SORT_KEY = "ui/natural_sort"
 FLAG = "\u26a0"  # warning sign in front of a size that is not the reference's
 PENDING = "\u2026"  # the size is being read
@@ -142,7 +143,7 @@ class VolumePanel(QWidget):
         self._btn_add = QPushButton()
         self._btn_folder = QPushButton()
         self._natural_sort = QCheckBox()
-        self._natural_sort.setChecked(bool(QSettings(SETTINGS_ORG, SETTINGS_APP).value(NATURAL_SORT_KEY, True, type=bool)))
+        self._natural_sort.setChecked(bool(gui_settings().value(NATURAL_SORT_KEY, True, type=bool)))
         self._btn_mask = QPushButton()
         self._btn_remove = QPushButton()
         self._btn_up = QPushButton()
@@ -197,8 +198,12 @@ class VolumePanel(QWidget):
         self._state.shapes_changed.connect(self._size_refresh.start)
         self._state.shape_check_finished.connect(self._report_sizes)
         self._state.current_frame_changed.connect(self._select_row)
+        connect_theme(self._on_theme_changed)
         self.retranslate_ui()
         self.refresh()
+
+    def _on_theme_changed(self, _name: str) -> None:
+        self.refresh()  # a size that differs from the reference is flagged in the theme's danger colour
 
     # ------------------------------------------------------------------ drag and drop
     def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt API
@@ -273,7 +278,7 @@ class VolumePanel(QWidget):
 
     # ------------------------------------------------------------------ actions
     def _on_natural_sort(self, natural: bool) -> None:
-        QSettings(SETTINGS_ORG, SETTINGS_APP).setValue(NATURAL_SORT_KEY, bool(natural))
+        gui_settings().setValue(NATURAL_SORT_KEY, bool(natural))
         self._state.sort_volumes(bool(natural))
 
     def _on_add_files(self) -> None:
@@ -403,7 +408,7 @@ class VolumePanel(QWidget):
                 if c in (1, 3, 4):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 if i in differs and c in (2, 3):
-                    item.setForeground(QColor(COLORS.DANGER))
+                    item.setForeground(QColor(current_colors().DANGER))
                 self._list.setItem(i, c, item)
             self._list.setCellWidget(i, 0, self._thumbnail_label(entry))
         self._list.blockSignals(False)

@@ -14,7 +14,7 @@ import time
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QSettings, Qt, QThread, QTimer
+from PySide6.QtCore import QEvent, QPoint, Qt, QThread, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -41,10 +41,11 @@ from .panels.view3d import View3DPanel
 from .panels.viewer import SliceViewer
 from .panels.volume_panel import VolumePanel
 from .session import SESSION_SUFFIX, SessionError, apply_session, load_session, save_session
+from .settings_store import SETTINGS_ORG, gui_settings, settings_are_private, use_private_settings
 from .sticky_headers import StickyHeadersOverlay
-from .theme import build_stylesheet
+from .theme import SIDE_COLUMN, THEMES, current_theme
+from .theme_manager import apply_title_bar, connect_theme, startup_theme, theme_manager
 from .widgets import ConsoleLog
-from .window_chrome import enable_dark_title_bar
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +53,10 @@ SESSION_FILTER = f"pyALDVC session (*{SESSION_SUFFIX})"
 LEFT_MIN_WIDTH = 420  # px: the widest row of the left column fits beside the scrollbar without clipping
 RIGHT_MIN_WIDTH = 340
 MIN_WINDOW_WIDTH = 1200
+# px: left, centre, right at the start and after Reset window layout; the centre takes what the window
+# leaves (658 px of a 1440 px window: the viewer's controls on one line)
+DEFAULT_COLUMNS = (LEFT_MIN_WIDTH + 20, 760, RIGHT_MIN_WIDTH)
 MIN_WINDOW_HEIGHT = 680
-SETTINGS_ORG = "pyALDVC"
-SETTINGS_APP = "gui"
 MAX_RECENT = 8
 SETTLE_TIMEOUT_MS = 60_000  # how long the window waits for its workers to stop before it refuses to close
 
@@ -78,7 +80,7 @@ class MainWindow(QMainWindow):
     def __init__(self, state: AppState | None = None) -> None:
         super().__init__()
         self.state = state or AppState()
-        enable_dark_title_bar(self)
+        apply_title_bar(self)
         self.resize(1440, 900)
 
         self.volume_panel = VolumePanel(self.state)
@@ -110,6 +112,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self._sections["parameters"])
         left_layout.addStretch(1)
         left = QScrollArea()
+        left.setObjectName(SIDE_COLUMN)  # the light theme sets the side columns apart in grey
         left.setWidgetResizable(True)
         left.setWidget(left_body)
         left.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -117,6 +120,7 @@ class MainWindow(QMainWindow):
         self.sticky_headers = StickyHeadersOverlay(left, [self._sections[k] for k in ("volumes", "roi", "parameters")])
         # right column: run controls on top, results in the middle, the console at the bottom (pyALDIC layout)
         right = QWidget()
+        right.setObjectName(SIDE_COLUMN)
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(4)
@@ -139,7 +143,7 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
-        splitter.setSizes([LEFT_MIN_WIDTH + 20, 760, RIGHT_MIN_WIDTH + 20])
+        splitter.setSizes(list(DEFAULT_COLUMNS))
         self.setCentralWidget(splitter)
         self._splitter = splitter
         self._left_column = left
@@ -228,25 +232,7 @@ class MainWindow(QMainWindow):
                 act.setShortcut(QKeySequence(shortcut))
             self._actions[key] = act
             self._menus["view"].addAction(act)
-        self._menus["view"].addSeparator()
-        act = QAction(self)
-        act.setCheckable(True)
-        act.setChecked(self.notifications_enabled)
-        act.toggled.connect(self.set_notifications_enabled)
-        self._actions["notify"] = act
-        self._menus["view"].addAction(act)
-        self._menus["view"].addSeparator()
-        self._menus["language"] = self._menus["view"].addMenu("")
-        group = QActionGroup(self)
-        group.setExclusive(True)
-        for code, name in SUPPORTED_LANGUAGES.items():
-            act = QAction(name, self)
-            act.setCheckable(True)
-            act.setData(code)
-            act.triggered.connect(lambda _c=False, c=code: self._on_language_selected(c))
-            group.addAction(act)
-            self._menus["language"].addAction(act)
-            self._actions[f"lang_{code}"] = act
+        self._build_settings_menu(bar)
         self._menus["analysis"] = bar.addMenu("")
         for key, slot, shortcut in [
             ("run", self.run_panel.start, "F5"),
@@ -269,6 +255,47 @@ class MainWindow(QMainWindow):
             self._actions[key] = act
             self._menus["help"].addAction(act)
         self._sync_language_check()
+        self._sync_theme_check()
+
+    def _build_settings_menu(self, bar) -> None:
+        """Settings: the theme, the language and the notifications, all remembered for the next start."""
+        menu = self._menus["settings"] = bar.addMenu("")
+        # theme names are set in retranslate_ui; language names are written in their own language, never translated
+        self._choice_menu(menu, "theme", "theme", dict.fromkeys(THEMES, ""), self._on_theme_selected)
+        self._choice_menu(menu, "language", "lang", SUPPORTED_LANGUAGES, self._on_language_selected)
+        menu.addSeparator()
+        act = QAction(self)
+        act.setCheckable(True)
+        act.setChecked(self.notifications_enabled)
+        act.toggled.connect(self.set_notifications_enabled)
+        self._actions["notify"] = act
+        menu.addAction(act)
+        connect_theme(self._on_theme_changed)
+
+    def _choice_menu(self, parent, key: str, prefix: str, choices: dict[str, str], slot) -> None:
+        """A submenu of exclusive checkable actions (``_actions["<prefix>_<code>"]``), one per ``choices`` entry."""
+        self._menus[key] = parent.addMenu("")
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        for code, text in choices.items():
+            act = QAction(text, self)
+            act.setCheckable(True)
+            act.setData(code)
+            act.triggered.connect(lambda _c=False, c=code: slot(c))
+            group.addAction(act)
+            self._menus[key].addAction(act)
+            self._actions[f"{prefix}_{code}"] = act
+
+    def _on_theme_selected(self, name: str) -> None:
+        theme_manager().set_theme(name)
+
+    def _on_theme_changed(self, _name: str) -> None:
+        self._sync_theme_check()
+
+    def _sync_theme_check(self) -> None:
+        name = current_theme()
+        for key in THEMES:
+            self._actions[f"theme_{key}"].setChecked(key == name)
 
     def _refresh_backend(self) -> None:
         """Backend line in the parameter panel and a permanent status-bar label ("GPU: <name>" or "CPU")."""
@@ -294,14 +321,14 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ recent sessions
     def recent_sessions(self) -> list[str]:
-        value = QSettings(SETTINGS_ORG, SETTINGS_APP).value("recent_sessions", [])
+        value = gui_settings().value("recent_sessions", [])
         if isinstance(value, str):
             value = [value]
         return [str(p) for p in (value or []) if p][:MAX_RECENT]
 
     def remember_session(self, path) -> None:
         items = [str(path)] + [p for p in self.recent_sessions() if p != str(path)]
-        QSettings(SETTINGS_ORG, SETTINGS_APP).setValue("recent_sessions", items[:MAX_RECENT])
+        gui_settings().setValue("recent_sessions", items[:MAX_RECENT])
         self._rebuild_recent_menu()
 
     def _rebuild_recent_menu(self) -> None:
@@ -439,13 +466,13 @@ class MainWindow(QMainWindow):
             self._actions[key].setChecked(True)
         self._left_column.setVisible(True)
         self._right_column.setVisible(True)
-        self._splitter.setSizes([LEFT_MIN_WIDTH + 20, 760, RIGHT_MIN_WIDTH + 20])
+        self._splitter.setSizes(list(DEFAULT_COLUMNS))
         self.resize(1440, 900)
-        QSettings(SETTINGS_ORG, SETTINGS_APP).remove("main")
+        gui_settings().remove("main")
 
     def restore_layout(self) -> None:
         """Window geometry and splitter sizes from the previous session (QSettings), when any."""
-        settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
+        settings = gui_settings()
         geometry = settings.value("main/geometry")
         if geometry is not None:
             self.restoreGeometry(geometry)
@@ -457,7 +484,7 @@ class MainWindow(QMainWindow):
                 pass
 
     def save_layout(self) -> None:
-        settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
+        settings = gui_settings()
         settings.setValue("main/geometry", self.saveGeometry())
         settings.setValue("main/splitter", [int(s) for s in self._splitter.sizes()])
 
@@ -525,8 +552,8 @@ class MainWindow(QMainWindow):
         self.open_guide_window()
 
     def _place_window(self, window) -> None:
-        """A new independent window opens offset from this one, with the dark title bar."""
-        enable_dark_title_bar(window)
+        """A new independent window opens offset from this one, with the theme's title bar."""
+        apply_title_bar(window)
         window.move(self.pos() + QPoint(48, 48))
 
     def open_export_dialog(self, preselect_strain: bool = False):
@@ -623,10 +650,10 @@ class MainWindow(QMainWindow):
 
     @property
     def notifications_enabled(self) -> bool:
-        return bool(QSettings(SETTINGS_ORG, SETTINGS_APP).value("ui/notify", True, type=bool))
+        return bool(gui_settings().value("ui/notify", True, type=bool))
 
     def set_notifications_enabled(self, enabled: bool) -> None:
-        QSettings(SETTINGS_ORG, SETTINGS_APP).setValue("ui/notify", bool(enabled))
+        gui_settings().setValue("ui/notify", bool(enabled))
         act = self._actions.get("notify")
         if act is not None and act.isChecked() != bool(enabled):
             act.setChecked(bool(enabled))
@@ -739,6 +766,8 @@ class MainWindow(QMainWindow):
         self.center_tabs.setTabText(1, self.tr("3-D view"))
         self._menus["file"].setTitle(self.tr("&File"))
         self._menus["view"].setTitle(self.tr("&View"))
+        self._menus["settings"].setTitle(self.tr("&Settings"))
+        self._menus["theme"].setTitle(self.tr("Theme"))
         self._menus["language"].setTitle(self.tr("Language"))
         self._menus["recent"].setTitle(self.tr("Recent sessions"))
         self._menus["analysis"].setTitle(self.tr("&Analysis"))
@@ -754,6 +783,8 @@ class MainWindow(QMainWindow):
             "left_column": self.tr("Data and parameters column"),
             "right_column": self.tr("Results column"),
             "reset_layout": self.tr("Reset window layout"),
+            "theme_dark": self.tr("Dark"),
+            "theme_light": self.tr("Light"),
             "notify": self.tr("Notify when a task finishes"),
             "run": self.tr("Run AL-DVC"),
             "stop": self.tr("Stop"),
@@ -833,10 +864,12 @@ def _global_exception_hook(exc_type, exc_value, exc_tb) -> None:
 
 
 def create_application(argv: list[str] | None = None) -> QApplication:
-    """A configured ``QApplication`` (style, stylesheet, language)."""
+    """A configured ``QApplication`` (style, the saved theme's stylesheet, language)."""
     configure_matplotlib()
     app = QApplication.instance() or QApplication(argv if argv is not None else sys.argv)
-    app.setOrganizationName("pyALDVC")
+    if app.platformName() == "offscreen" and not settings_are_private():
+        use_private_settings()  # tests and report scripts: never the user's window layout, sessions or language
+    app.setOrganizationName(SETTINGS_ORG)
     app.setApplicationName("pyALDVC")
     icon_path = Path(__file__).parent / "assets" / "pyALDVC.png"
     if icon_path.is_file():
@@ -844,7 +877,7 @@ def create_application(argv: list[str] | None = None) -> QApplication:
 
         app.setWindowIcon(QIcon(str(icon_path)))
     app.setStyle("Fusion")
-    app.setStyleSheet(build_stylesheet())
+    theme_manager(app).set_theme(startup_theme(), persist=False)  # the last choice, before the first window is built
     if getattr(app, "_pyaldvc_lang_mgr", None) is None:
         mgr = LanguageManager(app)
         mgr.load(LanguageManager.resolve_language())

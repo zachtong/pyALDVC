@@ -10,7 +10,7 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
 
-from .theme import COLORS
+from .theme_manager import themed
 
 HEADER_HEIGHT = 24
 
@@ -27,7 +27,7 @@ class _StickyTitle(QLabel):
         self.setFixedHeight(HEADER_HEIGHT)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAutoFillBackground(True)
-        self.setStyleSheet(f"background: {COLORS.BG_DARKEST}; padding-left: 8px; border: none;")
+        themed(self, "background: {BG_SIDE_COLUMN}; padding-left: 8px; border: none;")  # the column's own colour
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt API
         self._on_click()
@@ -45,7 +45,7 @@ class StickyHeadersOverlay(QWidget):
         self._scroll = scroll_area
         self._sections = list(sections)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"background: {COLORS.BG_DARKEST}; border-bottom: 1px solid {COLORS.BORDER};")
+        themed(self, "background: {BG_SIDE_COLUMN}; border-bottom: 1px solid {BORDER};")
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(0)

@@ -22,10 +22,19 @@ from PySide6.QtWidgets import (
 
 from al_dvc.analysis.stats import CI_NAMES, STAT_NAMES
 
-from .analysis_charts import PALETTE, draw_curves, draw_line, draw_profile, draw_region_bars, fmt, series_curve
+from .analysis_charts import (
+    draw_curves,
+    draw_histograms,
+    draw_line,
+    draw_profile,
+    draw_region_bars,
+    fmt,
+    palette,
+    series_curve,
+)
 from .analysis_jobs import CurrentFrame
 from .names import field_name
-from .theme import COLORS
+from .theme import current_colors
 from .widgets import combo, dspin, guard_wheel, spin
 
 REDUCTIONS = ("mean_std", "mean_ci", "median_robust", "rms", "max", "min", "n")
@@ -59,8 +68,23 @@ class AnalysisPagesMixin:
 
     @staticmethod
     def _figure() -> tuple[Figure, FigureCanvas]:
-        fig = Figure(figsize=(9, 3), facecolor=COLORS.BG_CANVAS)
+        fig = Figure(figsize=(9, 3), facecolor=current_colors().BG_CANVAS)
         return fig, FigureCanvas(fig)
+
+    def apply_theme(self, _name: str = "") -> None:
+        """Draw every chart again in the colours of the theme in use (after a theme change)."""
+        figures = (self.hist_figure, self.series_figure, self.regions_figure, self.profile_figure, self.line_figure)
+        for fig in figures:
+            fig.set_facecolor(current_colors().BG_CANVAS)
+        cur = self.current
+        if cur is not None and not cur.error and self._state.results is not None:
+            draw_histograms(self.hist_figure, cur.stats, cur.histograms)
+            self._show_regions(cur)
+            self._draw_profile()
+            self._draw_line()
+        self._draw_series()
+        for canvas in (self.hist_canvas, self.series_canvas, self.regions_canvas, self.profile_canvas, self.line_canvas):
+            canvas.draw_idle()
 
     def _page(self) -> tuple[QWidget, QVBoxLayout]:
         page = QWidget()
@@ -199,7 +223,7 @@ class AnalysisPagesMixin:
         out = []
         for region, st in cur.region_rows:
             if region is None:
-                out.append((self.tr("All nodes"), COLORS.TEXT_SECONDARY, st))
+                out.append((self.tr("All nodes"), current_colors().TEXT_SECONDARY, st))
             else:
                 out.append((region.name, region.color, st))
         return out
@@ -303,9 +327,10 @@ class AnalysisPagesMixin:
         curves = []
         if len(runs) == 1:  # one region: every field of the group
             _region, series = runs[0]
+            colours = palette()
             for i, name in enumerate(_field_names(series)):
                 x, y, band = series_curve(series, name, red)
-                curves.append((field_name(name), PALETTE[i % len(PALETTE)], x, y, band))
+                curves.append((field_name(name), colours[i % len(colours)], x, y, band))
         else:  # regions compared: the field on the slices, one curve per region
             name = self.compare_field()
             for region, series in runs:
@@ -313,7 +338,7 @@ class AnalysisPagesMixin:
                     continue
                 x, y, band = series_curve(series, name, red)
                 label = self.tr("All nodes") if region is None else region.name
-                color = COLORS.TEXT_SECONDARY if region is None else region.color
+                color = current_colors().TEXT_SECONDARY if region is None else region.color
                 curves.append((label, color, x, y, band))
         return curves
 

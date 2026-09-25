@@ -7,6 +7,8 @@ the bottom of the right sidebar.
 
 from __future__ import annotations
 
+from collections import deque
+
 from PySide6.QtCore import QEvent, QLocale, QObject, Qt, QTime, Signal
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -23,7 +25,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .theme import COLORS
+from .theme import current_colors
+from .theme_manager import connect_theme
 
 LABEL_WIDTH = 150  # px, parameter labels
 FIELD_WIDTH = 110  # px, spin boxes
@@ -207,14 +210,17 @@ class CollapsibleSection(QWidget):
 
 # --------------------------------------------------------------------------- console
 class ConsoleLog(QWidget):
-    """Timestamped, colour-coded, read-only message log with a clear button (bottom of the right sidebar)."""
+    """Timestamped, colour-coded, read-only message log with a clear button (bottom of the right sidebar).
 
-    _COLORS = {
-        "info": COLORS.TEXT_SECONDARY,
-        "debug": COLORS.TEXT_MUTED,
-        "warning": COLORS.WARNING,
-        "error": COLORS.DANGER,
-        "success": COLORS.SUCCESS,
+    The entries are kept (as many as the view holds), so a theme change writes them again in its colours.
+    """
+
+    _LEVEL_COLOR = {  # the palette field of each level
+        "info": "TEXT_SECONDARY",
+        "debug": "TEXT_MUTED",
+        "warning": "WARNING",
+        "error": "DANGER",
+        "success": "SUCCESS",
     }
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -243,21 +249,38 @@ class ConsoleLog(QWidget):
         self._view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         layout.addWidget(self._view, 1)
         self._count = 0
+        self._entries: deque[tuple[str, str, str]] = deque(maxlen=CONSOLE_MAX_LINES)  # (level, time, html)
+        connect_theme(self._on_theme_changed)
         self.retranslate_ui()
 
     def append_log(self, message: str, level: str = "info") -> None:
-        color = self._COLORS.get(level, COLORS.TEXT_SECONDARY)
         stamp = QTime.currentTime().toString("HH:mm:ss")
         text = str(message).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
         if level == "debug":
             text = "&nbsp;&nbsp;&nbsp;&nbsp;" + text
-        self._view.append(f'<span style="color:{color}">{stamp}  {text}</span>')
+        self._entries.append((level, stamp, text))
+        self._view.append(self._line(level, stamp, text))
         self._count += 1
         bar = self._view.verticalScrollBar()
         bar.setValue(bar.maximum())
 
+    def _line(self, level: str, stamp: str, text: str) -> str:
+        color = getattr(current_colors(), self._LEVEL_COLOR.get(level, "TEXT_SECONDARY"))
+        return f'<span style="color:{color}">{stamp}  {text}</span>'
+
+    def _on_theme_changed(self, _name: str) -> None:
+        """Write the log again in the new theme's colours, keeping the view at the end if it was there."""
+        bar = self._view.verticalScrollBar()
+        at_end = bar.value() >= bar.maximum()
+        self._view.clear()
+        for entry in self._entries:
+            self._view.append(self._line(*entry))
+        if at_end:
+            bar.setValue(bar.maximum())
+
     def clear(self) -> None:
         self._view.clear()
+        self._entries.clear()
         self._count = 0
 
     @property

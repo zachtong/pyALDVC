@@ -80,7 +80,8 @@ from al_dvc.texture.recommend import DEFAULT_FACTOR
 
 from .app_state import AppState
 from .region_viewer import REGION_COLOR, RegionViewer
-from .theme import COLORS
+from .theme import DARK, SIDE_COLUMN
+from .theme_manager import ThemeDefault, refresh_toolbar_icons, themed
 from .widgets import CollapsibleSection, combo, dspin, form_label, guard_wheel, headless, make_form, spin
 
 logger = logging.getLogger(__name__)
@@ -88,8 +89,8 @@ logger = logging.getLogger(__name__)
 SIDEBAR_WIDTH = 400
 AXES_ROWS = ("x", "y", "z", "radial")
 CURVE_STYLES = {"x": ("#60a5fa", "-"), "y": ("#f472b6", "--"), "z": ("#34d399", ":"), "radial": ("#f97316", "-")}
-PLOT_THEMES = {  # figure and axes face, text, grid, threshold lines
-    "dark": {"face": COLORS.BG_CANVAS, "text": COLORS.TEXT_PRIMARY, "grid": "#4b5563", "threshold": "#fbbf24"},
+PLOT_THEMES = {  # figure and axes face, text, grid, threshold lines; the first entry follows the application theme
+    "dark": {"face": DARK.BG_CANVAS, "text": DARK.TEXT_PRIMARY, "grid": "#4b5563", "threshold": "#fbbf24"},
     "white": {"face": "#ffffff", "text": "#111827", "grid": "#d1d5db", "threshold": "#b45309"},
     "grey": {"face": "#e5e7eb", "text": "#111827", "grid": "#9ca3af", "threshold": "#b45309"},
 }
@@ -184,11 +185,12 @@ class _StepStrip(QWidget):
                 arrow = QLabel("→")
                 arrow.setObjectName("hint")
                 layout.addWidget(arrow)
-        self.setStyleSheet(
-            f"QPushButton {{ text-align: left; padding: 4px 10px; border: 1px solid {COLORS.BORDER}; border-radius: 6px;"
-            f" background: {COLORS.BG_PANEL}; color: {COLORS.TEXT_SECONDARY}; }}"
-            f"QPushButton:checked {{ border-color: {COLORS.ACCENT}; background: {COLORS.BG_HOVER};"
-            f" color: {COLORS.TEXT_PRIMARY}; font-weight: bold; }}"
+        themed(
+            self,
+            "QPushButton {{ text-align: left; padding: 4px 10px; border: 1px solid {BORDER}; border-radius: 6px;"
+            " background: {BG_PANEL}; color: {TEXT_SECONDARY}; }}"
+            "QPushButton:checked {{ border-color: {ACCENT}; background: {BG_HOVER};"
+            " color: {TEXT_PRIMARY}; font-weight: bold; }}",
         )
 
     def set_current(self, i: int) -> None:
@@ -202,7 +204,7 @@ class _StepStrip(QWidget):
 def _heading(parent_layout, size: int = 13) -> QLabel:
     lab = QLabel()
     lab.setWordWrap(True)
-    lab.setStyleSheet(f"font-size: {size}px; font-weight: bold; color: {COLORS.TEXT_PRIMARY};")
+    themed(lab, f"font-size: {size}px; font-weight: bold; color: {{TEXT_PRIMARY}};")
     parent_layout.addWidget(lab)
     return lab
 
@@ -219,9 +221,10 @@ def _notice(parent_layout, size: int = 12) -> QLabel:
     """A statement that must not be missed: orange bar on the left, tinted background."""
     lab = QLabel()
     lab.setWordWrap(True)
-    lab.setStyleSheet(
-        f"font-size: {size}px; color: {COLORS.TEXT_PRIMARY}; background: rgba(249, 115, 22, 0.14);"
-        f" border-left: 4px solid {REGION_COLOR}; border-radius: 4px; padding: 6px 8px;"
+    themed(
+        lab,
+        f"font-size: {size}px; color: {{TEXT_PRIMARY}}; background: rgba(249, 115, 22, 0.14);"
+        f" border-left: 4px solid {REGION_COLOR}; border-radius: 4px; padding: 6px 8px;",
     )
     parent_layout.addWidget(lab)
     return lab
@@ -274,6 +277,7 @@ class TextureWindow(QMainWindow):
         self.plot_background = combo([])
         for key in PLOT_THEMES:
             self.plot_background.addItem(key, key)
+        self._plot_default = ThemeDefault(self.plot_background, "PLOT_BACKGROUND")  # until the user picks one
         self.plot_scale = combo([])
         for key in ("linear", "log"):
             self.plot_scale.addItem(key, key)
@@ -322,6 +326,7 @@ class TextureWindow(QMainWindow):
         self.toolbar_profiles = NavigationToolbar2QT(self.canvas_profiles, self)
         for tb in (self.toolbar_profiles, self.toolbar_sweep):
             tb.setIconSize(tb.iconSize() * 0.8)
+            refresh_toolbar_icons(tb)  # light icons on the dark theme, dark ones on the light theme
         sweep_page = QWidget()
         slay = QVBoxLayout(sweep_page)
         slay.setContentsMargins(0, 0, 0, 0)
@@ -473,7 +478,7 @@ class TextureWindow(QMainWindow):
         vbox.setSpacing(4)
         self._sweep_headline = QLabel()
         self._sweep_headline.setWordWrap(True)
-        self._sweep_headline.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {COLORS.TEXT_PRIMARY};")
+        themed(self._sweep_headline, "font-size: 15px; font-weight: bold; color: {TEXT_PRIMARY};")
         vbox.addWidget(self._sweep_headline)
         sgrid = QGridLayout()
         sgrid.setHorizontalSpacing(12)
@@ -566,7 +571,7 @@ class TextureWindow(QMainWindow):
         self._suggestion = QLabel()
         self._suggestion.setWordWrap(True)
         self._suggestion.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self._suggestion.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {COLORS.TEXT_PRIMARY};")
+        themed(self._suggestion, "font-size: 14px; font-weight: bold; color: {TEXT_PRIMARY};")
         sbox.addWidget(self._suggestion)
         self._suggestion_notes = _hint(sbox)
         self._btn_apply = QPushButton()
@@ -586,6 +591,7 @@ class TextureWindow(QMainWindow):
         side_layout.addWidget(self.export_section)
         side_layout.addStretch(1)
         scroll = QScrollArea()
+        scroll.setObjectName(SIDE_COLUMN)
         scroll.setWidgetResizable(True)
         scroll.setWidget(side)
         scroll.setFixedWidth(SIDEBAR_WIDTH + 18)

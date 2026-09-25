@@ -29,7 +29,8 @@ from al_dvc.export.slice_plots import decimate_image, decimate_region, display_s
 
 from .icons import tool_button
 from .mask_editor import FULL_BASE, MaskEditor, MaskOp
-from .theme import COLORS
+from .theme import current_colors
+from .theme_manager import connect_theme
 from .widgets import guard_wheel
 
 PLANE_OF_AXIS = ("xy", "xz", "yz")  # axes[0], axes[1], axes[2]
@@ -43,7 +44,6 @@ CUBE_COLOR = "#38bdf8"  # blue: the concentric cubes and the centre point of the
 REGION_TINT = ListedColormap([[0.976, 0.451, 0.086, 1.0]])
 OUTSIDE_ALPHA = 0.42
 PREVIEW_COLOR = "#ffd166"
-CROSSHAIR_COLOR = COLORS.TEXT_MUTED
 BRUSH_MIN_MOVE = 0.5  # voxels between recorded stroke points
 LEFT, RIGHT = 1, 3
 POINT_DECIMALS = 2
@@ -249,7 +249,7 @@ class RegionViewer(QWidget):
         self._vmin, self._vmax = 0.0, 1.0
         self.tools = RegionTools()  # placed by the owner, next to the other controls of the region step
         self.figure = Figure(figsize=(9, 3.6))
-        self.figure.set_facecolor(COLORS.BG_CANVAS)
+        self.figure.set_facecolor(current_colors().BG_CANVAS)
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.canvas.setMinimumSize(320, 140)  # a collapsed canvas has no usable coordinate system
@@ -289,6 +289,7 @@ class RegionViewer(QWidget):
         self.tools.edit_buttons["redo"].clicked.connect(self.redo)
         self.tools.edit_buttons["fill"].clicked.connect(lambda: self.set_region(None))
         self.tools.edit_buttons["clear"].clicked.connect(lambda: self.apply(MaskOp("empty")))
+        connect_theme(self._on_theme_changed)
         self.retranslate_ui()
         self.redraw()
 
@@ -513,6 +514,12 @@ class RegionViewer(QWidget):
             if self._hold == 0 and self._pending_redraw:
                 self.redraw()
 
+    def _on_theme_changed(self, _name: str) -> None:
+        """The artists carry the old theme's colours: build them again in the new ones."""
+        self._artists = None
+        self.figure.set_facecolor(current_colors().BG_CANVAS)
+        self.redraw()
+
     def _pane_geometry(self):
         """Per pane: ``(slice image, region slice, (w, h), h label, v label, title, (ch, cv))``."""
         vol, m = self._vol, self.mask
@@ -531,12 +538,13 @@ class RegionViewer(QWidget):
         vol = self._vol
         nz, ny, nx = vol.shape
         sizes = [(nx, ny), (nx, nz), (ny, nz)]
+        c = current_colors()
         for ax, (w, h) in zip(self.axes, sizes):
             ax.clear()
-            ax.set_facecolor(COLORS.BG_CANVAS)
-            ax.tick_params(colors=COLORS.TEXT_SECONDARY, labelsize=7)
+            ax.set_facecolor(c.BG_CANVAS)
+            ax.tick_params(colors=c.CANVAS_TEXT, labelsize=7)
             for spine in ax.spines.values():
-                spine.set_color(COLORS.BORDER)
+                spine.set_color(c.CANVAS_SPINE)
             ax.set_axis_on()
             extent = [-0.5, w - 0.5, -0.5, h - 0.5]
             empty = np.zeros((1, 1), dtype=np.float32)
@@ -553,8 +561,8 @@ class RegionViewer(QWidget):
             cubes = [ax.add_patch(Rectangle((0, 0), 0, 0, fill=False, ec=CUBE_COLOR, lw=0.9)) for _ in range(MAX_CUBE_PATCHES)]
             for patch in (box_patch, *cubes):
                 patch.set_visible(False)
-            vline = ax.axvline(0, color=CROSSHAIR_COLOR, lw=0.6, alpha=0.6)
-            hline = ax.axhline(0, color=CROSSHAIR_COLOR, lw=0.6, alpha=0.6)
+            vline = ax.axvline(0, color=c.TEXT_MUTED, lw=0.6, alpha=0.6)  # the crosshair
+            hline = ax.axhline(0, color=c.TEXT_MUTED, lw=0.6, alpha=0.6)
             (centre,) = ax.plot([], [], marker="+", color=CUBE_COLOR, ms=11, mew=1.8, ls="none")
             ax.set_xlim(extent[0], extent[1])
             ax.set_ylim(extent[2], extent[3])
@@ -576,9 +584,10 @@ class RegionViewer(QWidget):
         """No volume: one line of text and no axes."""
         self._artists = None
         self._contour_key = None
+        c = current_colors()
         for ax in self.axes:
             ax.clear()
-            ax.set_facecolor(COLORS.BG_CANVAS)
+            ax.set_facecolor(c.BG_CANVAS)
             ax.set_axis_off()
         self.axes[1].text(
             0.5,
@@ -586,7 +595,7 @@ class RegionViewer(QWidget):
             self.tr("Load a reference volume first."),
             ha="center",
             va="center",
-            color=COLORS.TEXT_SECONDARY,
+            color=c.CANVAS_TEXT,
             transform=self.axes[1].transAxes,
         )
         self.canvas.draw_idle()
@@ -608,6 +617,7 @@ class RegionViewer(QWidget):
         if self._artists is None:
             self._build_artists()
         iz, iy, ix = self.slice_indices()
+        c = current_colors()
         box = self.box()
         spans = None
         if box is not None:
@@ -631,9 +641,9 @@ class RegionViewer(QWidget):
             art["vline"].set_xdata([ch, ch])
             art["hline"].set_ydata([cv, cv])
             self._draw_cubes(art, plane, (iz, iy, ix))
-            art["ax"].set_title(title, color=COLORS.TEXT_SECONDARY, fontsize=8)
-            art["ax"].set_xlabel(xl, color=COLORS.TEXT_SECONDARY, fontsize=7)
-            art["ax"].set_ylabel(yl, color=COLORS.TEXT_SECONDARY, fontsize=7)
+            art["ax"].set_title(title, color=c.CANVAS_TEXT, fontsize=8)
+            art["ax"].set_xlabel(xl, color=c.CANVAS_TEXT, fontsize=7)
+            art["ax"].set_ylabel(yl, color=c.CANVAS_TEXT, fontsize=7)
         if rebuild_contours:
             self._contour_key = contour_key
         self.canvas.draw_idle()

@@ -6,6 +6,13 @@ origin, both in physical units (``voxel_size``) like the rest of the scene.
 Node ordering ``n = iz*ny*nx + iy*nx + ix`` is exactly VTK's point ordering
 (x fastest), so per-node arrays attach without reordering.
 
+Unmeasured nodes carry NaN. Only a mesh that holds NaN values is drawn with a
+transparent NaN colour: such a lookup table moves the whole mesh into VTK's
+translucent pass even at opacity 1, where nested iso-surfaces and the far
+faces of a deformed lattice blend through the near ones. The iso-surfaces,
+the deformed lattice and the node points are NaN-free and drawn opaque; the
+field slices keep the transparent NaN colour whatever they hold.
+
 ``pyvista`` is imported lazily: the module can be imported (and
 :func:`available` queried) on installations without it.
 """
@@ -33,8 +40,18 @@ VOLUME_SLICE_MAX_PIXELS = 1_000_000  # subsample larger image slices before turn
 VOLUME_SLICE_OPACITY = 0.9  # the field slices behind a volume slice stay faintly visible
 VOLUME_SLICE_PERCENTILES = (0.5, 99.5)  # grey-level window of the volume slices
 PLANE_NORMAL = {"xy": "z", "xz": "y", "yz": "x"}  # plane name -> the axis it is normal to (the slice's axis)
+MAX_ISO_LEVELS = 10  # iso-surfaces drawn at once
+CUT_ARRAY = "_cutaway"  # scratch point array of the cut-away clip
 CAMERAS = ("iso", "xy", "xz", "yz")
 VIEW_UPS = {"z": (0.0, 0.0, 1.0), "y": (0.0, 1.0, 0.0), "x": (1.0, 0.0, 0.0)}
+# each preset as pyvista points it: direction from the focal point to the camera, view-up (view_isometric, view_xy, ...)
+PRESET_VIEWS = {
+    "iso": ((1.0, 1.0, 1.0), (0.0, 0.0, 1.0)),
+    "xy": ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),
+    "xz": ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),
+    "yz": ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+}
+QUADRANT_TIE = 1e-9  # a camera direction component within this of 0 counts as positive
 SCENE_COLUMNS = (6, 1)  # relative widths of the scene renderer and the colour-bar renderer
 BACKGROUND = "#1b1d23"
 BACKGROUNDS = {"dark": BACKGROUND, "black": "#000000", "grey": "#808080", "white": "#ffffff"}
@@ -237,7 +254,16 @@ def available() -> bool:
 
 @dataclass(frozen=True)
 class SceneOptions:
-    """What to draw. Defaults match the slice viewer's overlay."""
+    """What to draw. Defaults match the slice viewer's overlay.
+
+    Surface mode draws ``iso_levels`` iso-surfaces over the colour range ``clim`` (see :func:`iso_surface_levels`),
+    each carrying its level as its field value, so it takes the colour of that level on the colour bar. With
+    ``iso_cutaway`` the quarter ``sign(x - cx), sign(y - cy) == cutaway_quadrant`` about the centre ``(cx, cy)`` of
+    the node grid is removed from every surface, so the inner ones show. The quarter is a parameter, not read from
+    the plotter (the camera is pointed after the scene is built): the default ``(1, 1)`` faces the isometric preset
+    (camera at +x, +y, +z), and :func:`facing_quadrant` gives the one facing any other camera. The cut is part of the
+    scene, so it turns with the object in an orbit.
+    """
 
     field: str = "disp_magnitude"
     frame: int = 0  # result frame; -1 is the reference state (no displacement)
@@ -253,7 +279,10 @@ class SceneOptions:
     arrow_scale: float = 1.0
     show_outline: bool = True
     show_volume_slices: bool = False
-    iso_fraction: float = 0.5
+    iso_fraction: float = 0.5  # surface: level of a single iso-surface, as a fraction of the colour range
+    iso_levels: int = 1  # surface: number of iso-surfaces; more than one are spread evenly over the colour range
+    iso_cutaway: bool = False  # surface: remove the quarter of the surfaces given by ``cutaway_quadrant``
+    cutaway_quadrant: tuple[int, int] = (1, 1)  # signs of (x - cx, y - cy) of the removed quarter
     slice_index: dict[str, int | None] = dc_field(default_factory=dict)
     slice_visible: dict[str, bool] = dc_field(default_factory=dict)  # per normal axis (z: XY, y: XZ, x: YZ); missing = shown
     background: str = BACKGROUND
@@ -270,6 +299,17 @@ class SceneOptions:
             raise ValueError("opacity must be within [0, 1]")
         if not 0.0 <= self.iso_fraction <= 1.0:
             raise ValueError("iso_fraction must be within [0, 1]")
+        if isinstance(self.iso_levels, bool) or not isinstance(self.iso_levels, (int, np.integer)):
+            raise ValueError(f"iso_levels must be an integer, got {self.iso_levels!r}")
+        if not 1 <= self.iso_levels <= MAX_ISO_LEVELS:
+            raise ValueError(f"iso_levels must be within [1, {MAX_ISO_LEVELS}], got {self.iso_levels}")
+        try:
+            quadrant = tuple(self.cutaway_quadrant)
+        except TypeError:
+            quadrant = ()
+        if len(quadrant) != 2 or any(s not in (1, -1) for s in quadrant):
+            raise ValueError(f"cutaway_quadrant must be two signs, each 1 or -1, got {self.cutaway_quadrant!r}")
+        object.__setattr__(self, "cutaway_quadrant", tuple(int(s) for s in quadrant))  # a list would not compare equal
 
 
 @dataclass
@@ -283,6 +323,7 @@ class SceneInfo:
     n_arrows: int = 0
     note: str = ""  # something the viewer should tell the user, e.g. a fallback drawing
     actors: dict[str, Any] = dc_field(default_factory=dict)
+    iso_levels: tuple[float, ...] = ()  # surface mode: the levels of the iso-surfaces
 
 
 # ----------------------------------------------------------------------------- datasets
@@ -414,6 +455,58 @@ def auto_clim(values: NDArray) -> tuple[float, float]:
     return lo, hi
 
 
+def iso_surface_levels(clim: tuple[float, float], n: int = 1, fraction: float = 0.5) -> tuple[float, ...]:
+    """Levels of the iso-surfaces over the colour range ``clim = (lo, hi)``.
+
+    One surface lies at ``fraction`` of the range; ``n > 1`` surfaces are spread evenly inside it, at
+    ``lo + k / (n + 1) * (hi - lo)`` for ``k = 1..n`` (``(0, 120)`` and ``n = 5`` give 20, 40, 60, 80, 100).
+    """
+    lo, hi = (float(v) for v in clim)
+    if n <= 1:
+        return (lo + fraction * (hi - lo),)
+    return tuple(lo + (hi - lo) * k / (n + 1) for k in range(1, n + 1))
+
+
+def _nan_style(mesh, name: str) -> dict[str, float]:
+    """``nan_opacity=0`` (unmeasured nodes left out) for a mesh that holds NaN values of ``name``, nothing otherwise.
+
+    A lookup table with a transparent NaN colour puts the whole mesh into VTK's translucent pass, whether it holds a
+    NaN or not, so an opaque mesh only gets one when it needs it.
+    """
+    values = np.asarray(mesh.point_data[name]) if name in mesh.point_data.keys() else np.empty(0)
+    return {"nan_opacity": 0.0} if np.isnan(values).any() else {}
+
+
+def _iso_surfaces(
+    grid, values: NDArray, finite: NDArray[np.bool_], opts: SceneOptions, lo: float, levels: tuple[float, ...]
+) -> "pv.PolyData":
+    """The iso-surfaces of ``levels`` in one mesh, each carrying its level as the field value, with the cut-away
+    quarter removed when ``opts`` asks for it."""
+    filled = grid.copy()
+    filled.point_data[opts.field] = np.where(finite, values, lo - 1.0)  # below every level: surfaces close at NaN nodes
+    surf = filled.contour(isosurfaces=list(levels), scalars=opts.field)
+    if not surf.n_points:
+        return surf
+    surf = surf.compute_normals(auto_orient_normals=True, consistent_normals=True)  # before the cut, on whole surfaces
+    if opts.iso_cutaway:
+        xmin, xmax, ymin, ymax, _zmin, _zmax = grid.bounds
+        surf = _cut_quadrant(surf, (0.5 * (xmin + xmax), 0.5 * (ymin + ymax)), opts.cutaway_quadrant)
+    return surf
+
+
+def _cut_quadrant(surf: "pv.PolyData", centre: tuple[float, float], quadrant: tuple[int, int]) -> "pv.PolyData":
+    """``surf`` without the quarter ``sign(x - cx), sign(y - cy) == quadrant``, clipped exactly at the two planes
+    (the point data, the field's level included, is interpolated onto the cut edges)."""
+    pts = np.asarray(surf.points, dtype=np.float64)
+    qx, qy = quadrant
+    marked = surf.copy(deep=False)
+    marked.point_data[CUT_ARRAY] = np.minimum(qx * (pts[:, 0] - centre[0]), qy * (pts[:, 1] - centre[1]))  # > 0 inside
+    kept = marked.clip_scalar(scalars=CUT_ARRAY, value=0.0, invert=True)
+    if CUT_ARRAY in kept.point_data.keys():
+        kept.point_data.remove(CUT_ARRAY)
+    return kept
+
+
 # ----------------------------------------------------------------------------- scene
 def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDArray | None = None) -> SceneInfo:
     """Clear ``plotter`` and draw the result according to ``opts``; returns what was drawn."""
@@ -426,7 +519,7 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
     finite = np.isfinite(values)
     clim = opts.clim if opts.clim is not None else auto_clim(values)
     info = SceneInfo(field=opts.field, clim=clim, n_nodes=int(values.size), n_finite=int(finite.sum()))
-    common = dict(scalars=opts.field, cmap=opts.colormap, clim=clim, nan_opacity=0.0, show_scalar_bar=False)
+    common = dict(scalars=opts.field, cmap=opts.colormap, clim=clim, show_scalar_bar=False)
     fg = foreground_for(opts.background)
     plotter.set_background(opts.background)
     title = _wrap_title(opts.title or opts.field)
@@ -461,25 +554,32 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
         parts = [part for part in parts if part.n_points]  # a cut at the lattice edge can be empty: merging it drops the arrays
         if parts:
             sliced = parts[0] if len(parts) == 1 else parts[0].merge(parts[1:])
-            info.actors["field"] = plotter.add_mesh(sliced, opacity=opts.opacity, **common)
+            # always a transparent NaN colour, NaN or not: the slices' look over the grey volume slices is this one
+            info.actors["field"] = plotter.add_mesh(sliced, opacity=opts.opacity, nan_opacity=0.0, **common)
     elif opts.mode == "points":
         idx = np.flatnonzero(finite)
         if idx.size:
             cloud = pv.PolyData(np.asarray(grid.points)[idx])
             cloud.point_data[opts.field] = values[idx]
             info.actors["field"] = plotter.add_mesh(
-                cloud, style="points", point_size=8.0, render_points_as_spheres=True, opacity=opts.opacity, **common
+                cloud,
+                style="points",
+                point_size=8.0,
+                render_points_as_spheres=True,
+                opacity=opts.opacity,
+                **common,
+                **_nan_style(cloud, opts.field),
             )
     elif opts.mode == "surface":
-        lo, hi = clim
-        level = lo + opts.iso_fraction * (hi - lo)
-        filled = grid.copy()
-        filled.point_data[opts.field] = np.where(finite, values, lo - 1.0)
-        surf = filled.contour(isosurfaces=[level], scalars=opts.field)
+        levels = iso_surface_levels(clim, opts.iso_levels, opts.iso_fraction)
+        surf = _iso_surfaces(grid, values, finite, opts, clim[0], levels)
         if surf.n_points:
-            surf = surf.compute_normals(auto_orient_normals=True, consistent_normals=True)
-            info.actors["field"] = plotter.add_mesh(surf, opacity=opts.opacity, smooth_shading=True, specular=0.3, **common)
-        info.actors["iso_level"] = level
+            info.actors["field"] = plotter.add_mesh(
+                surf, opacity=opts.opacity, smooth_shading=True, specular=0.3, **common, **_nan_style(surf, opts.field)
+            )
+        info.iso_levels = levels
+        if len(levels) == 1:
+            info.actors["iso_level"] = levels[0]
     else:  # warped: the lattice of the valid nodes moved by the displacement, drawn with its cell edges
         grid.point_data["_valid"] = finite.astype(np.float32)
         # only cells whose 8 nodes are valid (a cell with one NaN corner would be drawn fully transparent)
@@ -494,16 +594,26 @@ def build_scene(plotter, result: PipelineResult, opts: SceneOptions, volume: NDA
         if cells.n_cells:
             warped = cells.warp_by_vector(DISPLACEMENT_ARRAY, factor=opts.warp_scale)
             info.actors["field"] = plotter.add_mesh(
-                warped, opacity=opts.opacity, show_edges=opts.show_edges, edge_color=fg, line_width=1, **common
+                warped,
+                opacity=opts.opacity,
+                show_edges=opts.show_edges,
+                edge_color=fg,
+                line_width=1,
+                **common,
+                **_nan_style(warped, opts.field),
             )
         elif finite.any():  # no complete cell (a thin region, a sparse field): the valid nodes, moved
             pts = np.asarray(grid.points)[finite] + opts.warp_scale * np.asarray(grid.point_data[DISPLACEMENT_ARRAY])[finite]
-            import pyvista as pv
-
             cloud = pv.PolyData(pts)
             cloud.point_data[opts.field] = values[finite]
             info.actors["field"] = plotter.add_mesh(
-                cloud, style="points", point_size=8.0, render_points_as_spheres=True, opacity=opts.opacity, **common
+                cloud,
+                style="points",
+                point_size=8.0,
+                render_points_as_spheres=True,
+                opacity=opts.opacity,
+                **common,
+                **_nan_style(cloud, opts.field),
             )
             info.note = "nodes_only"
         if opts.show_outline:
@@ -667,6 +777,41 @@ def apply_camera(plotter, camera) -> None:
     if spec.zoom != 1.0:
         cam.Dolly(float(spec.zoom))  # what the mouse wheel does: move the camera, not the view angle
     plotter.renderer.ResetCameraClippingRange()
+
+
+def camera_direction(camera) -> NDArray[np.float64]:
+    """Unit vector from the focal point towards ``camera`` (a preset name, :class:`CameraSpec` or :class:`CameraState`).
+
+    Worked out without a plotter, the way :func:`apply_camera` turns the preset (resetting and dollying the camera
+    move it along this direction only).
+    """
+    if isinstance(camera, CameraState):
+        d = np.subtract(camera.position, camera.focal_point)
+    else:
+        from vtkmodules.vtkRenderingCore import vtkCamera
+
+        spec = camera if isinstance(camera, CameraSpec) else CameraSpec(preset=str(camera))
+        direction, up = PRESET_VIEWS[spec.preset]
+        cam = vtkCamera()
+        cam.SetFocalPoint(0.0, 0.0, 0.0)
+        cam.SetPosition(*direction)
+        cam.SetViewUp(*(VIEW_UPS[spec.view_up] if spec.view_up != "z" else up))
+        if spec.azimuth:
+            cam.Azimuth(float(spec.azimuth))
+        if spec.elevation:
+            cam.Elevation(float(spec.elevation))
+            cam.OrthogonalizeViewUp()
+        d = np.subtract(cam.GetPosition(), cam.GetFocalPoint())
+    norm = float(np.linalg.norm(d))
+    return np.asarray(d, dtype=np.float64) / norm if norm > 0 else np.array([0.0, 0.0, 1.0])
+
+
+def facing_quadrant(camera) -> tuple[int, int]:
+    """Signs of ``(x, y)`` of the quarter of the scene on ``camera``'s side: the ``cutaway_quadrant`` that removes the
+    quarter facing it. ``(1, 1)`` for the isometric preset; a camera straight above or below the scene, or level
+    with an axis, counts the missing component as positive."""
+    dx, dy, _dz = camera_direction(camera)
+    return (1 if dx >= -QUADRANT_TIE else -1, 1 if dy >= -QUADRANT_TIE else -1)
 
 
 _apply_camera = apply_camera  # the old private name

@@ -4,6 +4,72 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Several iso-surfaces in the 3-D view.** In the *Iso-surface* mode, *Surfaces* (1 to 10) draws that many
+  nested surfaces spread evenly over the colour range, at `lo + k/(n+1) (hi - lo)` (0 to 120 with 5 surfaces:
+  20, 40, 60, 80, 100), each in the colour of its value on the colour bar; the status line lists the levels.
+  *Iso level* still places a single surface and is greyed out while several are drawn. From a script:
+  `SceneOptions(mode="surface", iso_levels=5)`; `SceneInfo.iso_levels` holds the levels drawn.
+- **Cut away a quarter.** Removes the quarter of the iso-surfaces that faces the camera, split at the centre of
+  the node grid in x and y, so the inner surfaces can be seen. The quarter is an option of the scene, not read
+  from the camera: the view takes it from the camera row (and from a mouse turn, once the mouse is released),
+  and an orbit keeps it, so the cut turns with the object. From a script: `iso_cutaway=True` with
+  `cutaway_quadrant`, the signs of x and y of the removed quarter; the default `(1, 1)` faces the isometric
+  camera and `facing_quadrant(camera)` gives the one facing any camera.
+- **The 3-D view report** (`scripts/make_view3d_report.py`) has pages on the nested iso-surfaces of a rotation,
+  the cut-away from several cameras, and the drawing at full opacity before and after the fix below.
+- **A light theme and a Settings menu.** *Settings > Theme* switches between *Dark* (the default, unchanged)
+  and *Light* at once, without a restart: a white window with light grey side columns, white slice and chart
+  canvases with black ticks, labels, spines and titles, dark icons and spin-box arrows, the indigo accent kept,
+  and a tinted selection in tables. Every open window follows (post-processing, texture, guide, export,
+  batch); the 3-D view and the texture plots switch their background too, unless one was picked by hand. The
+  choice is saved (`ui/theme`) and applied before the window opens; `PYALDVC_THEME` overrides it for scripts.
+  `scripts/make_theme_report.py` writes `reports/theme.pdf` (every window in both themes, switch timings).
+
+### Changed
+- **Language and notifications moved to Settings.** The *Language* submenu and *Notify when a task finishes*
+  left the *View* menu for the new *Settings* menu; they work and are saved as before. *View* keeps the
+  columns and the layout.
+- **The slice viewer's node count and configuration note moved under the sliders.** The line with the node
+  grid (nodes, subset, overlap) and the note on the background's configuration now form a status line under
+  the sliders, like the 3-D view's, and end in "..." when the window is narrow (the whole text is in the
+  tooltip). The controls above the slices read *Background*, *Layout*, *Same scale*, then *Show grid* and
+  *Show subset* at the right, as in pyALDIC.
+- **The centre column starts 20 px wider** (the right column at its minimum of 340 px), so the viewer's
+  controls fit on one line in the default 1440 px window.
+- **The README, the website and the user guide say how to update** an install made with pip:
+  `pip install --upgrade al-dvc`, or `pip install --upgrade "al-dvc[gpu]"` for the GPU flavour.
+
+### Fixed
+- **Controls drawn over each other.** In the default 1440 px window, and in smaller ones, the viewer's row of
+  controls (check-box texts cut off, the configuration note drawn across the *Background* list) and the 3-D
+  view's camera and animation rows (labels touching their boxes, the speed unit cut) were squeezed; the
+  viewer's row was, with its long node-grid line, even in a full-HD window. Those rows now wrap onto a second
+  line when they run out of room and stay on one line otherwise (a new flow layout,
+  `al_dvc.gui.flow_layout`); nothing is squeezed down to the smallest window of 1200 px, which
+  `tests/test_flow_layout.py` checks at 1200, 1440 and 1920 px.
+- **The post-processing window's fit-window row was cut.** The three widths overlapped and *Cube* showed as
+  "(" at any window size: the row did not fit beside its label. It now goes under its label.
+- **The viewer's Background list cut "Reference (frame 0)".** It took its width before any frame was loaded;
+  it follows its entries now.
+- **Running the tests or the report scripts overwrote the user's settings.** The window layout, the recent
+  sessions (cleared by a test) and toggles such as natural sorting were kept in a store that ignored the tests'
+  temporary folder, and the report and screenshot scripts wrote every store. That store now follows the same
+  redirect (`al_dvc.gui.settings_store`), and every offscreen run (tests, report and screenshot scripts) keeps
+  its settings in a temporary folder of its own. The application itself reads and writes the same place as
+  before, so no setting is lost.
+- **The texture plots' toolbar icons were black on the dark background.** matplotlib chose them before the
+  stylesheet reached the toolbar; they are light in the dark theme now, and dark in the light one.
+- **Iso-surfaces, the deformed lattice and the node points were drawn translucent at full opacity.** Every
+  field was given a transparent colour for unmeasured nodes, and such a colour puts the whole mesh into VTK's
+  translucent pass whether it holds an unmeasured node or not: nested surfaces and the far faces of the deformed
+  lattice blended through the near ones (the centre of the hydrogel's indentation dimple looked dark red instead
+  of dark purple). Only the field slices, which hold unmeasured nodes outside the region of interest, keep that
+  colour, and their pictures are unchanged pixel for pixel. The 3-D view draws with the results panel's
+  *Overlay opacity*; set it to 1 for opaque surfaces.
+
 ## [1.0.1] - 2026-09-24
 
 ### Changed

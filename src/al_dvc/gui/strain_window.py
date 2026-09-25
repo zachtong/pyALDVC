@@ -19,6 +19,7 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -41,6 +42,7 @@ from al_dvc.strain.compute_strain import compute_strain
 from .app_state import AppState
 from .field_canvas import FieldSliceCanvas
 from .names import field_name, fill_combo, label, retranslate_combo, select_key
+from .theme import SIDE_COLUMN
 from .widgets import CollapsibleSection, combo, dspin, form_label, guard_wheel, headless, make_form
 
 logger = logging.getLogger(__name__)
@@ -161,6 +163,8 @@ class StrainWindow(QMainWindow):
 
         params = CollapsibleSection()
         form = make_form()
+        # a field wider than the field column (the three fit-window widths and 'Cube') goes under its label
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.method = combo([])
         fill_combo(self.method, "strain_method")
         self.measure = combo([])
@@ -262,6 +266,7 @@ class StrainWindow(QMainWindow):
         side_layout.addWidget(actions)
         side_layout.addStretch(1)
         scroll = QScrollArea()
+        scroll.setObjectName(SIDE_COLUMN)  # the light theme sets it apart in grey
         scroll.setWidgetResizable(True)
         scroll.setWidget(side)
         scroll.setFixedWidth(SIDEBAR_WIDTH + 18)

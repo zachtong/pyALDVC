@@ -275,11 +275,9 @@ def test_volume_table_region_column_and_reorder(qapp, small_pair):
 
 
 def test_recent_sessions_menu(qapp, small_pair, tmp_path):
-    from PySide6.QtCore import QSettings
+    from al_dvc.gui.settings_store import gui_settings
 
-    from al_dvc.gui.app import SETTINGS_APP, SETTINGS_ORG
-
-    QSettings(SETTINGS_ORG, SETTINGS_APP).remove("recent_sessions")
+    gui_settings().remove("recent_sessions")
     window = MainWindow()
     window.show()
     assert window.recent_sessions() == [] and not window._menus["recent"].isEnabled()
@@ -292,7 +290,7 @@ def test_recent_sessions_menu(qapp, small_pair, tmp_path):
     recent = window.recent_sessions()
     assert [Path(p).name for p in recent] == ["s2.aldvc", "s1.aldvc", "s0.aldvc"]
     assert window._menus["recent"].isEnabled() and len(window._menus["recent"].actions()) == 3
-    QSettings(SETTINGS_ORG, SETTINGS_APP).remove("recent_sessions")
+    gui_settings().remove("recent_sessions")
     window.close()
 
 

@@ -22,7 +22,7 @@ SRC = os.path.join(SPECPATH, os.pardir, "src")
 PKG = os.path.join(SRC, "al_dvc")
 
 _arrows = glob.glob(os.path.join(PKG, "gui", "arrows", "*.svg"))
-assert len(_arrows) == 4, f"expected 4 spin-box arrow SVGs, found {len(_arrows)}"
+assert len(_arrows) == 7, f"expected 7 spin/combo-box arrow SVGs (dark and light theme), found {len(_arrows)}"
 _translations = glob.glob(os.path.join(PKG, "gui", "translations", "*.json"))
 assert _translations, "no translation dictionaries found in al_dvc/gui/translations"
 

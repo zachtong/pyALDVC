@@ -214,17 +214,10 @@ class Shooter:
 
 # --------------------------------------------------------------------------- work-arounds
 def work_around_layout_bugs(window) -> None:
-    """Widths the application gets wrong at any window size (reported; remove each once fixed in the GUI).
+    """What the application gets wrong at any window size (reported; remove each once fixed in the GUI).
 
-    * the viewer's Background combo sizes itself on first show, before the frames exist, so
-      "Reference (frame 0)" is cut;
     * the elapsed-time label keeps the last in-run estimate "(~N s left)" after the run finished.
     """
-    from PySide6.QtWidgets import QComboBox
-
-    combo = window.viewer.background_frame
-    combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-    combo.setMinimumWidth(max(combo.minimumWidth(), combo.sizeHint().width()))
     rp = window.run_panel
     text = rp._elapsed.text()
     if "(" in text:

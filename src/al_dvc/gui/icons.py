@@ -1,7 +1,9 @@
 """Vector icons for the tool buttons, rendered from inline SVG in the theme colours.
 
 The icons are simple 20 x 20 line drawings (stroke ``currentColor`` replaced at render time), so
-they follow the dark theme and stay crisp at any DPI without shipping bitmap assets.
+they take the colours of the theme in use and stay crisp at any DPI without shipping bitmap assets.
+A button given its icon by :func:`tool_button` or :func:`set_icon` remembers the icon's name, and the
+theme manager renders it again in the new colours when the theme changes.
 """
 
 # ruff: noqa: E501  (inline SVG paths are long by nature)
@@ -12,12 +14,13 @@ from functools import lru_cache
 from PySide6.QtCore import QByteArray, QSize, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QToolButton
+from PySide6.QtWidgets import QAbstractButton, QToolButton
 
-from .theme import COLORS
+from .theme import current_colors
 
 ICON_SIZE = 18
 BUTTON_SIZE = 30
+ICON_PROPERTY = "pyaldvcIcon"  # the icon name a button keeps, so a theme change can render it again
 
 _STROKE = 'fill="none" stroke="{c}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"'
 
@@ -66,22 +69,30 @@ def pixmap(name: str, color: str, size: int = ICON_SIZE) -> QPixmap:
 
 
 def icon(name: str, size: int = ICON_SIZE) -> QIcon:
-    """Theme-coloured icon: secondary text colour normally, primary when active or checked, muted when disabled."""
+    """Icon in the colours of the theme in use: secondary text colour normally, primary when active, white when
+    checked (on the accent), muted when disabled."""
+    c = current_colors()
     ic = QIcon()
-    ic.addPixmap(pixmap(name, COLORS.TEXT_SECONDARY, size), QIcon.Mode.Normal, QIcon.State.Off)
-    ic.addPixmap(pixmap(name, COLORS.TEXT_PRIMARY, size), QIcon.Mode.Active, QIcon.State.Off)
+    ic.addPixmap(pixmap(name, c.TEXT_SECONDARY, size), QIcon.Mode.Normal, QIcon.State.Off)
+    ic.addPixmap(pixmap(name, c.TEXT_PRIMARY, size), QIcon.Mode.Active, QIcon.State.Off)
     ic.addPixmap(pixmap(name, "#ffffff", size), QIcon.Mode.Normal, QIcon.State.On)
     ic.addPixmap(pixmap(name, "#ffffff", size), QIcon.Mode.Active, QIcon.State.On)
-    ic.addPixmap(pixmap(name, COLORS.TEXT_MUTED, size), QIcon.Mode.Disabled, QIcon.State.Off)
-    ic.addPixmap(pixmap(name, COLORS.TEXT_MUTED, size), QIcon.Mode.Disabled, QIcon.State.On)
+    ic.addPixmap(pixmap(name, c.TEXT_MUTED, size), QIcon.Mode.Disabled, QIcon.State.Off)
+    ic.addPixmap(pixmap(name, c.TEXT_MUTED, size), QIcon.Mode.Disabled, QIcon.State.On)
     return ic
+
+
+def set_icon(button: QAbstractButton, name: str) -> None:
+    """Give ``button`` the icon ``name`` and remember it, so that a theme change draws it in the new colours."""
+    button.setProperty(ICON_PROPERTY, name)
+    button.setIcon(icon(name))
 
 
 def tool_button(name: str, tooltip: str = "", checkable: bool = False) -> QToolButton:
     """A square icon button of the toolbar style (``QToolButton#tool`` in the theme)."""
     b = QToolButton()
     b.setObjectName("tool")
-    b.setIcon(icon(name))
+    set_icon(b, name)
     b.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
     b.setFixedSize(BUTTON_SIZE, BUTTON_SIZE)
     b.setCheckable(checkable)
@@ -91,4 +102,4 @@ def tool_button(name: str, tooltip: str = "", checkable: bool = False) -> QToolB
     return b
 
 
-__all__ = ["BUTTON_SIZE", "ICON_SIZE", "SVG", "icon", "pixmap", "svg_source", "tool_button"]
+__all__ = ["BUTTON_SIZE", "ICON_PROPERTY", "ICON_SIZE", "SVG", "icon", "pixmap", "set_icon", "svg_source", "tool_button"]

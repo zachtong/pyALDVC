@@ -63,6 +63,32 @@ volume, 3 invalid subset (mask / texture), 4 singular update, 5 NaN,
 6 skipped, 7 stalled. `outlier` marks the nodes that converged but were
 rejected by the median test and replaced: their value is not a measurement.
 
+### The 3-D view
+
+The **3-D view** tab draws the field on the node grid in one of four modes:
+orthogonal **slices** at the slice viewer's positions, the node **points**,
+**iso-surfaces**, or the **deformed lattice** (the valid cells moved by the
+displacement times *Warp scale*). In the iso-surface mode, *Surfaces* sets how
+many are drawn: one lies at the *Iso level* (a fraction of the colour range);
+several are spread evenly over the colour range (0 to 120 with 5 surfaces: 20,
+40, 60, 80, 100), each in the colour of its value on the colour bar, and the
+status line lists the levels. *Cut away a quarter* removes the quarter of the
+surfaces that faces the camera, split at the centre of the node grid in x and
+y, so the inner surfaces show; the quarter follows the camera row (and a mouse
+turn, once the mouse is released), and an orbit keeps it. The scene takes the
+*Overlay opacity* of the results panel: at 1, the iso-surfaces, the points and
+the deformed lattice are opaque. The same pictures from a script:
+
+```python
+from al_dvc.gui.view3d_scene import CameraSpec, SceneOptions, facing_quadrant, render_png
+
+camera = CameraSpec(preset="iso", azimuth=-95.0, elevation=-5.0)
+opts = SceneOptions(field="disp_magnitude", frame=len(result.result_disp) - 1, mode="surface",
+                    iso_levels=5, iso_cutaway=True, cutaway_quadrant=facing_quadrant(camera),
+                    clim=(0.0, 120.0), background="#ffffff")
+render_png(result, "iso_surfaces.png", opts, camera=camera)
+```
+
 ### Statistics of the results
 
 *Analysis > Post-processing...* (Ctrl+T, or *Post-processing...* in the results
@@ -219,6 +245,7 @@ The most useful fields:
 
 ```bash
 pip install "al-dvc[gpu]"          # numba-cuda with the CUDA 12 wheels; needs an NVIDIA driver
+pip install --upgrade "al-dvc[gpu]"   # later: update, GPU packages included
 ```
 
 With an NVIDIA GPU the local solvers (Hessian precompute, 12-DOF IC-GN, the
@@ -256,3 +283,22 @@ al-dvc stats results/aldvc.npz --motion rigid --noise-floor -o stats     # stati
 
 Everything the application does is also available from Python (`al_dvc.run_aldvc`) for
 automated studies; see `examples/tutorial_real_data.ipynb`.
+
+## 10. Settings
+
+The **Settings** menu, right after *View*, holds what the application remembers from one start to the
+next:
+
+* **Theme** -- *Dark* (the default) or *Light*: a white window with light grey side columns, and white
+  slice and chart canvases with black ticks, labels and titles. The switch is immediate, no restart,
+  in every open window: the post-processing, texture, guide, export and batch windows follow, and so do
+  the icons, the console and every canvas. The 3-D view and the texture plots switch their background
+  with the theme (dark or white) until you pick one in their own *Background* list; your choice then
+  stays. The demonstrations in the texture analysis guide are pre-rendered and keep their dark frame.
+* **Language** -- seven languages, switched immediately.
+* **Notify when a task finishes** -- also shows a message box when a task finishes (a run, the strain,
+  a texture analysis, an export, a 3-D recording); the taskbar entry flashes either way.
+
+The theme is saved in the application settings (`ui/theme`: `dark` or `light`) and applied before the
+window opens at the next start. The environment variable `PYALDVC_THEME=light` (or `dark`) starts in that
+theme whatever was saved, e.g. for screenshots in a fixed look.

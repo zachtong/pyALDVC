@@ -185,6 +185,17 @@ al-dvc
 CUDA Toolkit. The last command opens the application, and `al-dvc --self-test` checks the install. Optional:
 `nibabel`, `pynrrd` and `pydicom` read NIfTI, NRRD and DICOM; `imageio` with `imageio-ffmpeg` records MP4.
 
+**Update** to the latest release in the same environment:
+
+```bash
+conda activate pyaldvc
+pip install --upgrade al-dvc
+```
+
+With the GPU flavour, run `pip install --upgrade "al-dvc[gpu]"` instead, so the GPU packages are updated too. The
+version is in the window title and under *Help > About*; your settings are kept. For the portable bundle, download the
+new zip and use it in place of the old folder.
+
 **No Python?** Every [release](https://github.com/zachtong/pyALDVC/releases/latest) ships a portable Windows bundle
 (CPU only; for NVIDIA GPU acceleration, install with pip as above): unzip it and double-click `pyALDVC.exe`. Then
 read the [user guide](https://github.com/zachtong/pyALDVC/blob/main/docs/user_guide.md).

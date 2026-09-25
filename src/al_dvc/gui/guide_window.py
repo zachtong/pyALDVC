@@ -13,7 +13,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QMovie, QPixmap
 from PySide6.QtWidgets import QFrame, QLabel, QMainWindow, QScrollArea, QVBoxLayout, QWidget
 
-from .theme import COLORS
+from .theme import DARK, current_colors
+from .theme_manager import connect_theme, themed
 from .widgets import guard_wheel
 
 ASSETS = Path(__file__).resolve().parent / "assets" / "guide"
@@ -58,23 +59,25 @@ class GuideWindow(QMainWindow):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setCentralWidget(scroll)
         guard_wheel(page)
+        connect_theme(self._on_theme_changed)
         self.retranslate_ui()
 
     # ------------------------------------------------------------------ building blocks
     @staticmethod
-    def _label(layout, size: int = 12, bold: bool = False, color: str = COLORS.TEXT_PRIMARY) -> QLabel:
+    def _label(layout, size: int = 12, bold: bool = False, color: str = "TEXT_PRIMARY") -> QLabel:
+        """A wrapped, selectable label; ``color`` is the palette field of its text colour."""
         lab = QLabel()
         lab.setWordWrap(True)
         lab.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         weight = "bold" if bold else "normal"
-        lab.setStyleSheet(f"font-size: {size}px; font-weight: {weight}; color: {color};")
+        themed(lab, f"font-size: {size}px; font-weight: {weight}; color: {{{color}}};")
         layout.addWidget(lab)
         return lab
 
     def _add_section(self, layout, key: str, media: str | None, formula: bool = False) -> None:
         rule = QFrame()
         rule.setFrameShape(QFrame.Shape.HLine)
-        rule.setStyleSheet(f"color: {COLORS.BORDER};")
+        themed(rule, "color: {BORDER};")
         layout.addSpacing(8)
         layout.addWidget(rule)
         self._text[f"{key}_head"] = self._label(layout, size=15, bold=True)
@@ -83,21 +86,23 @@ class GuideWindow(QMainWindow):
             box = QLabel()
             box.setAlignment(Qt.AlignmentFlag.AlignCenter)
             box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            box.setStyleSheet(
-                f"font-size: 15px; color: {COLORS.TEXT_PRIMARY}; background: {COLORS.BG_PANEL};"
-                f" border: 1px solid {COLORS.BORDER}; border-radius: 6px; padding: 10px 14px;"
+            themed(
+                box,
+                "font-size: 15px; color: {TEXT_PRIMARY}; background: {BG_PANEL};"
+                " border: 1px solid {BORDER}; border-radius: 6px; padding: 10px 14px;",
             )
             layout.addWidget(box)
             self._text[f"{key}_formula"] = box
         if media is not None:
             self._add_media(layout, media)
-            self._text[f"{key}_caption"] = self._label(layout, size=11, color=COLORS.TEXT_SECONDARY)
+            self._text[f"{key}_caption"] = self._label(layout, size=11, color="TEXT_SECONDARY")
 
     def _add_media(self, layout, key: str) -> None:
         path = ASSETS / MEDIA[key]
         holder = QLabel()
         holder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        holder.setStyleSheet(f"background: {COLORS.BG_CANVAS}; border: 1px solid {COLORS.BORDER}; border-radius: 6px;")
+        # the demonstrations are rendered on the dark canvas: their frame keeps that colour in every theme
+        themed(holder, f"background: {DARK.BG_CANVAS}; border: 1px solid {{BORDER}}; border-radius: 6px;")
         if path.suffix == ".gif":
             movie = QMovie(str(path))
             movie.setCacheMode(QMovie.CacheMode.CacheAll)
@@ -127,9 +132,13 @@ class GuideWindow(QMainWindow):
         super().hideEvent(event)
 
     # ------------------------------------------------------------------ text
+    def _on_theme_changed(self, _name: str) -> None:
+        self.retranslate_ui()  # the formulas carry the note colour in their text
+
     def retranslate_ui(self) -> None:
         self.setWindowTitle(self.tr("Texture analysis guide"))
         t = self._text
+        note = f"<br><span style='color:{current_colors().TEXT_SECONDARY}; font-size:12px;'>"
         t["title"].setText(self.tr("Texture analysis: how it works"))
         t["intro"].setText(
             self.tr(
@@ -155,7 +164,7 @@ class GuideWindow(QMainWindow):
             "g(<b>x</b>) = f(<b>x</b>) − mean(f)"
             "<br>ρ(<b>h</b>) = [ Σ g(<b>x</b>) · g(<b>x</b> + <b>h</b>) / M(<b>h</b>) ]"
             " / [ Σ g(<b>x</b>)<sup>2</sup> / M(<b>0</b>) ]"
-            "<br><span style='color:#94a3b8; font-size:12px;'>M(<b>h</b>): voxel pairs at lag <b>h</b>, "
+            f"{note}M(<b>h</b>): voxel pairs at lag <b>h</b>, "
             "Π<sub>j</sub>(N<sub>j</sub> − |h<sub>j</sub>|) in a cube of N<sub>j</sub> voxels; ρ(L) = 1/e ≈ 0.37</span>"
         )
         t["acf_caption"].setText(
@@ -196,8 +205,7 @@ class GuideWindow(QMainWindow):
             )
         )
         t["subset_formula"].setText(
-            "subset ≈ 4 · L(1/e)   step ≈ subset / 2"
-            "<br><span style='color:#94a3b8; font-size:12px;'>" + self.tr("recommended start, not a guarantee") + "</span>"
+            f"subset ≈ 4 · L(1/e)   step ≈ subset / 2{note}" + self.tr("recommended start, not a guarantee") + "</span>"
         )
         t["subset_caption"].setText(
             self.tr("The 1/e length on the texture, the subset it suggests and the step to the next subset.")

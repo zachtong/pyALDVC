@@ -19,8 +19,6 @@ import logging
 from dataclasses import asdict, fields
 
 import numpy as np
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, QThread, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -59,7 +57,8 @@ from .analysis_regions import RegionDrawer, RegionsPanel, draw_overlays, grid_bo
 from .app_state import AppState
 from .field_canvas import FieldSliceCanvas
 from .names import field_name
-from .theme import COLORS
+from .theme import SIDE_COLUMN
+from .theme_manager import connect_theme
 from .widgets import CollapsibleSection, combo, dspin, form_label, guard_wheel, make_form, spin
 
 logger = logging.getLogger(__name__)
@@ -208,6 +207,7 @@ class AnalysisTab(AnalysisExportMixin, AnalysisPagesMixin, QWidget):
         side_layout.addWidget(export)
         side_layout.addStretch(1)
         scroll = QScrollArea()
+        scroll.setObjectName(SIDE_COLUMN)
         scroll.setWidgetResizable(True)
         scroll.setWidget(side)
         scroll.setFixedWidth(SIDEBAR_WIDTH + 18)
@@ -228,8 +228,7 @@ class AnalysisTab(AnalysisExportMixin, AnalysisPagesMixin, QWidget):
         self.table = QTableWidget(0, len(TABLE_COLUMNS))
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.results_tabs.addTab(self.table, "")
-        self.hist_figure = Figure(figsize=(9, 3), facecolor=COLORS.BG_CANVAS)
-        self.hist_canvas = FigureCanvas(self.hist_figure)
+        self.hist_figure, self.hist_canvas = self._figure()
         self.results_tabs.addTab(self.hist_canvas, "")
         self.results_tabs.addTab(self._build_series_page(), "")
         self.results_tabs.addTab(self._build_regions_page(), "")
@@ -291,6 +290,7 @@ class AnalysisTab(AnalysisExportMixin, AnalysisPagesMixin, QWidget):
         self._state.regions_changed.connect(self._on_regions_changed)
         self._state.correction_changed.connect(self._sync_apply)
         self._state.analysis_restored.connect(self.restore_settings)
+        connect_theme(self.apply_theme)
         saved = dict(self._state.analysis_settings or {})  # a session loaded before this tab existed
         self.retranslate_ui()
         self.load()  # saves the default controls into the state ...

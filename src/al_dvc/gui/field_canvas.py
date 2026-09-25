@@ -17,7 +17,8 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
 from al_dvc.export.slice_plots import LAYOUTS, PlaneStyle, build_axes, draw_field_planes, grey_limits, ordered_limits
 
-from .theme import COLORS
+from .theme import current_colors
+from .theme_manager import connect_theme
 
 __all__ = ["FieldSliceCanvas", "LAYOUTS"]
 
@@ -44,11 +45,8 @@ class FieldSliceCanvas(QWidget):
         self._override: tuple[np.ndarray, str] | None = None  # per-node values drawn instead of the stored field
         self._decorator = None  # fn(axes, indices, volume shape) drawing on top of the planes (region outlines)
         self.last_clim: tuple[float, float] | None = None
-        self._style = PlaneStyle(
-            background=COLORS.BG_CANVAS, text=COLORS.TEXT_SECONDARY, border=COLORS.BORDER, cursor=COLORS.ACCENT
-        )
 
-        self.figure = Figure(figsize=(9, 3.4), facecolor=COLORS.BG_CANVAS)
+        self.figure = Figure(figsize=(9, 3.4), facecolor=current_colors().BG_CANVAS)
         self.canvas = FigureCanvas(self.figure)
         self.axes, self.cax = build_axes(self.figure, self._layout)
         self.sliders: dict[str, QSlider] = {}
@@ -74,6 +72,7 @@ class FieldSliceCanvas(QWidget):
         self._empty.setObjectName("hint")
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._empty)
+        connect_theme(self._on_theme_changed)
         self.redraw()
 
     # ------------------------------------------------------------------ data
@@ -171,6 +170,15 @@ class FieldSliceCanvas(QWidget):
         self.slices_changed.emit(*self.indices)
 
     # ------------------------------------------------------------------ drawing
+    @property
+    def _style(self) -> PlaneStyle:
+        """The colours of the planes, from the theme in use."""
+        c = current_colors()
+        return PlaneStyle(background=c.BG_CANVAS, text=c.CANVAS_TEXT, border=c.CANVAS_SPINE, cursor=c.ACCENT)
+
+    def _on_theme_changed(self, _name: str) -> None:
+        self.redraw()
+
     def has_field(self) -> bool:
         res = self._result
         if res is None or not res.result_disp:
@@ -186,6 +194,8 @@ class FieldSliceCanvas(QWidget):
         return True
 
     def redraw(self) -> None:
+        style = self._style
+        self.figure.set_facecolor(style.background)
         iz, iy, ix = self.indices
         self._slider_labels["z"].setText(f"z = {iz}")
         self._slider_labels["y"].setText(f"y = {iy}")
@@ -193,8 +203,8 @@ class FieldSliceCanvas(QWidget):
         if not self.has_field():
             for ax in self.axes:
                 ax.clear()
-                ax.set_facecolor(self._style.background)
-                ax.tick_params(colors=self._style.text, labelsize=7)
+                ax.set_facecolor(style.background)
+                ax.tick_params(colors=style.text, labelsize=7)
             self.cax.clear()
             self.cax.set_visible(False)
             self._empty.setVisible(True)
@@ -215,7 +225,7 @@ class FieldSliceCanvas(QWidget):
             self._clim,
             self._background,
             alpha=self._alpha,
-            style=self._style,
+            style=style,
             volume_shape=self._shape,
             equal_scale=self._equal_scale,
             bg_clim=self._bg_clim,

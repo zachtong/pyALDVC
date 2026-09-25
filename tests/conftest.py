@@ -66,16 +66,14 @@ def interior_mask(mesh):
 
 @pytest.fixture(scope="session", autouse=True)
 def isolated_qsettings(tmp_path_factory):
-    """Tests never touch the user's settings: QSettings go to a temporary ini folder, the language is English."""
+    """Tests never touch the user's settings: both stores go to a temporary ini folder, the language is English."""
     import os
 
     os.environ["PYALDVC_LANGUAGE"] = "en"
     try:
-        from PySide6.QtCore import QSettings
-    except ImportError:
+        from al_dvc.gui.settings_store import use_private_settings
+    except ImportError:  # no PySide6
         yield
         return
-    folder = str(tmp_path_factory.mktemp("qsettings"))
-    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, folder)
+    use_private_settings(tmp_path_factory.mktemp("qsettings"))
     yield
