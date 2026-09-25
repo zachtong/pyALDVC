@@ -4,7 +4,7 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.2.0] - 2026-09-24
 
 ### Added
 - **A session keeps everything after a computation.** *Save session* now stores the results of the run (every
