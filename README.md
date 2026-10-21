@@ -91,7 +91,7 @@ Foam data courtesy of NIST (Landauer et al., *Sci. Data* 10, 356, 2023).</sub>
 
 <table>
   <tr>
-    <td width="50%" valign="top"><b>Point and click</b><br>Load the scans, draw the region of interest on the slices, run and export, in seven languages. No code.</td>
+    <td width="50%" valign="top"><b>Point and click</b><br>Load the scans, draw the region of interest on the slices, run and export, in seven languages and a dark or light theme. No code.</td>
     <td width="50%" valign="top"><b>AL-DVC solver</b><br>Local subset fits coupled to one smooth, compatible field: cleaner gradients, and masked cracks and holes stay sharp.</td>
   </tr>
   <tr>
@@ -103,8 +103,8 @@ Foam data courtesy of NIST (Landauer et al., *Sci. Data* 10, 356, 2023).</sub>
     <td valign="top"><b>Strain</b><br>Four gradient methods × four measures (infinitesimal, Green–Lagrange, Euler–Almansi, Hencky).</td>
   </tr>
   <tr>
-    <td valign="top"><b>Statistics and rigid-body motion</b><br>Means with 95&nbsp;% confidence intervals, the noise floor, regions, profiles, a virtual extensometer.</td>
-    <td valign="top"><b>3-D view and animations</b><br>Field slices, the deformed node grid and arrows; orbits and sweeps recorded as GIF or MP4.</td>
+    <td valign="top"><b>Statistics and rigid-body motion</b><br>Means with 95&nbsp;% confidence intervals, the noise floor, regions, profiles, a virtual extensometer; rigid-body motion fitted in closed form and removed.</td>
+    <td valign="top"><b>3-D view and animations</b><br>Field slices, node points, nested iso-surfaces, the deformed node grid and arrows; orbits and sweeps recorded as GIF, PNG frames or MP4.</td>
   </tr>
   <tr>
     <td valign="top"><b>Formats</b><br>TIFF, MATLAB, NumPy, HDF5, NIfTI, NRRD, DICOM in; NumPy, MATLAB, CSV, ParaView, PDF out.</td>
@@ -143,12 +143,14 @@ rotation reads as false strain. A closed-form rigid fit removes it and reveals t
 
 | Test | Result |
 |---|---|
-| Synthetic rigid translation or 2 % strain | 0.003–0.006 voxel error |
+| Synthetic rigid translation | 0.003–0.006 voxel error |
+| Synthetic 2 % strain | 0.004 voxel error |
 | Synthetic 5° rotation about the z axis | 0.001 voxel error |
 | Synthetic translation (12.3, −9.6, 7.4) + 1 % strain | 0.004–0.005 voxel error |
 | Synthetic 2 % strain with noise (SNR 6) | 0.011–0.012 voxel error |
 | Confocal pair, 1024 × 1024 × 306, 79,200 nodes | 34 s on one RTX 5090 (5.0 min on a 24-core CPU) |
 | Same pair, against MATLAB ALDVC (u, v, w) | median difference 0.005 / 0.006 / 0.020 voxel |
+| GPU against CPU | typically below 10<sup>−5</sup> voxel |
 | Masked 1024³ pair | about 14 GB of volume memory, from the memory model (was 53 GB) |
 
 <sub>Synthetic rows: RMS error of each displacement component at the interior nodes, subset 16, step 8 voxels, default

@@ -5,12 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "al-dvc"
 version = "1.2.0"
-description = "AL-DVC: Augmented Lagrangian Digital Volume Correlation (3D) in Python"
+description = "pyALDVC: Augmented Lagrangian Digital Volume Correlation in Python: 3-D displacement and strain from micro-CT, confocal and other volume scans"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "BSD-3-Clause"
 authors = [
     { name = "Zixiang (Zach) Tong", email = "zachtong@utexas.edu" },
+    { name = "Jin Yang" },
 ]
 keywords = [
     "digital-volume-correlation",
@@ -21,6 +22,7 @@ keywords = [
     "ADMM",
     "inverse-compositional-gauss-newton",
     "micro-CT",
+    "confocal-microscopy",
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",

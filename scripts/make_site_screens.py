@@ -8,7 +8,7 @@ region of interest with the Rectangle tool, runs the analysis from the Run butto
     app-slices.jpg      main window, Slices tab: displacement w over the reference volume
     app-3d.jpg          main window, 3-D view tab: the deformed node lattice with displacement arrows
     app-strain.jpg      post-processing window, Strain tab, after computing the strain
-    app-statistics.jpg  post-processing window, Statistics tab: two drawn regions, the Regions page
+    app-statistics.jpg  post-processing window, Analysis tab: two drawn regions, the Regions page
     app-texture.jpg     texture analysis window on the reference volume (RVE sweep, autocorrelation)
     app-setup.jpg       main window before the run: region of interest and node-grid preview on the slices;
                         written to --raw (not to the site) with app-setup.json, the panels' rectangles in

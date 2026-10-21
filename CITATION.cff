@@ -5,14 +5,12 @@ version: 1.2.0
 date-released: 2026-09-24
 license: BSD-3-Clause
 repository-code: "https://github.com/zachtong/pyALDVC"
+url: "https://zachtong.github.io/pyALDVC/"
 doi: 10.5281/zenodo.22883767
 identifiers:
   - type: doi
     value: 10.5281/zenodo.22883767
-    description: "The concept DOI: resolves to the latest release"
-  - type: doi
-    value: 10.5281/zenodo.22883768
-    description: "Version 0.9.0"
+    description: "The concept DOI: resolves to the latest release; each release also has its own DOI on Zenodo"
 authors:
   - family-names: Tong
     given-names: Zixiang
@@ -29,6 +27,7 @@ keywords:
   - augmented Lagrangian
   - ADMM
   - micro-CT
+  - confocal microscopy
   - experimental mechanics
 references:
   - type: article

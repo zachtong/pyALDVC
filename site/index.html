@@ -256,7 +256,7 @@
           <ul class="metrics">
             <li><b>144,342</b><span>grid nodes</span></li>
             <li><b>−4.5&#8239;µm</b><span>w under the sphere, −10.5 voxels</span></li>
-            <li><b>70.8&#8239;s</b><span>on one&nbsp;GPU</span></li>
+            <li><b>71&#8239;s</b><span>on one&nbsp;GPU</span></li>
           </ul>
         </div>
         <div class="case-media">
@@ -372,7 +372,7 @@
     <ol class="features">
       <li>
         <h3>Point and click</h3>
-        <p>Load the scans, draw the region of interest on the slices with a box, ellipse, polygon, brush or an automatic mask, run and export, in an interface available in seven languages.</p>
+        <p>Load the scans, draw the region of interest on the slices with a box, ellipse, polygon, brush or an automatic mask, run and export, in an interface available in seven languages, with a dark or a light theme.</p>
         <ul class="langs">
           <li lang="en">English</li><li lang="zh-Hans">简体中文</li><li lang="zh-Hant">繁體中文</li><li lang="ja">日本語</li><li lang="de">Deutsch</li><li lang="fr">Français</li><li lang="es">Español</li>
         </ul>
@@ -395,15 +395,15 @@
       </li>
       <li>
         <h3>Strain</h3>
-        <p>Four gradient methods (plane fit, finite elements, finite differences, direct) and four measures (infinitesimal, Green–Lagrange, Euler–Almansi, Hencky), computed after the run in their own window.</p>
+        <p>Four gradient methods (plane fit, finite elements, finite differences, direct) and four measures (infinitesimal, Green–Lagrange, Euler–Almansi, Hencky), computed after the run in the post-processing window.</p>
       </li>
       <li>
-        <h3>Statistics and rigid-body motion <span class="new-tag">New in 0.10</span></h3>
+        <h3>Statistics and rigid-body motion</h3>
         <p>Means with 95&#8239;% confidence intervals, the noise floor, regions, profiles and a virtual extensometer, with the rigid-body motion fitted in closed form and removed.</p>
       </li>
       <li>
         <h3><span class="nw">3-D</span> view and animations</h3>
-        <p>Field slices, the deformed node grid and displacement arrows, with orbits, frame sequences and slice sweeps recorded as GIF, or as MP4 with the optional <code>imageio</code> and <code>imageio-ffmpeg</code>.</p>
+        <p>Field slices, node points, nested iso-surfaces with a quarter cut away, the deformed node grid and displacement arrows, with orbits, frame sequences and slice sweeps recorded as GIF, PNG frames, or MP4 with the optional <code>imageio</code> and <code>imageio-ffmpeg</code>.</p>
       </li>
       <li>
         <h3>Formats</h3>
@@ -411,7 +411,7 @@
       </li>
       <li>
         <h3>Sessions, batch and command line</h3>
-        <p>Save a session, queue sessions as a batch, resume long sequences from checkpoints, or run the same analysis with <code>al-dvc</code> or <code>al_dvc.run_aldvc</code>.</p>
+        <p>Save a session with the results and every setting: it reopens without recomputing and finds the volumes again when the project moves. Queue sessions as a batch, resume long sequences from checkpoints, or run the same analysis with <code>al-dvc</code> or <code>al_dvc.run_aldvc</code>.</p>
       </li>
     </ol>
 
@@ -434,12 +434,12 @@
         <div class="tab-panel" data-label="Strain">
           <figure class="shot">
             <a class="zoom" href="img/app-strain.jpg"><img src="img/app-strain.jpg" width="1600" height="1000" loading="lazy" decoding="async" alt="The post-processing window on its Strain tab."></a>
-            <figcaption>Strain after the run, with the gradient method and the strain measure chosen in their own window.</figcaption>
+            <figcaption>Strain after the run, with the gradient method and the strain measure chosen in the post-processing window.</figcaption>
           </figure>
         </div>
         <div class="tab-panel" data-label="Statistics">
           <figure class="shot">
-            <a class="zoom" href="img/app-statistics.jpg"><img src="img/app-statistics.jpg" width="1600" height="1000" loading="lazy" decoding="async" alt="The post-processing window on its Statistics tab with two regions."></a>
+            <a class="zoom" href="img/app-statistics.jpg"><img src="img/app-statistics.jpg" width="1600" height="1000" loading="lazy" decoding="async" alt="The post-processing window on its Analysis tab with two regions."></a>
             <figcaption>Statistics: two regions drawn on the slices and compared, each mean with its 95&#8239;% confidence interval.</figcaption>
           </figure>
         </div>

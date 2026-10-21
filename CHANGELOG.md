@@ -4,6 +4,22 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- **Website and README brought up to 1.2.0.** The features now name what 1.1.0 and 1.2.0 added: the light
+  theme, node points and nested iso-surfaces with a cut-away in the 3-D view, PNG frames as a recording
+  format, and sessions that keep the results and find moved projects. The "New in 0.10" tag is gone; strain
+  is computed in the post-processing window (not "its own window"); the statistics screenshot is the
+  *Analysis* tab. The README's accuracy table has the website's rows (translation and 2 % strain apart, GPU
+  against CPU added) and the hydrogel run time reads 71 s in both. The application screenshots on the
+  website are captured again with 1.2.0 (`scripts/make_site_screens.py`).
+- **Package metadata.** The PyPI summary names the software as the citation does ("pyALDVC: Augmented
+  Lagrangian Digital Volume Correlation in Python") instead of "AL-DVC ... (3D)"; Jin Yang is listed as an
+  author, as in `CITATION.cff` and the licence; `confocal-microscopy` joins the keywords. `CITATION.cff`
+  no longer lists the DOI of version 0.9.0 (the concept DOI resolves to the latest release) and gives the
+  website.
+
 ## [1.2.0] - 2026-09-24
 
 ### Added
