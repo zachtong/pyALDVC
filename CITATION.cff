@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: "If you use pyALDVC, please cite the software and the AL-DVC method paper."
 title: "pyALDVC: Augmented Lagrangian Digital Volume Correlation in Python"
-version: 1.2.0
-date-released: 2026-09-24
+version: 1.2.1
+date-released: 2026-10-21
 license: BSD-3-Clause
 repository-code: "https://github.com/zachtong/pyALDVC"
 url: "https://zachtong.github.io/pyALDVC/"
