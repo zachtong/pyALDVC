@@ -4,6 +4,17 @@ All notable changes to pyALDVC are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **CI aborted at exit on Python 3.10 with PySide6 6.12.0.** Every test passed, then the process stopped with
+  "Fatal Python error: none_dealloc: deallocating None" while Python shut down. PySide6 6.12.0 releases
+  `None` once too often; on Python 3.10 and 3.11, where `None` is not yet immortal, a process that switched
+  the theme with several windows open (`tests/test_theme.py`, run in one process) aborts when it exits.
+  Reproduced on Ubuntu with Python 3.10: PySide6 6.12.0 aborts, 6.11.2 exits cleanly with the same numba,
+  VTK and NumPy. Python 3.10 and 3.11 now install PySide6 below 6.12; Python 3.12 and later are not
+  affected and keep the latest.
+
 ## [1.2.1] - 2026-10-21
 
 ### Changed

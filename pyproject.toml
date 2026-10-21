@@ -51,7 +51,12 @@ dependencies = [
     "h5py>=3.8",
     "matplotlib>=3.6",
     "pyyaml>=6.0",
-    "PySide6>=6.6",
+    # PySide6 6.12.0 (2026-10) releases None once too often: on Python 3.10 and 3.11, where None is not yet
+    # immortal, a process that switched the theme with several windows open aborts at exit ("Fatal Python
+    # error: none_dealloc"; tests/test_theme.py in one process, as CI runs it). 6.11.2 does not; Python 3.12+
+    # is not affected. Lift the bound once a PySide6 release fixes it.
+    "PySide6>=6.6,<6.12; python_version < '3.12'",
+    "PySide6>=6.6; python_version >= '3.12'",
     "pyvista>=0.43",
     "pyvistaqt>=0.11",
 ]
